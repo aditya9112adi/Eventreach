@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* SmartStack Light Mode — white-on-black inverted for light */
+    --color-background: 255 255 255;
+    --color-surface: 248 250 252;
+    --color-surface-hover: 241 245 249;
+    --color-accent: 0 210 148;          /* #00D294 Vibrant Emerald */
+    --color-foreground: 15 23 43;
+    --color-muted: 98 116 142;
+    --color-border: 226 232 240;
+    --color-destructive: 239 68 68;
+    --color-success: 16 185 129;
+    --color-info: 84 162 255;
+  }
+
+  .dark {
+    /* SmartStack Dark Mode — exact match */
+    --color-background: 0 0 0;         /* #000000 */
+    --color-surface: 10 10 10;         /* #0A0A0A */
+    --color-surface-hover: 17 17 17;   /* #111111 */
+    --color-accent: 0 210 148;          /* #00D294 Vibrant Emerald */
+    --color-foreground: 255 255 255;   /* #FFFFFF */
+    --color-muted: 136 136 136;        /* #888888 */
+    --color-border: 34 34 34;          /* #222222 */
+    --color-destructive: 127 29 29;
+    --color-success: 16 185 129;
+    --color-info: 84 162 255;
+  }
+
+  body {
+    background-color: rgb(var(--color-background));
+    color: rgb(var(--color-foreground));
+    @apply antialiased font-sans;
+  }
+
+  ::selection {
+    background-color: rgb(var(--color-accent) / 0.3);
+    color: white;
+  }
+  
+  /* Scrollbar — hidden for clean agency look */
+  ::-webkit-scrollbar {
+    background: transparent;
+    width: 0;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-sans font-bold tracking-tighter;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-surface border border-border shadow-xl shadow-black/5 transition-all duration-500;
+  }
+  
+  .dark .glass-panel {
+    @apply bg-surface border border-border shadow-xl shadow-white/[0.03] transition-all duration-500;
+  }
+
+  .glass-button {
+    @apply relative overflow-hidden transition-all duration-300 active:scale-[0.98] bg-accent text-white hover:bg-accent/90;
+  }
+}
+
+@layer utilities {
+  .stagger-1 { animation-delay: 50ms; }
+  .stagger-2 { animation-delay: 100ms; }
+  .stagger-3 { animation-delay: 150ms; }
+  .stagger-4 { animation-delay: 200ms; }
+  .stagger-5 { animation-delay: 250ms; }
+  
+  /* Hide scrollbar for clean minimal look */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(12px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: scale(0.99); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes spring-up {
+  0% { opacity: 0; transform: translateY(12px) scale(0.99); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-spring-up {
+  animation: spring-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
