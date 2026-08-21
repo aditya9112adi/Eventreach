@@ -54,12 +54,20 @@ const EventCreate = () => {
   const { showToast } = useToast();
   const { showLoader, showSuccess, showError, hideLoader } = useLoader();
   
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<EventForm>({
+  const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<EventForm>({
     resolver: zodResolver(eventSchema),
   });
 
+  const selectedDate = watch('date');
   const now = new Date();
   const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+
+  let minTime: string | undefined;
+  if (selectedDate === todayStr) {
+    const currentHours = now.getHours().toString().padStart(2, '0');
+    const currentMinutes = now.getMinutes().toString().padStart(2, '0');
+    minTime = `${currentHours}:${currentMinutes}`;
+  }
 
   const onSubmit = async (data: EventForm) => {
     showLoader('Creating event...');
@@ -131,6 +139,7 @@ const EventCreate = () => {
             <Input
               label="Time"
               type="time"
+              min={minTime}
               {...register('time')}
               error={errors.time?.message}
             />
