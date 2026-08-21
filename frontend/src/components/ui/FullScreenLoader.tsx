@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
 
 type LoaderStatus = 'loading' | 'success' | 'error';
