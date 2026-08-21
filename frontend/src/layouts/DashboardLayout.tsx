@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
+import api from '../services/api';
 import { 
   LayoutDashboard, 
   CalendarDays, 
@@ -20,6 +21,16 @@ const DashboardLayout = () => {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  const location = useLocation();
+
+  useEffect(() => {
+    if (user?.role === 'SuperAdmin') {
+      api.get('/admin/users/pending')
+        .then(res => setPendingCount(res.data.length))
+        .catch(console.error);
+    }
+  }, [user, location.pathname]);
 
   const navItems = [
     { name: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
@@ -78,6 +89,11 @@ const DashboardLayout = () => {
                 <>
                   <item.icon className={`w-5 h-5 mr-3 flex-shrink-0 ${isActive ? 'text-accent' : 'text-foreground/40'}`} />
                   {item.name}
+                  {item.name === 'User Approvals' && pendingCount > 0 && (
+                    <span className="ml-auto bg-accent text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      {pendingCount}
+                    </span>
+                  )}
                 </>
               )}
             </NavLink>
