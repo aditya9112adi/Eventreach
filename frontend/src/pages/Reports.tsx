@@ -93,7 +93,12 @@ const Reports = () => {
           </div>
         ) : campaignId ? (
           <div className="animate-fade-up">
-            <CampaignReportContent campaignIdProp={campaignId} hideHeader={false} />
+            <CampaignReportContent 
+              campaignIdProp={campaignId} 
+              hideHeader={false} 
+              hideBackButton={true}
+              showPrintButton={true}
+            />
           </div>
         ) : (
           <div className="glass-panel p-16 flex flex-col items-center justify-center text-center rounded-2xl border border-dashed border-border/50 animate-fade-in">

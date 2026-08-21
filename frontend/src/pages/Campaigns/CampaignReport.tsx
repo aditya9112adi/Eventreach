@@ -37,7 +37,17 @@ const STATUS_COLORS: Record<string, string> = {
   Pending: '#f59e0b'
 };
 
-export const CampaignReportContent = ({ campaignIdProp, hideHeader = false }: { campaignIdProp?: string, hideHeader?: boolean }) => {
+export const CampaignReportContent = ({ 
+  campaignIdProp, 
+  hideHeader = false,
+  hideBackButton = false,
+  showPrintButton = false
+}: { 
+  campaignIdProp?: string, 
+  hideHeader?: boolean,
+  hideBackButton?: boolean,
+  showPrintButton?: boolean
+}) => {
   const { campaignId: paramCampaignId } = useParams<{ campaignId: string }>();
   const campaignId = campaignIdProp || paramCampaignId;
   const navigate = useNavigate();
@@ -131,21 +141,26 @@ export const CampaignReportContent = ({ campaignIdProp, hideHeader = false }: { 
       {!hideHeader && (
         <div className="flex items-center justify-between mb-2 animate-fade-in">
           <div className="flex items-center space-x-4">
-            <button
-              onClick={() => navigate(-1)}
-              className="p-2 text-foreground/50 hover:text-foreground hover:bg-surfaceHover rounded-full transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <button 
-              onClick={() => window.print()}
-              className="inline-flex items-center px-4 py-2 bg-accent/10 text-accent hover:bg-accent/20 rounded-md font-medium text-sm transition-colors"
-            >
-            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-            </svg>
-            Print Report
-          </button>
+            {!hideBackButton && (
+              <button
+                onClick={() => navigate(-1)}
+                className="p-2 text-foreground/50 hover:text-foreground hover:bg-surfaceHover rounded-full transition-colors"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
+            
+            {showPrintButton && (
+              <button 
+                onClick={() => window.print()}
+                className="inline-flex items-center px-4 py-2 bg-accent/10 text-accent hover:bg-accent/20 rounded-md font-medium text-sm transition-colors"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                </svg>
+                Print Report
+              </button>
+            )}
             <div>
               <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Campaign Report</h2>
               <p className="text-foreground/50 text-sm">{stats.eventName}</p>
