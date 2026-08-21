@@ -15,7 +15,8 @@ const UserApprovals = () => {
   
   // Access configuration state
   const [startDate, setStartDate] = useState('');
-  const [durationDays, setDurationDays] = useState<number>(30);
+  const [durationValue, setDurationValue] = useState<number>(30);
+  const [durationUnit, setDurationUnit] = useState<'minutes' | 'hours' | 'days'>('days');
 
   const { showLoader, showSuccess, showError, hideLoader } = useLoader();
 
@@ -42,14 +43,21 @@ const UserApprovals = () => {
   const openModal = (user: any) => {
     setSelectedUser(user);
     setStartDate(getLocalISOString(new Date()));
-    setDurationDays(30);
+    setDurationValue(30);
+    setDurationUnit('days');
     setModalOpen(true);
   };
 
   const calculateExpiry = () => {
     if (!startDate) return '';
     const start = new Date(startDate);
-    start.setDate(start.getDate() + durationDays);
+    if (durationUnit === 'days') {
+      start.setDate(start.getDate() + durationValue);
+    } else if (durationUnit === 'hours') {
+      start.setHours(start.getHours() + durationValue);
+    } else if (durationUnit === 'minutes') {
+      start.setMinutes(start.getMinutes() + durationValue);
+    }
     return getLocalISOString(start);
   };
 
@@ -62,7 +70,8 @@ const UserApprovals = () => {
       
       await api.put(`/admin/users/${selectedUser._id}/approve?type=${selectedUser.type}`, {
         accessStartDate: startIso,
-        accessDurationDays: durationDays,
+        accessDurationValue: durationValue,
+        accessDurationUnit: durationUnit,
         accessExpiryDate: expiryDate
       });
       
@@ -184,15 +193,26 @@ const UserApprovals = () => {
                   
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-foreground/80 mb-2">
-                      Access Duration (Days)
+                      Access Duration
                     </label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={durationDays}
-                      onChange={(e) => setDurationDays(parseInt(e.target.value) || 1)}
-                      className="w-full bg-background border border-border text-foreground px-4 py-2.5 rounded focus:outline-none focus:border-accent transition-colors"
-                    />
+                    <div className="flex space-x-2">
+                      <input
+                        type="number"
+                        min="1"
+                        value={durationValue}
+                        onChange={(e) => setDurationValue(parseInt(e.target.value) || 1)}
+                        className="w-full bg-background border border-border text-foreground px-4 py-2.5 rounded focus:outline-none focus:border-accent transition-colors"
+                      />
+                      <select
+                        value={durationUnit}
+                        onChange={(e) => setDurationUnit(e.target.value as 'minutes' | 'hours' | 'days')}
+                        className="w-1/2 bg-background border border-border text-foreground px-4 py-2.5 rounded focus:outline-none focus:border-accent transition-colors"
+                      >
+                        <option value="minutes">Minutes</option>
+                        <option value="hours">Hours</option>
+                        <option value="days">Days</option>
+                      </select>
+                    </div>
                   </div>
 
                   <div>

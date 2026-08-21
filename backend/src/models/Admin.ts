@@ -46,7 +46,8 @@ const AdminSchema: Schema = new Schema(
     accessGrantedOn: { type: Date },
     accessStartDate: { type: Date },
     accessExpiryDate: { type: Date },
-    accessDurationDays: { type: Number },
+    accessDurationValue: { type: Number },
+    accessDurationUnit: { type: String, enum: ['minutes', 'hours', 'days'] },
     isAccessCancelled: { type: Boolean, default: false },
   },
   {
