@@ -22,6 +22,8 @@ export type EventStatus = 'Draft' | 'Upcoming' | 'Completed' | 'Cancelled';
 
 export interface Event {
   _id: string;
+  organizerName: string;
+  organizerMobile: string;
   name: string;
   type: string;
   date: string;

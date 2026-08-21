@@ -4,6 +4,8 @@ import { Event } from '../models/Event';
 import { Contact } from '../models/Contact';
 
 const createEventSchema = z.object({
+  organizerName: z.string().min(1, 'Organizer name is required'),
+  organizerMobile: z.string().min(1, 'Organizer mobile is required'),
   name: z.string().min(1, 'Name is required'),
   type: z.string().min(1, 'Type is required'),
   date: z.string().min(1, 'Date is required'),

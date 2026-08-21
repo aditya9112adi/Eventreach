@@ -74,9 +74,12 @@ const EventList = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border uppercase tracking-wide text-xs">
+                  <th className="py-3 px-4">Organizer</th>
+                  <th className="py-3 px-4">Mobile</th>
                   <th className="py-3 px-4">Event Name</th>
+                  <th className="py-3 px-4">Type</th>
                   <th className="py-3 px-4">Date & Time</th>
-                  <th className="py-3 px-4">Location</th>
+                  <th className="py-3 px-4">Venue</th>
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
@@ -84,12 +87,20 @@ const EventList = () => {
               <tbody className="divide-y divide-border">
                 {filteredEvents.map((event, idx) => (
                   <tr key={event._id} className={`hover:bg-surfaceHover transition-colors group animate-fade-up stagger-${(idx % 5) + 1}`}>
-                    <td className="py-3 px-4">
-                      <div className="font-medium text-foreground">{event.name}</div>
-                      <div className="text-xs text-foreground/50">{event.type}</div>
+                    <td className="py-3 px-4 text-sm font-medium text-foreground">
+                      {event.organizerName || '-'}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-foreground/80">
+                      {event.organizerMobile || '-'}
+                    </td>
+                    <td className="py-3 px-4 font-medium text-foreground">
+                      {event.name}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-foreground/80">
+                      {event.type}
                     </td>
                     <td className="py-3 px-4">
-                      <div className="flex items-center text-sm text-foreground/80">
+                      <div className="flex items-center text-sm text-foreground/80 whitespace-nowrap">
                         <Calendar className="w-3.5 h-3.5 mr-1.5 text-foreground/40" />
                         {event.date} at {event.time}
                       </div>
@@ -106,7 +117,7 @@ const EventList = () => {
                     <td className="py-3 px-4 text-right">
                       <Link to={`/events/${event._id}`}>
                         <Button variant="secondary" className="text-xs py-1.5 px-3">
-                          Manage
+                          View
                         </Button>
                       </Link>
                     </td>

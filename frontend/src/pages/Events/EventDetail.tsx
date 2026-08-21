@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Users, Calendar, MapPin, Edit3, Megaphone } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, MapPin, Edit3, Megaphone, UserCircle, Phone } from 'lucide-react';
 import api from '../../services/api';
 import type { Event, Campaign } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
@@ -80,6 +80,20 @@ const EventDetail = () => {
               <div>
                 <p className="text-sm font-sans font-medium text-foreground/80 uppercase">Venue</p>
                 <p className="text-foreground">{event.venue}</p>
+              </div>
+            </div>
+            <div className="flex items-start">
+              <UserCircle className="w-5 h-5 text-foreground/40 mr-3 mt-0.5" />
+              <div>
+                <p className="text-sm font-sans font-medium text-foreground/80 uppercase">Organizer</p>
+                <p className="text-foreground">{event.organizerName || 'Not Provided'}</p>
+              </div>
+            </div>
+            <div className="flex items-start">
+              <Phone className="w-5 h-5 text-foreground/40 mr-3 mt-0.5" />
+              <div>
+                <p className="text-sm font-sans font-medium text-foreground/80 uppercase">Mobile Number</p>
+                <p className="text-foreground">{event.organizerMobile || 'Not Provided'}</p>
               </div>
             </div>
           </div>
