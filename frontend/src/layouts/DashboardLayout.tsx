@@ -42,7 +42,7 @@ const DashboardLayout = () => {
 
   if (user?.role === 'SuperAdmin') {
     navItems.push({ name: 'User Approvals', to: '/admin/approvals', icon: Users });
-    navItems.push({ name: 'Report Access', to: '/admin/report-access', icon: MessageSquare });
+    navItems.push({ name: 'Just Access', to: '/admin/just-access', icon: MessageSquare });
   }
 
   return (

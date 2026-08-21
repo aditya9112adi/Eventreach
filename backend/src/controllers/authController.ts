@@ -110,6 +110,20 @@ export const login = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Your account registration was rejected.' });
     }
 
+    // Time-bound access enforcement
+    if (resolvedRole !== 'SuperAdmin' && user.accessGrantedOn) {
+      if (user.isAccessCancelled) {
+        return res.status(403).json({ error: 'Your access has been revoked.' });
+      }
+      const now = new Date();
+      if (user.accessStartDate && now < new Date(user.accessStartDate)) {
+        return res.status(403).json({ error: 'Your access has not started yet. It starts on: ' + new Date(user.accessStartDate).toLocaleString() });
+      }
+      if (user.accessExpiryDate && now > new Date(user.accessExpiryDate)) {
+        return res.status(403).json({ error: 'Your access expired on: ' + new Date(user.accessExpiryDate).toLocaleString() });
+      }
+    }
+
     if (!process.env.JWT_SECRET) {
       throw new Error('JWT_SECRET is not defined');
     }
@@ -127,7 +141,11 @@ export const login = async (req: Request, res: Response) => {
         email: user.email,
         role: resolvedRole,
         status: user.status,
-        reportAccessExpiry: user.reportAccessExpiry,
+        accessGrantedOn: user.accessGrantedOn,
+        accessStartDate: user.accessStartDate,
+        accessExpiryDate: user.accessExpiryDate,
+        accessDurationDays: user.accessDurationDays,
+        isAccessCancelled: user.isAccessCancelled,
         createdAt: user.createdAt,
       },
       token,
