@@ -145,8 +145,9 @@ const Reports = () => {
             <CampaignReportContent 
               campaignIdProp={campaignId} 
               hideHeader={false} 
-              hideBackButton={true}
+              hideBackButton={false}
               showPrintButton={true}
+              onBack={() => setSelectedEventId('all')}
             />
           </div>
         ) : (

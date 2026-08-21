@@ -41,12 +41,14 @@ export const CampaignReportContent = ({
   campaignIdProp, 
   hideHeader = false,
   hideBackButton = false,
-  showPrintButton = false
+  showPrintButton = false,
+  onBack
 }: { 
   campaignIdProp?: string, 
   hideHeader?: boolean,
   hideBackButton?: boolean,
-  showPrintButton?: boolean
+  showPrintButton?: boolean,
+  onBack?: () => void
 }) => {
   const { campaignId: paramCampaignId } = useParams<{ campaignId: string }>();
   const campaignId = campaignIdProp || paramCampaignId;
@@ -141,13 +143,14 @@ export const CampaignReportContent = ({
       {!hideHeader && (
         <div className="flex items-center justify-between mb-8 animate-fade-in">
           {/* Left: Buttons */}
-          <div className="flex items-center space-x-4 w-1/3">
+          <div className="flex flex-col items-start space-y-3 w-1/3">
             {!hideBackButton && (
               <button
-                onClick={() => navigate(-1)}
-                className="p-2 text-foreground/50 hover:text-foreground hover:bg-surfaceHover rounded-full transition-colors"
+                onClick={() => onBack ? onBack() : navigate(-1)}
+                className="text-foreground/50 hover:text-foreground text-sm font-medium flex items-center transition-colors"
               >
-                <ArrowLeft className="w-5 h-5" />
+                <ArrowLeft className="w-4 h-4 mr-1" />
+                Back
               </button>
             )}
             
