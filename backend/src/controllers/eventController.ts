@@ -39,6 +39,17 @@ const createEventSchema = z.object({
   }
 });
 
+const updateEventSchema = z.object({
+  organizerName: z.string().min(1, 'Organizer name is required'),
+  organizerMobile: z.string().min(1, 'Organizer mobile is required'),
+  name: z.string().min(1, 'Name is required'),
+  type: z.string().min(1, 'Type is required'),
+  date: z.string().min(1, 'Date is required'),
+  time: z.string().min(1, 'Time is required'),
+  venue: z.string().min(1, 'Venue is required'),
+  description: z.string().optional(),
+});
+
 export const createEvent = async (req: Request, res: Response) => {
   try {
     const parsed = createEventSchema.safeParse(req.body);
@@ -81,7 +92,7 @@ export const getEventById = async (req: Request, res: Response) => {
 
 export const updateEvent = async (req: Request, res: Response) => {
   try {
-    const parsed = createEventSchema.safeParse(req.body);
+    const parsed = updateEventSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.errors[0].message });
     }
