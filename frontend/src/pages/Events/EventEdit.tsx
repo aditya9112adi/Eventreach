@@ -55,13 +55,15 @@ const EventEdit = () => {
   const { showToast } = useToast();
   const { showLoader, showSuccess, showError, hideLoader } = useLoader();
   
+  const [isLoading, setIsLoading] = useState(true);
+  
   const { register, handleSubmit, watch, setValue, reset, formState: { errors, isSubmitting } } = useForm<EventForm>({
     resolver: zodResolver(eventSchema),
   });
 
   useEffect(() => {
     const fetchEvent = async () => {
-      showLoader('Loading event details...');
+      setIsLoading(true);
       try {
         const response = await api.get(`/events/${id}`);
         reset({
@@ -78,7 +80,7 @@ const EventEdit = () => {
         showError('Failed to load event details');
         navigate('/events');
       } finally {
-        hideLoader();
+        setIsLoading(false);
       }
     };
     fetchEvent();
@@ -111,6 +113,14 @@ const EventEdit = () => {
       await showError(errorMsg);
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
