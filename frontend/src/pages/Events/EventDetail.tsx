@@ -61,7 +61,11 @@ const EventDetail = () => {
               </div>
               <p className="text-foreground/50 text-lg uppercase tracking-wider">{event.type}</p>
             </div>
-            <Button variant="secondary" disabled={campaign?.status === 'Sending' || campaign?.status === 'Completed'}>
+            <Button 
+              variant="secondary" 
+              disabled={campaign?.status === 'Sending' || campaign?.status === 'Completed'}
+              onClick={() => navigate(`/events/${event._id}/edit`)}
+            >
               <Edit3 className="w-4 h-4 mr-2" />
               Edit Event
             </Button>
