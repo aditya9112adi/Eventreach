@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
 
 type LoaderStatus = 'loading' | 'success' | 'error';
@@ -23,37 +23,37 @@ export const LoaderProvider = ({ children }: { children: ReactNode }) => {
   const [status, setStatus] = useState<LoaderStatus>('loading');
   const [message, setMessage] = useState('');
 
-  const showLoader = (msg = 'Processing...') => {
+  const showLoader = useCallback((msg = 'Processing...') => {
     setStatus('loading');
     setMessage(msg);
     setIsOpen(true);
-  };
+  }, []);
 
-  const hideLoader = () => setIsOpen(false);
+  const hideLoader = useCallback(() => setIsOpen(false), []);
 
-  const showSuccess = (msg: string, duration = 1500) => {
+  const showSuccess = useCallback((msg: string, duration = 1500) => {
     return new Promise<void>((resolve) => {
       setStatus('success');
       setMessage(msg);
       setIsOpen(true);
       setTimeout(() => {
-        hideLoader();
+        setIsOpen(false);
         resolve();
       }, duration);
     });
-  };
+  }, []);
 
-  const showError = (msg: string, duration = 2000) => {
+  const showError = useCallback((msg: string, duration = 2000) => {
     return new Promise<void>((resolve) => {
       setStatus('error');
       setMessage(msg);
       setIsOpen(true);
       setTimeout(() => {
-        hideLoader();
+        setIsOpen(false);
         resolve();
       }, duration);
     });
-  };
+  }, []);
 
   return (
     <LoaderContext.Provider value={{ showLoader, showSuccess, showError, hideLoader }}>

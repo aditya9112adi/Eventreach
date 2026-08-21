@@ -57,7 +57,8 @@ const EventEdit = () => {
       }
     };
     fetchEvent();
-  }, [id, reset, navigate, showLoader, hideLoader, showError]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, reset, navigate]);
 
 
 
