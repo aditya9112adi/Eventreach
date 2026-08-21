@@ -183,60 +183,6 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
-
-      {/* Recent Campaigns */}
-      <div className="glass-panel rounded-2xl p-6 animate-spring-up stagger-5">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-sans font-bold text-foreground uppercase tracking-wider">Recent Campaigns</h3>
-          <button
-            onClick={() => navigate('/campaigns')}
-            className="text-sm text-accent hover:text-accent/80 font-medium flex items-center transition-colors"
-          >
-            View All <ArrowRight className="w-4 h-4 ml-1" />
-          </button>
-        </div>
-        {recentCampaigns.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left">
-                  <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs">Event</th>
-                  <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs">Status</th>
-                  <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs">Updated</th>
-                  <th className="pb-3 font-semibold text-foreground/60"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {recentCampaigns.map((camp: any) => (
-                  <tr key={camp._id} className="hover:bg-surfaceHover transition-colors group">
-                    <td className="py-4 font-medium text-foreground">
-                      {camp.eventId?.name || 'Unknown Event'}
-                    </td>
-                    <td className="py-4">
-                      <Badge variant={campaignStatusVariant(camp.status)}>{camp.status}</Badge>
-                    </td>
-                    <td className="py-4 text-foreground/60">
-                      {new Date(camp.updatedAt).toLocaleDateString()}
-                    </td>
-                    <td className="py-4 text-right">
-                      {(camp.status === 'Sending' || camp.status === 'Completed') && (
-                        <button
-                          onClick={() => navigate(`/campaigns/${camp._id}/report`)}
-                          className="text-accent hover:text-accent/80 font-medium text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          View Report →
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="text-foreground/40 text-center py-8">No campaigns created yet.</p>
-        )}
-      </div>
     </div>
   );
 };
