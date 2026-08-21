@@ -7,6 +7,7 @@ import {
 import { CalendarDays, Users, Megaphone, Send, CheckCircle2, XCircle, Clock, ArrowRight } from 'lucide-react';
 import api from '../services/api';
 import { Badge } from '../components/ui/Badge';
+import { useAuth } from '../store/authStore';
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -22,17 +23,24 @@ const Dashboard = () => {
   const [chartData, setChartData] = useState<any[]>([]);
   const [recentCampaigns, setRecentCampaigns] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [events, setEvents] = useState<any[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<string>('');
+  const { user } = useAuth(); // Assume we need to check if user is SuperAdmin to show filter
 
   useEffect(() => {
     const fetchAll = async () => {
+      setIsLoading(true);
       try {
-        const [statsRes, activityRes] = await Promise.all([
-          api.get('/dashboard/stats'),
-          api.get('/dashboard/recent-activity')
+        const query = selectedEventId ? `?eventId=${selectedEventId}` : '';
+        const [statsRes, activityRes, eventsRes] = await Promise.all([
+          api.get(`/dashboard/stats${query}`),
+          api.get(`/dashboard/recent-activity${query}`),
+          api.get('/events') // Fetch events for the filter dropdown
         ]);
         setStats(statsRes.data);
         setChartData(activityRes.data.chartData || []);
         setRecentCampaigns(activityRes.data.recentCampaigns || []);
+        setEvents(eventsRes.data);
       } catch (error) {
         console.error('Failed to fetch dashboard data', error);
       } finally {
@@ -40,7 +48,7 @@ const Dashboard = () => {
       }
     };
     fetchAll();
-  }, []);
+  }, [selectedEventId]);
 
   if (isLoading) {
     return (
@@ -95,6 +103,24 @@ const Dashboard = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-3xl font-sans font-bold text-foreground animate-slide-in uppercase">Dashboard Overview</h2>
+        
+        {user?.role === 'SuperAdmin' && (
+          <div className="flex items-center space-x-3">
+            <span className="text-sm font-bold uppercase tracking-wide text-foreground/50">Filter:</span>
+            <select
+              value={selectedEventId}
+              onChange={(e) => setSelectedEventId(e.target.value)}
+              className="bg-surface border border-border text-foreground px-4 py-2 rounded-md focus:outline-none focus:border-accent transition-colors font-medium text-sm"
+            >
+              <option value="">All Events</option>
+              {events.map((evt) => (
+                <option key={evt._id} value={evt._id}>
+                  {evt.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
