@@ -48,15 +48,30 @@ const JustAccess = () => {
     return 'Active';
   };
 
-  const getDaysRemaining = (record: any) => {
+  const getTimeRemaining = (record: any) => {
     const status = getStatus(record);
-    if (status === 'Cancelled' || status === 'Expired') return 0;
+    if (status === 'Cancelled' || status === 'Expired') return '0m';
     
     const now = new Date();
     const expiry = new Date(record.accessExpiryDate);
+    const diffTime = Math.max(0, expiry.getTime() - now.getTime());
+    
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    const diffHours = Math.floor((diffTime % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const diffMins = Math.floor((diffTime % (1000 * 60 * 60)) / (1000 * 60));
+    
+    if (diffDays > 0) return `${diffDays}d ${diffHours}h`;
+    if (diffHours > 0) return `${diffHours}h ${diffMins}m`;
+    return `${diffMins}m`;
+  };
+
+  const isEndingSoon = (record: any) => {
+    if (getStatus(record) !== 'Active') return false;
+    const now = new Date();
+    const expiry = new Date(record.accessExpiryDate);
     const diffTime = expiry.getTime() - now.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return Math.max(0, diffDays);
+    // Ending soon if < 24 hours
+    return diffTime > 0 && diffTime < 1000 * 60 * 60 * 24;
   };
 
   const formatDate = (dateString?: string) => {
@@ -147,11 +162,13 @@ const JustAccess = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 text-center font-medium">
-                        {record.accessDurationDays ? `${record.accessDurationDays} Days` : 'N/A'}
+                        {record.accessDurationValue 
+                          ? `${record.accessDurationValue} ${record.accessDurationUnit ? record.accessDurationUnit.charAt(0).toUpperCase() + record.accessDurationUnit.slice(1) : 'Days'}` 
+                          : 'N/A'}
                       </td>
                       <td className="px-6 py-4 text-center">
-                        <span className={`font-bold ${getDaysRemaining(record) <= 3 && status === 'Active' ? 'text-red-400' : 'text-foreground'}`}>
-                          {getDaysRemaining(record)} Days
+                        <span className={`font-bold ${isEndingSoon(record) ? 'text-red-400' : 'text-foreground'}`}>
+                          {getTimeRemaining(record)}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-center">

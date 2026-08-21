@@ -7,7 +7,8 @@ export interface User {
   accessGrantedOn?: string;
   accessStartDate?: string;
   accessExpiryDate?: string;
-  accessDurationDays?: number;
+  accessDurationValue?: number;
+  accessDurationUnit?: 'minutes' | 'hours' | 'days';
   isAccessCancelled?: boolean;
   createdAt: string;
 }

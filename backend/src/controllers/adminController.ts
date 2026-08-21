@@ -21,9 +21,9 @@ export const approveUser = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { type } = req.query; // 'Admin' | 'User'
-    const { accessStartDate, accessDurationDays, accessExpiryDate } = req.body;
+    const { accessStartDate, accessDurationValue, accessDurationUnit, accessExpiryDate } = req.body;
     
-    if (!accessStartDate || !accessDurationDays || !accessExpiryDate) {
+    if (!accessStartDate || !accessDurationValue || !accessDurationUnit || !accessExpiryDate) {
       return res.status(400).json({ error: 'Missing access duration details' });
     }
 
@@ -31,7 +31,8 @@ export const approveUser = async (req: Request, res: Response) => {
       status: 'Active',
       accessGrantedOn: new Date(),
       accessStartDate: new Date(accessStartDate),
-      accessDurationDays: Number(accessDurationDays),
+      accessDurationValue: Number(accessDurationValue),
+      accessDurationUnit: String(accessDurationUnit),
       accessExpiryDate: new Date(accessExpiryDate),
       isAccessCancelled: false
     };
