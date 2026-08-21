@@ -12,6 +12,7 @@ import BulkImport from './pages/Contacts/BulkImport';
 import Composer from './pages/Campaigns/Composer';
 import SendPreview from './pages/Campaigns/SendPreview';
 import CampaignReport from './pages/Campaigns/CampaignReport';
+import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import Register from './pages/Register';
 import UserApprovals from './pages/Admin/UserApprovals';
@@ -53,6 +54,7 @@ function App() {
           <Route path="/campaigns" element={<Composer />} />
           <Route path="/campaigns/send-preview" element={<SendPreview />} />
           <Route path="/campaigns/:campaignId/report" element={<CampaignReport />} />
+          <Route path="/reports" element={<Reports />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/admin/approvals" element={<UserApprovals />} />
           <Route path="/admin/just-access" element={<JustAccess />} />
