@@ -19,6 +19,31 @@ const eventSchema = z.object({
   time: z.string().min(1, 'Time is required'),
   venue: z.string().min(1, 'Venue is required'),
   description: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.date) {
+    const now = new Date();
+    const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+    
+    if (data.date < todayStr) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Date cannot be in the past",
+        path: ['date'],
+      });
+    } else if (data.date === todayStr && data.time) {
+      const currentHours = now.getHours().toString().padStart(2, '0');
+      const currentMinutes = now.getMinutes().toString().padStart(2, '0');
+      const currentTimeStr = `${currentHours}:${currentMinutes}`;
+      
+      if (data.time < currentTimeStr) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Time cannot be in the past",
+          path: ['time'],
+        });
+      }
+    }
+  }
 });
 
 type EventForm = z.infer<typeof eventSchema>;
@@ -32,6 +57,9 @@ const EventCreate = () => {
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<EventForm>({
     resolver: zodResolver(eventSchema),
   });
+
+  const now = new Date();
+  const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
 
   const onSubmit = async (data: EventForm) => {
     showLoader('Creating event...');
@@ -96,6 +124,7 @@ const EventCreate = () => {
             <Input
               label="Date"
               type="date"
+              min={todayStr}
               {...register('date')}
               error={errors.date?.message}
             />
