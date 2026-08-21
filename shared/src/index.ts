@@ -4,7 +4,11 @@ export interface User {
   email: string;
   role: 'SuperAdmin' | 'Admin' | 'User';
   status: 'Pending' | 'Active' | 'Rejected';
-  reportAccessExpiry?: string;
+  accessGrantedOn?: string;
+  accessStartDate?: string;
+  accessExpiryDate?: string;
+  accessDurationDays?: number;
+  isAccessCancelled?: boolean;
   createdAt: string;
 }
 

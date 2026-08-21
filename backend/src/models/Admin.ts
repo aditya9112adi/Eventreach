@@ -6,7 +6,11 @@ export interface IAdmin extends Document {
   passwordHash: string;
   role: 'SuperAdmin' | 'Admin';
   status: 'Pending' | 'Active' | 'Rejected';
-  reportAccessExpiry?: Date;
+  accessGrantedOn?: Date;
+  accessStartDate?: Date;
+  accessExpiryDate?: Date;
+  accessDurationDays?: number;
+  isAccessCancelled?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -39,10 +43,11 @@ const AdminSchema: Schema = new Schema(
       enum: ['Pending', 'Active', 'Rejected'],
       default: 'Pending',
     },
-    reportAccessExpiry: {
-      type: Date,
-      default: null,
-    },
+    accessGrantedOn: { type: Date },
+    accessStartDate: { type: Date },
+    accessExpiryDate: { type: Date },
+    accessDurationDays: { type: Number },
+    isAccessCancelled: { type: Boolean, default: false },
   },
   {
     timestamps: true,

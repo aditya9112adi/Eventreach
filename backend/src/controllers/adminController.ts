@@ -21,12 +21,26 @@ export const approveUser = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { type } = req.query; // 'Admin' | 'User'
+    const { accessStartDate, accessDurationDays, accessExpiryDate } = req.body;
+    
+    if (!accessStartDate || !accessDurationDays || !accessExpiryDate) {
+      return res.status(400).json({ error: 'Missing access duration details' });
+    }
+
+    const updatePayload = {
+      status: 'Active',
+      accessGrantedOn: new Date(),
+      accessStartDate: new Date(accessStartDate),
+      accessDurationDays: Number(accessDurationDays),
+      accessExpiryDate: new Date(accessExpiryDate),
+      isAccessCancelled: false
+    };
     
     let user;
     if (type === 'Admin') {
-      user = await Admin.findByIdAndUpdate(id, { status: 'Active' }, { new: true }).select('-passwordHash');
+      user = await Admin.findByIdAndUpdate(id, updatePayload, { new: true }).select('-passwordHash');
     } else {
-      user = await User.findByIdAndUpdate(id, { status: 'Active' }, { new: true }).select('-passwordHash');
+      user = await User.findByIdAndUpdate(id, updatePayload, { new: true }).select('-passwordHash');
     }
     
     if (!user) {
@@ -42,7 +56,7 @@ export const approveUser = async (req: Request, res: Response) => {
 export const rejectUser = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { type } = req.query; // 'Admin' | 'User'
+    const { type } = req.query;
 
     let user;
     if (type === 'Admin') {
@@ -61,39 +75,32 @@ export const rejectUser = async (req: Request, res: Response) => {
   }
 };
 
-export const getActiveUsers = async (req: Request, res: Response) => {
+export const getAccessRecords = async (req: Request, res: Response) => {
   try {
-    const activeUsers = await User.find({ status: 'Active' }).select('-passwordHash').lean();
-    const activeAdmins = await Admin.find({ status: 'Active', role: { $ne: 'SuperAdmin' } }).select('-passwordHash').lean();
+    // Get all users who have ever been granted access (accessGrantedOn exists)
+    const activeUsers = await User.find({ accessGrantedOn: { $exists: true } }).select('-passwordHash').lean();
+    const activeAdmins = await Admin.find({ accessGrantedOn: { $exists: true }, role: { $ne: 'SuperAdmin' } }).select('-passwordHash').lean();
 
     const formattedUsers = activeUsers.map(u => ({ ...u, role: 'User', type: 'User' }));
     const formattedAdmins = activeAdmins.map(a => ({ ...a, type: 'Admin' }));
 
-    res.json([...formattedAdmins, ...formattedUsers].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+    res.json([...formattedAdmins, ...formattedUsers].sort((a: any, b: any) => new Date(b.accessGrantedOn || b.createdAt).getTime() - new Date(a.accessGrantedOn || a.createdAt).getTime()));
   } catch (error) {
-    console.error('Error fetching active users:', error);
-    res.status(500).json({ error: 'Failed to fetch active users' });
+    console.error('Error fetching access records:', error);
+    res.status(500).json({ error: 'Failed to fetch access records' });
   }
 };
 
-export const grantReportAccess = async (req: Request, res: Response) => {
+export const revokeAccess = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { type } = req.query; // 'Admin' | 'User'
-    const { days } = req.body;
-
-    if (!days || typeof days !== 'number' || days <= 0) {
-      return res.status(400).json({ error: 'Invalid days provided' });
-    }
-
-    const expiryDate = new Date();
-    expiryDate.setDate(expiryDate.getDate() + days);
 
     let user;
     if (type === 'Admin') {
-      user = await Admin.findByIdAndUpdate(id, { reportAccessExpiry: expiryDate }, { new: true }).select('-passwordHash');
+      user = await Admin.findByIdAndUpdate(id, { isAccessCancelled: true }, { new: true }).select('-passwordHash');
     } else {
-      user = await User.findByIdAndUpdate(id, { reportAccessExpiry: expiryDate }, { new: true }).select('-passwordHash');
+      user = await User.findByIdAndUpdate(id, { isAccessCancelled: true }, { new: true }).select('-passwordHash');
     }
 
     if (!user) {
@@ -101,8 +108,8 @@ export const grantReportAccess = async (req: Request, res: Response) => {
     }
     res.json(user);
   } catch (error) {
-    console.error('Error granting report access:', error);
-    res.status(500).json({ error: 'Failed to grant report access' });
+    console.error('Error revoking access:', error);
+    res.status(500).json({ error: 'Failed to revoke access' });
   }
 };
 

@@ -5,7 +5,11 @@ export interface IUser extends Document {
   email: string;
   passwordHash: string;
   status: 'Pending' | 'Active' | 'Rejected';
-  reportAccessExpiry?: Date;
+  accessGrantedOn?: Date;
+  accessStartDate?: Date;
+  accessExpiryDate?: Date;
+  accessDurationDays?: number;
+  isAccessCancelled?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,10 +37,11 @@ const UserSchema: Schema = new Schema(
       enum: ['Pending', 'Active', 'Rejected'],
       default: 'Pending', // Keeping pending to allow SuperAdmin approval per plan
     },
-    reportAccessExpiry: {
-      type: Date,
-      default: null,
-    },
+    accessGrantedOn: { type: Date },
+    accessStartDate: { type: Date },
+    accessExpiryDate: { type: Date },
+    accessDurationDays: { type: Number },
+    isAccessCancelled: { type: Boolean, default: false },
   },
   {
     timestamps: true,

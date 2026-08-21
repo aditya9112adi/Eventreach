@@ -15,7 +15,7 @@ import CampaignReport from './pages/Campaigns/CampaignReport';
 import Settings from './pages/Settings';
 import Register from './pages/Register';
 import UserApprovals from './pages/Admin/UserApprovals';
-import ReportAccess from './pages/Admin/ReportAccess';
+import JustAccess from './pages/Admin/JustAccess';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, isLoading } = useAuth();
@@ -55,7 +55,7 @@ function App() {
           <Route path="/campaigns/:campaignId/report" element={<CampaignReport />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/admin/approvals" element={<UserApprovals />} />
-          <Route path="/admin/report-access" element={<ReportAccess />} />
+          <Route path="/admin/just-access" element={<JustAccess />} />
         </Route>
         
         <Route path="/register" element={<Register />} />
