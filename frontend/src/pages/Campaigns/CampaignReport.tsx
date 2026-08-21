@@ -49,7 +49,7 @@ const CampaignReport = () => {
   const [isLoading, setIsLoading] = useState(true);
 
   // Authorization check
-  const hasReportAccess = user?.role === 'SuperAdmin' || (user?.reportAccessExpiry && new Date(user.reportAccessExpiry) > new Date());
+  const hasReportAccess = user?.role === 'SuperAdmin' || (user?.accessExpiryDate && new Date(user.accessExpiryDate) > new Date() && !user?.isAccessCancelled);
 
   useEffect(() => {
     if (!hasReportAccess) {
