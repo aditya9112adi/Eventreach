@@ -13,7 +13,8 @@ import {
   MessageSquare,
   Settings,
   Sun,
-  Moon
+  Moon,
+  PieChart
 } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
 
@@ -37,13 +38,15 @@ const DashboardLayout = () => {
     { name: 'Events', to: '/events', icon: CalendarDays },
     { name: 'Contacts', to: '/contacts', icon: Users },
     { name: 'Campaigns', to: '/campaigns', icon: Megaphone },
-    { name: 'Settings', to: '/settings', icon: Settings },
+    { name: 'Reports', to: '/reports', icon: PieChart },
   ];
 
   if (user?.role === 'SuperAdmin') {
     navItems.push({ name: 'User Approvals', to: '/admin/approvals', icon: Users });
     navItems.push({ name: 'Just Access', to: '/admin/just-access', icon: MessageSquare });
   }
+
+  navItems.push({ name: 'Settings', to: '/settings', icon: Settings });
 
   return (
     <div className="min-h-screen flex text-foreground">
