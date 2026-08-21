@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -54,11 +54,13 @@ const EventCreate = () => {
   const { showToast } = useToast();
   const { showLoader, showSuccess, showError, hideLoader } = useLoader();
   
-  const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<EventForm>({
+  const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm<EventForm>({
     resolver: zodResolver(eventSchema),
   });
 
   const selectedDate = watch('date');
+  const selectedTime = watch('time');
+  
   const now = new Date();
   const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
 
@@ -68,6 +70,18 @@ const EventCreate = () => {
     const currentMinutes = now.getMinutes().toString().padStart(2, '0');
     minTime = `${currentHours}:${currentMinutes}`;
   }
+
+  useEffect(() => {
+    if (selectedDate === todayStr && selectedTime && minTime) {
+      if (selectedTime < minTime) {
+        setValue('time', minTime, { shouldValidate: true });
+        showToast('warning', 'Past time selected. Automatically adjusted to current time.');
+      }
+    } else if (selectedDate && selectedDate < todayStr) {
+      setValue('date', todayStr, { shouldValidate: true });
+      showToast('warning', 'Past date selected. Automatically adjusted to today.');
+    }
+  }, [selectedDate, selectedTime, minTime, todayStr, setValue, showToast]);
 
   const onSubmit = async (data: EventForm) => {
     showLoader('Creating event...');
