@@ -11,6 +11,8 @@ import { useLoader } from '../../components/ui/FullScreenLoader';
 import { useToast } from '../../components/ui/Toast';
 
 const eventSchema = z.object({
+  organizerName: z.string().min(1, 'Organizer name is required'),
+  organizerMobile: z.string().min(1, 'Organizer mobile is required'),
   name: z.string().min(1, 'Event name is required'),
   type: z.string().min(1, 'Event type is required'),
   date: z.string().min(1, 'Date is required'),
@@ -67,6 +69,18 @@ const EventCreate = () => {
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <Input
+              label="Event Organizer"
+              placeholder="e.g. John Doe"
+              {...register('organizerName')}
+              error={errors.organizerName?.message}
+            />
+            <Input
+              label="Organizer Mobile Number"
+              placeholder="e.g. +1234567890"
+              {...register('organizerMobile')}
+              error={errors.organizerMobile?.message}
+            />
             <Input
               label="Event Name"
               placeholder="e.g. Annual Tech Conference 2026"

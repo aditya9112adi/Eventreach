@@ -2,6 +2,8 @@ import mongoose, { Document, Schema } from 'mongoose';
 import { EventStatus } from '@eventreach/shared';
 
 export interface IEvent extends Document {
+  organizerName: string;
+  organizerMobile: string;
   name: string;
   type: string;
   date: string;
@@ -15,6 +17,8 @@ export interface IEvent extends Document {
 
 const EventSchema: Schema = new Schema(
   {
+    organizerName: { type: String, required: true, trim: true },
+    organizerMobile: { type: String, required: true, trim: true },
     name: { type: String, required: true, trim: true },
     type: { type: String, required: true },
     date: { type: String, required: true },
