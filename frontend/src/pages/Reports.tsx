@@ -4,7 +4,7 @@ import { useAuth } from '../store/authStore';
 import { useToast } from '../components/ui/Toast';
 import { useNavigate } from 'react-router-dom';
 import { CampaignReportContent } from './Campaigns/CampaignReport';
-import { FileText, ArrowRight } from 'lucide-react';
+import { FileText } from 'lucide-react';
 import { Badge } from '../components/ui/Badge';
 
 const Reports = () => {
@@ -16,8 +16,6 @@ const Reports = () => {
   const [selectedEventId, setSelectedEventId] = useState<string>('all');
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [loadingCampaign, setLoadingCampaign] = useState(false);
-  const [allCampaigns, setAllCampaigns] = useState<any[]>([]);
-  const [loadingAll, setLoadingAll] = useState(false);
 
   // Authorization check
   const hasReportAccess = user?.role === 'SuperAdmin' || (user?.accessExpiryDate && new Date(user.accessExpiryDate) > new Date() && !user?.isAccessCancelled);
@@ -29,26 +27,15 @@ const Reports = () => {
       return;
     }
 
-    // Fetch events for the dropdown
+    // Fetch events for the dropdown and table
     api.get('/events')
       .then(res => setEvents(res.data))
       .catch(err => console.error('Failed to fetch events', err));
   }, [hasReportAccess, navigate, showToast]);
 
   useEffect(() => {
-    if (!selectedEventId) {
+    if (!selectedEventId || selectedEventId === 'all') {
       setCampaignId(null);
-      setAllCampaigns([]);
-      return;
-    }
-
-    if (selectedEventId === 'all') {
-      setCampaignId(null);
-      setLoadingAll(true);
-      api.get('/campaigns/all')
-        .then(res => setAllCampaigns(res.data))
-        .catch(err => console.error('Failed to fetch all campaigns', err))
-        .finally(() => setLoadingAll(false));
       return;
     }
 
@@ -72,10 +59,10 @@ const Reports = () => {
       });
   }, [selectedEventId]);
 
-  const campaignStatusVariant = (status: string): 'success' | 'warning' | 'info' | 'default' => {
+  const eventStatusVariant = (status: string): 'success' | 'warning' | 'info' | 'default' => {
     switch (status) {
       case 'Completed': return 'success';
-      case 'Sending': return 'warning';
+      case 'Upcoming': return 'warning';
       case 'Draft': return 'info';
       default: return 'default';
     }
@@ -105,58 +92,50 @@ const Reports = () => {
 
       <div className="pt-4">
         {selectedEventId === 'all' ? (
-          loadingAll ? (
-            <div className="flex items-center justify-center h-64">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
+          <div className="glass-panel rounded-2xl p-6 animate-spring-up">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-sans font-bold text-foreground uppercase tracking-wider">All Events</h3>
             </div>
-          ) : (
-            <div className="glass-panel rounded-2xl p-6 animate-spring-up">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-sans font-bold text-foreground uppercase tracking-wider">All Campaign Reports</h3>
-              </div>
-              {allCampaigns.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border text-left">
-                        <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs">Event</th>
-                        <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs">Status</th>
-                        <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs">Updated</th>
-                        <th className="pb-3 font-semibold text-foreground/60"></th>
+            {events.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left">
+                      <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs">Event Name</th>
+                      <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs">Date</th>
+                      <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs">Status</th>
+                      <th className="pb-3 font-semibold text-foreground/60"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {events.map((evt: any) => (
+                      <tr key={evt._id} className="hover:bg-surfaceHover transition-colors group">
+                        <td className="py-4 font-medium text-foreground">
+                          {evt.name}
+                        </td>
+                        <td className="py-4 text-foreground/60">
+                          {evt.date ? new Date(evt.date).toLocaleDateString() : 'N/A'}
+                        </td>
+                        <td className="py-4">
+                          <Badge variant={eventStatusVariant(evt.status)}>{evt.status || 'Draft'}</Badge>
+                        </td>
+                        <td className="py-4 text-right">
+                          <button
+                            onClick={() => setSelectedEventId(evt._id)}
+                            className="bg-accent/10 text-accent hover:bg-accent/20 font-medium text-xs px-4 py-2 rounded transition-colors uppercase tracking-wider"
+                          >
+                            View
+                          </button>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {allCampaigns.map((camp: any) => (
-                        <tr key={camp._id} className="hover:bg-surfaceHover transition-colors group">
-                          <td className="py-4 font-medium text-foreground">
-                            {camp.eventId?.name || 'Unknown Event'}
-                          </td>
-                          <td className="py-4">
-                            <Badge variant={campaignStatusVariant(camp.status)}>{camp.status}</Badge>
-                          </td>
-                          <td className="py-4 text-foreground/60">
-                            {new Date(camp.updatedAt).toLocaleDateString()}
-                          </td>
-                          <td className="py-4 text-right">
-                            {(camp.status === 'Sending' || camp.status === 'Completed') && (
-                              <button
-                                onClick={() => setSelectedEventId(camp.eventId?._id)}
-                                className="text-accent hover:text-accent/80 font-medium text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                              >
-                                View Report →
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="text-foreground/40 text-center py-8">No campaigns created yet.</p>
-              )}
-            </div>
-          )
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-foreground/40 text-center py-8">No events created yet.</p>
+            )}
+          </div>
         ) : loadingCampaign ? (
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
@@ -175,6 +154,12 @@ const Reports = () => {
             <FileText className="w-16 h-16 text-foreground/20 mb-4" />
             <h3 className="text-xl font-bold text-foreground/70 mb-2">No Reports Available</h3>
             <p className="text-foreground/50">There are no sent or completed campaigns for this event yet.</p>
+            <button
+              onClick={() => setSelectedEventId('all')}
+              className="mt-6 text-accent hover:text-accent/80 font-medium text-sm transition-colors"
+            >
+              ← Back to All Events
+            </button>
           </div>
         )}
       </div>
