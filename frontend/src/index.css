@@ -4,6 +4,7 @@
 
 @layer base {
   :root {
+    color-scheme: light;
     /* SmartStack Light Mode — white-on-black inverted for light */
     --color-background: 255 255 255;
     --color-surface: 248 250 252;
@@ -18,6 +19,7 @@
   }
 
   .dark {
+    color-scheme: dark;
     /* SmartStack Dark Mode — exact match */
     --color-background: 0 0 0;         /* #000000 */
     --color-surface: 10 10 10;         /* #0A0A0A */
