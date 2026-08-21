@@ -105,12 +105,12 @@ const Dashboard = () => {
         <h2 className="text-3xl font-sans font-bold text-foreground animate-slide-in uppercase">Dashboard Overview</h2>
         
         {user?.role === 'SuperAdmin' && (
-          <div className="flex items-center space-x-3">
-            <span className="text-sm font-bold uppercase tracking-wide text-foreground/50">Filter:</span>
+          <div className="flex flex-col">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1">Event</label>
             <select
               value={selectedEventId}
               onChange={(e) => setSelectedEventId(e.target.value)}
-              className="bg-surface border border-border text-foreground px-4 py-2 rounded-md focus:outline-none focus:border-accent transition-colors font-medium text-sm"
+              className="bg-surface border border-border text-foreground px-4 py-2 rounded-md focus:outline-none focus:border-accent transition-colors font-medium text-sm min-w-[180px]"
             >
               <option value="">All Events</option>
               {events.map((evt) => (
