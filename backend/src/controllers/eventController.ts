@@ -78,3 +78,20 @@ export const getEventById = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch event' });
   }
 };
+
+export const updateEvent = async (req: Request, res: Response) => {
+  try {
+    const parsed = createEventSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0].message });
+    }
+
+    const event = await Event.findByIdAndUpdate(req.params.id, parsed.data, { new: true });
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    
+    res.json(event);
+  } catch (error) {
+    console.error('Update event error:', error);
+    res.status(500).json({ error: 'Failed to update event' });
+  }
+};

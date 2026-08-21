@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import EventList from './pages/Events/EventList';
 import EventCreate from './pages/Events/EventCreate';
 import EventDetail from './pages/Events/EventDetail';
+import EventEdit from './pages/Events/EventEdit';
 import ContactList from './pages/Contacts/ContactList';
 import BulkImport from './pages/Contacts/BulkImport';
 import Composer from './pages/Campaigns/Composer';
@@ -49,6 +50,7 @@ function App() {
           <Route path="/events" element={<EventList />} />
           <Route path="/events/create" element={<EventCreate />} />
           <Route path="/events/:id" element={<EventDetail />} />
+          <Route path="/events/:id/edit" element={<EventEdit />} />
           <Route path="/contacts" element={<ContactList />} />
           <Route path="/contacts/import" element={<BulkImport />} />
           <Route path="/campaigns" element={<Composer />} />
