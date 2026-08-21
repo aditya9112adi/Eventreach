@@ -57,25 +57,6 @@ const Composer = () => {
     fetchCampaign();
   }, [selectedEventId]);
 
-  const insertVariable = (variable: string) => {
-    if (!textAreaRef.current) return;
-    const cursorPosition = textAreaRef.current.selectionStart;
-    const textBefore = messageText.substring(0, cursorPosition);
-    const textAfter = messageText.substring(cursorPosition, messageText.length);
-    
-    setMessageText(textBefore + variable + textAfter);
-    
-    // Focus and restore cursor
-    setTimeout(() => {
-      if (textAreaRef.current) {
-        textAreaRef.current.focus();
-        textAreaRef.current.setSelectionRange(
-          cursorPosition + variable.length,
-          cursorPosition + variable.length
-        );
-      }
-    }, 0);
-  };
 
   const handleFileUpload = async (file: File) => {
     setIsUploading(true);
@@ -188,14 +169,6 @@ const Composer = () => {
               </select>
             </div>
 
-            <div>
-              <label className="block text-sm font-sans text-foreground/80 mb-2">Variables</label>
-              <div className="flex flex-wrap gap-2">
-                <Badge className="cursor-pointer hover:bg-surfaceHover transition-colors" onClick={() => insertVariable('{{fullName}}')}>+ {'{{fullName}}'}</Badge>
-                <Badge className="cursor-pointer hover:bg-surfaceHover transition-colors" onClick={() => insertVariable('{{eventName}}')}>+ {'{{eventName}}'}</Badge>
-                <Badge className="cursor-pointer hover:bg-surfaceHover transition-colors" onClick={() => insertVariable('{{venue}}')}>+ {'{{venue}}'}</Badge>
-              </div>
-            </div>
 
             <div>
               <label className="block text-sm font-sans text-foreground/80 mb-2">Message Content</label>
