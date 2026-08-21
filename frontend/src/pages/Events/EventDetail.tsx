@@ -36,7 +36,13 @@ const EventDetail = () => {
     fetchEvent();
   }, [id]);
 
-  if (isLoading) return <div className="p-8 text-center text-foreground/50 animate-pulse">Loading event details...</div>;
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
+      </div>
+    );
+  }
   if (!event) return <div className="p-8 text-center text-destructive">Event not found</div>;
 
   return (

@@ -183,7 +183,9 @@ const ContactList = () => {
             <p>Please select an event to view guests.</p>
           </div>
         ) : isLoading ? (
-          <div className="flex-1 p-8 text-center text-foreground/50">Loading guests...</div>
+          <div className="flex-1 flex items-center justify-center p-12">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
+          </div>
         ) : filteredContacts.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-foreground/50">
             <Users className="w-12 h-12 text-foreground/20 mb-4" />

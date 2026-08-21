@@ -60,11 +60,11 @@ export const LoaderProvider = ({ children }: { children: ReactNode }) => {
       {children}
       {isOpen && (
         <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-background/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-surface border border-border rounded-2xl p-8 shadow-xl flex flex-col items-center min-w-[250px] animate-spring-up">
-            {status === 'loading' && <Loader2 className="w-12 h-12 animate-spin text-accent mb-4" />}
-            {status === 'success' && <CheckCircle2 className="w-12 h-12 text-emerald-500 mb-4 animate-fade-in" />}
-            {status === 'error' && <XCircle className="w-12 h-12 text-destructive mb-4 animate-fade-in" />}
-            <p className="text-foreground font-medium text-center">{message}</p>
+          <div className="flex flex-col items-center animate-spring-up">
+            {status === 'loading' && <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-accent mb-4"></div>}
+            {status === 'success' && <CheckCircle2 className="w-12 h-12 text-emerald-500 mb-4 animate-fade-in drop-shadow-md" />}
+            {status === 'error' && <XCircle className="w-12 h-12 text-destructive mb-4 animate-fade-in drop-shadow-md" />}
+            <p className="text-foreground font-medium text-center tracking-wide">{message}</p>
           </div>
         </div>
       )}
