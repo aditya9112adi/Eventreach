@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { User } from '@eventreach/shared';
 import api from '../../services/api';
 import { Check, X, Loader2, Users } from 'lucide-react';
@@ -157,73 +158,76 @@ const UserApprovals = () => {
       </div>
 
       {/* Approval Modal */}
-      {modalOpen && selectedUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-surface border border-border rounded-xl shadow-2xl w-full max-w-md animate-scale-in flex flex-col">
-            <div className="p-6 border-b border-border">
-              <h2 className="text-xl font-bold uppercase tracking-wide text-foreground">Configure Access</h2>
-              <p className="text-sm text-foreground/60 mt-1">
-                Granting access for <span className="text-accent font-bold">{selectedUser.name}</span>
-              </p>
-            </div>
-            
-            <div className="p-6 space-y-5">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-foreground/80 mb-2">
-                  Access Start Date & Time
-                </label>
-                <input
-                  type="datetime-local"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full bg-background border border-border text-foreground px-4 py-2.5 rounded focus:outline-none focus:border-accent transition-colors"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-foreground/80 mb-2">
-                  Access Duration (Days)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  value={durationDays}
-                  onChange={(e) => setDurationDays(parseInt(e.target.value) || 1)}
-                  className="w-full bg-background border border-border text-foreground px-4 py-2.5 rounded focus:outline-none focus:border-accent transition-colors"
-                />
-              </div>
+      {modalOpen && selectedUser && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+              <div className="bg-surface border border-border rounded-xl shadow-2xl w-full max-w-md animate-scale-in flex flex-col">
+                <div className="p-6 border-b border-border">
+                  <h2 className="text-xl font-bold uppercase tracking-wide text-foreground">Configure Access</h2>
+                  <p className="text-sm text-foreground/60 mt-1">
+                    Granting access for <span className="text-accent font-bold">{selectedUser.name}</span>
+                  </p>
+                </div>
+                
+                <div className="p-6 space-y-5">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-foreground/80 mb-2">
+                      Access Start Date & Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="w-full bg-background border border-border text-foreground px-4 py-2.5 rounded focus:outline-none focus:border-accent transition-colors"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-foreground/80 mb-2">
+                      Access Duration (Days)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={durationDays}
+                      onChange={(e) => setDurationDays(parseInt(e.target.value) || 1)}
+                      className="w-full bg-background border border-border text-foreground px-4 py-2.5 rounded focus:outline-none focus:border-accent transition-colors"
+                    />
+                  </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-foreground/80 mb-2">
-                  Access Expiry Date & Time
-                </label>
-                <input
-                  type="datetime-local"
-                  value={calculateExpiry()}
-                  disabled
-                  className="w-full bg-background/50 border border-border/50 text-foreground/60 px-4 py-2.5 rounded cursor-not-allowed"
-                />
-                <p className="text-xs text-foreground/50 mt-2">Automatically calculated based on duration.</p>
-              </div>
-            </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-foreground/80 mb-2">
+                      Access Expiry Date & Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={calculateExpiry()}
+                      disabled
+                      className="w-full bg-background/50 border border-border/50 text-foreground/60 px-4 py-2.5 rounded cursor-not-allowed"
+                    />
+                    <p className="text-xs text-foreground/50 mt-2">Automatically calculated based on duration.</p>
+                  </div>
+                </div>
 
-            <div className="p-6 border-t border-border flex justify-end space-x-3 bg-white/5 rounded-b-xl">
-              <button
-                onClick={() => setModalOpen(false)}
-                className="px-4 py-2 text-sm font-bold uppercase tracking-wide text-foreground/60 hover:text-foreground transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleApproveSubmit}
-                className="px-4 py-2 bg-accent text-white text-sm font-bold uppercase tracking-wide hover:bg-accent/90 rounded transition-colors"
-              >
-                Approve & Grant Access
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+                <div className="p-6 border-t border-border flex justify-end space-x-3 bg-white/5 rounded-b-xl">
+                  <button
+                    onClick={() => setModalOpen(false)}
+                    className="px-4 py-2 text-sm font-bold uppercase tracking-wide text-foreground/60 hover:text-foreground transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleApproveSubmit}
+                    className="px-4 py-2 bg-accent text-white text-sm font-bold uppercase tracking-wide hover:bg-accent/90 rounded transition-colors"
+                  >
+                    Approve & Grant Access
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 };
