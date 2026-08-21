@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle, XCircle, Clock, Send, Users, TrendingUp, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, CheckCircle, XCircle, Clock, Send, Users, TrendingUp, AlertTriangle, Printer } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import api from '../../services/api';
 import { Badge } from '../../components/ui/Badge';
@@ -139,8 +139,9 @@ export const CampaignReportContent = ({
     <div className="space-y-6 max-w-6xl mx-auto">
       {/* Header */}
       {!hideHeader && (
-        <div className="flex items-center justify-between mb-2 animate-fade-in">
-          <div className="flex items-center space-x-4">
+        <div className="flex items-center justify-between mb-8 animate-fade-in">
+          {/* Left: Buttons */}
+          <div className="flex items-center space-x-4 w-1/3">
             {!hideBackButton && (
               <button
                 onClick={() => navigate(-1)}
@@ -153,22 +154,26 @@ export const CampaignReportContent = ({
             {showPrintButton && (
               <button 
                 onClick={() => window.print()}
-                className="inline-flex items-center px-4 py-2 bg-accent/10 text-accent hover:bg-accent/20 rounded-md font-medium text-sm transition-colors"
+                className="inline-flex items-center px-4 py-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 rounded-md font-medium text-sm transition-colors border border-emerald-500/20"
               >
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                </svg>
+                <Printer className="w-4 h-4 mr-2" />
                 Print Report
               </button>
             )}
-            <div>
-              <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Campaign Report</h2>
-              <p className="text-foreground/50 text-sm">{stats.eventName}</p>
-            </div>
           </div>
-          <Badge variant={stats.campaignStatus === 'Completed' ? 'success' : 'warning'}>
-            {stats.campaignStatus}
-          </Badge>
+          
+          {/* Center: Titles */}
+          <div className="text-center w-1/3">
+            <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Campaign Report</h2>
+            <p className="text-foreground/50 text-sm mt-1">{stats.eventName}</p>
+          </div>
+
+          {/* Right: Badge */}
+          <div className="w-1/3 flex justify-end">
+            <Badge variant={stats.campaignStatus === 'Completed' ? 'success' : 'warning'}>
+              {stats.campaignStatus}
+            </Badge>
+          </div>
         </div>
       )}
 

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getCampaign, saveCampaign, uploadMedia, sendCampaign } from '../controllers/campaignController';
+import { getCampaign, saveCampaign, uploadMedia, sendCampaign, getAllCampaigns } from '../controllers/campaignController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { mediaUpload } from '../middleware/mediaUpload';
 
@@ -7,6 +7,7 @@ const router = Router();
 
 router.use(requireAuth);
 
+router.get('/all', getAllCampaigns);
 router.get('/event/:eventId', getCampaign);
 router.post('/event/:eventId', saveCampaign);
 router.post('/event/:eventId/send', sendCampaign);

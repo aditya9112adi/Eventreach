@@ -98,3 +98,16 @@ export const sendCampaign = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to queue campaign' });
   }
 };
+
+export const getAllCampaigns = async (req: Request, res: Response) => {
+  try {
+    const campaigns = await Campaign.find()
+      .populate('eventId', 'name')
+      .sort({ updatedAt: -1 })
+      .lean();
+    res.json(campaigns);
+  } catch (error) {
+    console.error('Get all campaigns error:', error);
+    res.status(500).json({ error: 'Failed to fetch campaigns' });
+  }
+};
