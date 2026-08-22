@@ -83,10 +83,7 @@ const SendPreview = () => {
       return;
     }
 
-    const confirmSend = window.confirm(
-      `Send this campaign to ${selectedIds.size} recipient${selectedIds.size !== 1 ? 's' : ''}?`
-    );
-    if (!confirmSend) return;
+
 
     setIsSending(true);
     showLoader(`Sending to ${selectedIds.size} recipients...`);
