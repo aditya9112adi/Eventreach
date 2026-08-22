@@ -66,7 +66,7 @@ const Register = () => {
           <img 
             src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
             alt="Events By Occasion Logo" 
-            className="w-96 h-auto object-contain drop-shadow-2xl animate-spin-3d" 
+            className="w-96 h-auto object-contain dark:drop-shadow-2xl mix-blend-multiply dark:mix-blend-normal animate-spin-3d" 
           />
         </div>
       </div>
@@ -80,7 +80,7 @@ const Register = () => {
               <img 
                 src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
                 alt="Events By Occasion Logo" 
-                className="w-40 h-auto object-contain drop-shadow-xl animate-spin-3d" 
+                className="w-40 h-auto object-contain dark:drop-shadow-xl mix-blend-multiply dark:mix-blend-normal animate-spin-3d" 
               />
             </div>
           </div>
