@@ -58,7 +58,7 @@ const Login = () => {
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center mb-6">
           <img 
-            src="/logo.png" 
+            src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
             alt="Events By Occasion Logo" 
             className="w-48 h-auto max-h-48 object-contain drop-shadow-md" 
           />
