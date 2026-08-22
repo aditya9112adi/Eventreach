@@ -63,7 +63,7 @@ const Login = () => {
           <img 
             src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
             alt="Events By Occasion Logo" 
-            className="w-96 h-auto object-contain dark:drop-shadow-2xl mix-blend-multiply dark:mix-blend-normal animate-spin-3d" 
+            className="w-96 dark:w-64 h-auto object-contain dark:drop-shadow-2xl mix-blend-multiply dark:mix-blend-normal animate-spin-3d" 
           />
         </div>
       </div>
@@ -77,7 +77,7 @@ const Login = () => {
               <img 
                 src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
                 alt="Events By Occasion Logo" 
-                className="w-40 h-auto object-contain dark:drop-shadow-xl mix-blend-multiply dark:mix-blend-normal animate-spin-3d" 
+                className="w-48 dark:w-32 h-auto object-contain dark:drop-shadow-xl mix-blend-multiply dark:mix-blend-normal animate-spin-3d" 
               />
             </div>
           </div>
