@@ -60,11 +60,7 @@ const Register = () => {
       </div>
 
       {/* Left Column - 3D Rotating Logo (Desktop Only) */}
-      <div className="hidden lg:flex lg:w-1/2 bg-surfaceHover relative overflow-hidden items-center justify-center border-r border-border/10">
-        <div className="absolute inset-0 bg-gradient-to-br from-accent/10 to-transparent pointer-events-none" />
-        
-        {/* Decorative background circle */}
-        <div className="absolute w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl" />
+      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden items-center justify-center">
         
         <div className="relative z-10 perspective-1000">
           <img 
