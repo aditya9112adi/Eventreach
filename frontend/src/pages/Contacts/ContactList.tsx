@@ -4,6 +4,7 @@ import { Search, Plus, Phone, CheckCircle2, XCircle, AlertTriangle, Users, Trash
 import api from '../../services/api';
 import type { Contact, Event } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
+import { EventSearch } from '../../components/ui/EventSearch';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
@@ -137,16 +138,7 @@ const ContactList = () => {
         <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Guest List</h2>
         
         <div className="flex items-center gap-3 w-full sm:w-auto">
-          <select 
-            className="rounded-md border border-border bg-surface/50 text-foreground px-3 py-2 text-sm focus:ring-2 focus:ring-white/20 outline-none flex-1 sm:flex-none transition-colors"
-            value={activeEvent}
-            onChange={(e) => setActiveEvent(e.target.value)}
-          >
-            <option value="" disabled>Select an Event</option>
-            {events.map(e => (
-              <option key={e._id} value={e._id}>{e.name}</option>
-            ))}
-          </select>
+          <div className="w-full sm:w-64 relative z-20"><EventSearch events={events} value={activeEvent} onChange={(val) => setActiveEvent(val)} placeholder="Select an Event..." allowClear={true} /></div>
           
           <Link to={`/contacts/import?eventId=${activeEvent}`}>
             <Button variant="secondary" disabled={!activeEvent}>
@@ -331,3 +323,4 @@ const ContactList = () => {
 };
 
 export default ContactList;
+

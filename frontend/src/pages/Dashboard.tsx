@@ -1,17 +1,27 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+import { useAuth } from '../store/authStore';
+import { EventSearch } from '../components/ui/EventSearch';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
   LineChart, Line
 } from 'recharts';
 import { CalendarDays, Users, Megaphone, Send, CheckCircle2, XCircle, Clock, ArrowRight } from 'lucide-react';
 import api from '../services/api';
-import { Badge } from '../components/ui/Badge';
-import { useAuth } from '../store/authStore';
+import type { Event, Campaign } from '@eventreach/shared';
+
+interface DashboardStats {
+  totalEvents: number;
+  totalContacts: number;
+  totalCampaigns: number;
+  messagesSent: number;
+  messagesDelivered: number;
+  messagesFailed: number;
+  messagesPending: number;
+}
 
 const Dashboard = () => {
-  const navigate = useNavigate();
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<DashboardStats>({
     totalEvents: 0,
     totalContacts: 0,
     totalCampaigns: 0,
@@ -21,9 +31,9 @@ const Dashboard = () => {
     messagesPending: 0,
   });
   const [chartData, setChartData] = useState<any[]>([]);
-  const [recentCampaigns, setRecentCampaigns] = useState<any[]>([]);
+  const [recentCampaigns, setRecentCampaigns] = useState<Campaign[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [events, setEvents] = useState<any[]>([]);
+  const [events, setEvents] = useState<Event[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string>('');
   const { user } = useAuth(); // Assume we need to check if user is SuperAdmin to show filter
 
@@ -34,7 +44,7 @@ const Dashboard = () => {
         const query = selectedEventId ? `?eventId=${selectedEventId}` : '';
         const [statsRes, activityRes, eventsRes] = await Promise.all([
           api.get(`/dashboard/stats${query}`),
-          api.get(`/dashboard/recent-activity${query}`),
+          api.get(`/dashboard/activity${query}`),
           api.get('/events') // Fetch events for the filter dropdown
         ]);
         setStats(statsRes.data);
@@ -90,35 +100,20 @@ const Dashboard = () => {
     { label: 'Pending', value: stats.messagesPending, icon: Clock, color: 'text-amber-500 dark:text-amber-400', bg: 'bg-amber-500/10' },
   ];
 
-  const campaignStatusVariant = (status: string): 'success' | 'warning' | 'info' | 'default' => {
-    switch (status) {
-      case 'Completed': return 'success';
-      case 'Sending': return 'warning';
-      case 'Draft': return 'info';
-      default: return 'default';
-    }
-  };
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-3xl font-sans font-bold text-foreground animate-slide-in uppercase">Dashboard Overview</h2>
         
         {user?.role === 'SuperAdmin' && (
-          <div className="flex flex-col">
+          <div className="flex flex-col z-20">
             <label className="text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1">Event</label>
-            <select
+            <EventSearch 
+              events={events}
               value={selectedEventId}
-              onChange={(e) => setSelectedEventId(e.target.value)}
-              className="bg-surface border border-border text-foreground px-4 py-2 rounded-md focus:outline-none focus:border-accent transition-colors font-medium text-sm min-w-[180px]"
-            >
-              <option value="">All Events</option>
-              {events.map((evt) => (
-                <option key={evt._id} value={evt._id}>
-                  {evt.name}
-                </option>
-              ))}
-            </select>
+              onChange={(val) => setSelectedEventId(val)}
+              placeholder="All Events"
+            />
           </div>
         )}
       </div>
