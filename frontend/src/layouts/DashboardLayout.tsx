@@ -64,13 +64,13 @@ const DashboardLayout = () => {
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
         <div className="h-16 flex items-center px-6 border-b border-border">
-          <img src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'} alt="Events By Occasion" className="w-8 h-8 mr-3 object-contain dark:drop-shadow-sm mix-blend-multiply dark:mix-blend-normal" />
+          <img src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'} alt="Events By Occasion" className="w-12 h-12 dark:w-8 dark:h-8 mr-3 object-contain dark:drop-shadow-sm mix-blend-multiply dark:mix-blend-normal" />
           <span className="text-xl font-sans font-bold tracking-tighter uppercase truncate" title="Events By Occasion">Events By Occasion</span>
           <button 
             className="ml-auto lg:hidden text-foreground/50 hover:text-foreground"
             onClick={() => setSidebarOpen(false)}
           >
-            <X className="w-6 h-6" />
+            <X className="w-10 h-10 dark:w-6 dark:h-6" />
           </button>
         </div>
 
@@ -133,14 +133,14 @@ const DashboardLayout = () => {
         <header className="bg-surface border-b border-border lg:hidden sticky top-0 z-30">
           <div className="flex items-center justify-between px-4 h-16">
             <div className="flex items-center min-w-0">
-              <img src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'} alt="Events By Occasion" className="w-6 h-6 mr-2 object-contain dark:drop-shadow-sm mix-blend-multiply dark:mix-blend-normal" />
+              <img src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'} alt="Events By Occasion" className="w-10 h-10 dark:w-6 dark:h-6 mr-2 object-contain dark:drop-shadow-sm mix-blend-multiply dark:mix-blend-normal" />
               <span className="text-lg font-sans font-bold text-foreground uppercase tracking-tighter truncate">Events By Occasion</span>
             </div>
             <button
               onClick={() => setSidebarOpen(true)}
               className="p-2 text-foreground/50 hover:text-foreground hover:bg-foreground/5 rounded-md"
             >
-              <Menu className="w-6 h-6" />
+              <Menu className="w-10 h-10 dark:w-6 dark:h-6" />
             </button>
           </div>
         </header>
