@@ -59,16 +59,14 @@ const Register = () => {
       </div>
 
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="flex justify-center">
-          <div className="w-16 h-16 rounded-xl overflow-hidden flex items-center justify-center bg-white shadow-sm border border-border/50">
-            <img 
-              src="/logo.jpg" 
-              alt="Events By Occasion Logo" 
-              className="w-12 h-12 object-contain" 
-            />
-          </div>
+        <div className="flex justify-center mb-6">
+          <img 
+            src="/logo.png" 
+            alt="Events By Occasion Logo" 
+            className="w-48 h-auto max-h-48 object-contain drop-shadow-md" 
+          />
         </div>
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-foreground tracking-tight">
+        <h2 className="text-center text-3xl font-extrabold text-foreground tracking-tight">
           Create Account
         </h2>
         <p className="mt-2 text-center text-sm text-foreground/60">
