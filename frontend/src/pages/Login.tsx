@@ -60,7 +60,7 @@ const Login = () => {
           <img 
             src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
             alt="Events By Occasion Logo" 
-            className="w-48 h-auto max-h-48 object-contain drop-shadow-md" 
+            className="w-32 h-auto max-h-32 object-contain drop-shadow-md" 
           />
         </div>
         <p className="mt-2 text-center text-sm text-foreground/60">
