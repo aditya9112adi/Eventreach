@@ -64,8 +64,8 @@ const DashboardLayout = () => {
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
         <div className="h-16 flex items-center px-6 border-b border-border">
-          <img src="/logo.jpg" alt="EventReach" className="w-8 h-8 mr-3 object-contain bg-white rounded-md p-1" />
-          <span className="text-xl font-sans font-bold tracking-tighter uppercase">EventReach</span>
+          <img src="/logo.jpg" alt="Events By Occasion" className="w-8 h-8 mr-3 object-contain bg-white rounded-md p-1" />
+          <span className="text-xl font-sans font-bold tracking-tighter uppercase truncate" title="Events By Occasion">Events By Occasion</span>
           <button 
             className="ml-auto lg:hidden text-foreground/50 hover:text-foreground"
             onClick={() => setSidebarOpen(false)}
@@ -132,9 +132,9 @@ const DashboardLayout = () => {
       <div className="flex-1 flex flex-col min-w-0 relative z-10 bg-background">
         <header className="bg-surface border-b border-border lg:hidden sticky top-0 z-30">
           <div className="flex items-center justify-between px-4 h-16">
-            <div className="flex items-center">
-              <img src="/logo.jpg" alt="EventReach" className="w-6 h-6 mr-2 object-contain bg-white rounded p-0.5" />
-              <span className="text-lg font-sans font-bold text-foreground uppercase tracking-tighter">EventReach</span>
+            <div className="flex items-center min-w-0">
+              <img src="/logo.jpg" alt="Events By Occasion" className="w-6 h-6 mr-2 object-contain bg-white rounded p-0.5" />
+              <span className="text-lg font-sans font-bold text-foreground uppercase tracking-tighter truncate">Events By Occasion</span>
             </div>
             <button
               onClick={() => setSidebarOpen(true)}
