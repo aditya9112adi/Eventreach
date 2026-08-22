@@ -47,156 +47,180 @@ const Register = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-      <div className="absolute top-4 right-4">
+    <div className="min-h-screen bg-background flex">
+      {/* Theme Toggle */}
+      <div className="absolute top-4 right-4 z-50">
         <button
           onClick={toggleTheme}
-          className="p-2 rounded-md text-foreground/60 hover:text-foreground hover:bg-foreground/5 transition-colors"
+          className="p-2 rounded-md text-foreground/60 hover:text-foreground hover:bg-foreground/5 transition-colors bg-background/50 backdrop-blur-sm border border-border/50"
           title="Toggle Theme"
         >
           {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
         </button>
       </div>
 
-      <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="flex justify-center mb-6">
+      {/* Left Column - 3D Rotating Logo (Desktop Only) */}
+      <div className="hidden lg:flex lg:w-1/2 bg-surfaceHover relative overflow-hidden items-center justify-center border-r border-border/10">
+        <div className="absolute inset-0 bg-gradient-to-br from-accent/10 to-transparent pointer-events-none" />
+        
+        {/* Decorative background circle */}
+        <div className="absolute w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl" />
+        
+        <div className="relative z-10 perspective-1000">
           <img 
             src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
             alt="Events By Occasion Logo" 
-            className="w-32 h-auto max-h-32 object-contain drop-shadow-md" 
+            className="w-96 h-auto object-contain drop-shadow-2xl animate-spin-3d" 
           />
         </div>
-        <h2 className="text-center text-3xl font-extrabold text-foreground tracking-tight">
-          Create Account
-        </h2>
-        <p className="mt-2 text-center text-sm text-foreground/60">
-          Register to join Events By Occasion
-        </p>
       </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-card py-8 px-4 shadow sm:rounded-lg sm:px-10 border border-border/50">
-          {apiError && (
-            <div className="bg-destructive/10 border border-destructive/20 text-destructive p-3 rounded-md mb-6 text-sm text-center">
-              {apiError}
+      {/* Right Column - Form */}
+      <div className="flex-1 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-20 xl:px-24">
+        <div className="mx-auto w-full max-w-sm lg:max-w-md">
+          {/* Mobile Logo (Visible only on small screens) */}
+          <div className="flex justify-center mb-8 lg:hidden">
+            <div className="perspective-1000">
+              <img 
+                src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
+                alt="Events By Occasion Logo" 
+                className="w-40 h-auto object-contain drop-shadow-xl animate-spin-3d" 
+              />
             </div>
-          )}
+          </div>
+          
+          <div className="text-center lg:text-left mb-8 animate-fade-in">
+            <h2 className="text-3xl font-extrabold text-foreground tracking-tight">
+              Create Account
+            </h2>
+            <p className="mt-2 text-sm text-foreground/60">
+              Register to join Events By Occasion
+            </p>
+          </div>
 
-          {successMsg && (
-            <div className="bg-accent/10 border border-accent/20 text-accent p-3 rounded-md mb-6 text-sm text-center">
-              {successMsg}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">
-                Full Name
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <User className="h-5 w-5 text-foreground/40" />
-                </div>
-                <input
-                  type="text"
-                  {...register('name')}
-                  className={`block w-full pl-10 pr-3 py-2 border ${
-                    errors.name ? 'border-destructive' : 'border-input'
-                  } rounded-md bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent sm:text-sm`}
-                  placeholder="John Doe"
-                />
+          <div className="bg-card py-8 px-4 shadow-xl shadow-black/5 sm:rounded-2xl sm:px-10 border border-border/50 animate-spring-up">
+            {apiError && (
+              <div className="bg-destructive/10 border border-destructive/20 text-destructive p-3 rounded-lg mb-6 text-sm text-center font-medium">
+                {apiError}
               </div>
-              {errors.name && <p className="mt-1 text-sm text-destructive">{errors.name.message}</p>}
-            </div>
+            )}
 
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">
-                Email Address
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail className="h-5 w-5 text-foreground/40" />
-                </div>
-                <input
-                  type="email"
-                  {...register('email')}
-                  className={`block w-full pl-10 pr-3 py-2 border ${
-                    errors.email ? 'border-destructive' : 'border-input'
-                  } rounded-md bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent sm:text-sm`}
-                  placeholder="name@company.com"
-                />
+            {successMsg && (
+              <div className="bg-accent/10 border border-accent/20 text-accent p-3 rounded-lg mb-6 text-sm text-center font-medium">
+                {successMsg}
               </div>
-              {errors.email && <p className="mt-1 text-sm text-destructive">{errors.email.message}</p>}
-            </div>
+            )}
 
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">
-                Password
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-5 w-5 text-foreground/40" />
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1.5">
+                  Full Name
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <User className="h-5 w-5 text-foreground/40" />
+                  </div>
+                  <input
+                    type="text"
+                    {...register('name')}
+                    className={`block w-full pl-10 pr-3 py-2.5 border ${
+                      errors.name ? 'border-destructive' : 'border-input'
+                    } rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm`}
+                    placeholder="John Doe"
+                  />
                 </div>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  {...register('password')}
-                  className={`block w-full pl-10 pr-10 py-2 border ${
-                    errors.password ? 'border-destructive' : 'border-input'
-                  } rounded-md bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent sm:text-sm`}
-                  placeholder="••••••••"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4 text-foreground/40 hover:text-foreground" />
-                  ) : (
-                    <Eye className="h-4 w-4 text-foreground/40 hover:text-foreground" />
-                  )}
-                </button>
+                {errors.name && <p className="mt-1.5 text-sm text-destructive font-medium">{errors.name.message}</p>}
               </div>
-              {errors.password && <p className="mt-1 text-sm text-destructive">{errors.password.message}</p>}
-            </div>
 
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">
-                Role
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Briefcase className="h-5 w-5 text-foreground/40" />
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1.5">
+                  Email Address
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Mail className="h-5 w-5 text-foreground/40" />
+                  </div>
+                  <input
+                    type="email"
+                    {...register('email')}
+                    className={`block w-full pl-10 pr-3 py-2.5 border ${
+                      errors.email ? 'border-destructive' : 'border-input'
+                    } rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm`}
+                    placeholder="name@company.com"
+                  />
                 </div>
-                <select
-                  {...register('role')}
-                  className="block w-full pl-10 pr-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent sm:text-sm appearance-none"
-                >
-                  <option value="User">User</option>
-                  <option value="Admin">Admin</option>
-                </select>
+                {errors.email && <p className="mt-1.5 text-sm text-destructive font-medium">{errors.email.message}</p>}
               </div>
-            </div>
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-accent hover:bg-accent/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {isSubmitting ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                'Register'
-              )}
-            </button>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1.5">
+                  Password
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Lock className="h-5 w-5 text-foreground/40" />
+                  </div>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    {...register('password')}
+                    className={`block w-full pl-10 pr-10 py-2.5 border ${
+                      errors.password ? 'border-destructive' : 'border-input'
+                    } rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm`}
+                    placeholder="••••••••"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center transition-colors"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-5 w-5 text-foreground/40 hover:text-foreground" />
+                    ) : (
+                      <Eye className="h-5 w-5 text-foreground/40 hover:text-foreground" />
+                    )}
+                  </button>
+                </div>
+                {errors.password && <p className="mt-1.5 text-sm text-destructive font-medium">{errors.password.message}</p>}
+              </div>
 
-            <div className="text-center mt-4 text-sm">
-              <span className="text-foreground/60">Already have an account? </span>
-              <Link to="/login" className="font-medium text-accent hover:text-accent/80">
-                Sign in
-              </Link>
-            </div>
-          </form>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1.5">
+                  Role
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Briefcase className="h-5 w-5 text-foreground/40" />
+                  </div>
+                  <select
+                    {...register('role')}
+                    className="block w-full pl-10 pr-3 py-2.5 border border-input rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm appearance-none cursor-pointer"
+                  >
+                    <option value="User">User</option>
+                    <option value="Admin">Admin</option>
+                  </select>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-accent hover:bg-accent/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed transition-all transform active:scale-[0.98] mt-2"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  'Register'
+                )}
+              </button>
+
+              <div className="text-center mt-6 text-sm">
+                <span className="text-foreground/60">Already have an account? </span>
+                <Link to="/login" className="font-bold text-accent hover:text-accent/80 transition-colors">
+                  Sign in
+                </Link>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
     </div>

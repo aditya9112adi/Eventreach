@@ -118,3 +118,26 @@
 .animate-spring-up {
   animation: spring-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
+
+@keyframes spin-3d {
+  0% { transform: perspective(1000px) rotateY(0deg) rotateX(5deg); }
+  50% { transform: perspective(1000px) rotateY(180deg) rotateX(-5deg); }
+  100% { transform: perspective(1000px) rotateY(360deg) rotateX(5deg); }
+}
+
+@keyframes float-3d {
+  0% { transform: translateY(0px) rotateY(0deg); }
+  50% { transform: translateY(-20px) rotateY(180deg); }
+  100% { transform: translateY(0px) rotateY(360deg); }
+}
+
+.animate-spin-3d {
+  animation: spin-3d 8s linear infinite;
+  transform-style: preserve-3d;
+}
+
+.animate-float-3d {
+  animation: float-3d 12s ease-in-out infinite;
+  transform-style: preserve-3d;
+}
+
