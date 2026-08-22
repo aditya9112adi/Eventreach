@@ -4,6 +4,7 @@ import { ArrowLeft, Save, Send, Image, FileText, Plus, X } from 'lucide-react';
 import api from '../../services/api';
 import type { Event, MediaAttachment } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
+import { EventSearch } from '../../components/ui/EventSearch';
 import { FileUpload } from '../../components/ui/FileUpload';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
@@ -157,16 +158,7 @@ const Composer = () => {
           <div className="bg-surface rounded-xl border border-border p-6 space-y-6">
             <div>
               <label className="block text-sm font-sans text-foreground/80 mb-2">Target Event</label>
-              <select 
-                className="w-full max-w-md rounded-md border border-border bg-surface/50 text-foreground px-3 py-2.5 text-sm focus:ring-2 focus:ring-white/20 outline-none transition-all duration-200"
-                value={selectedEventId}
-                onChange={(e) => setSelectedEventId(e.target.value)}
-              >
-                <option value="" disabled>Select an Event</option>
-                {events.map(e => (
-                  <option key={e._id} value={e._id}>{e.name}</option>
-                ))}
-              </select>
+              <div className="w-full max-w-md relative z-20"><EventSearch events={events} value={selectedEventId} onChange={(val) => setSelectedEventId(val)} placeholder="Select an Event..." allowClear={false} /></div>
             </div>
 
 
@@ -288,3 +280,4 @@ const Composer = () => {
 };
 
 export default Composer;
+

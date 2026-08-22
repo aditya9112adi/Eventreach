@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle2, XCircle, AlertTriangle, Upload } from 'lucide-
 import api from '../../services/api';
 import type { ExtractedContact, Event } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
+import { EventSearch } from '../../components/ui/EventSearch';
 import { Badge } from '../../components/ui/Badge';
 import { FileUpload } from '../../components/ui/FileUpload';
 import { useLoader } from '../../components/ui/FullScreenLoader';
@@ -154,16 +155,7 @@ const BulkImport = () => {
 
             <div>
               <label className="block text-sm font-sans text-foreground/80 mb-2">Target Event</label>
-              <select 
-                className="w-full max-w-md rounded-md border border-border bg-surface/50 text-foreground px-3 py-2.5 text-sm focus:ring-2 focus:ring-white/20 outline-none transition-all duration-200"
-                value={selectedEventId}
-                onChange={(e) => setSelectedEventId(e.target.value)}
-              >
-                <option value="" disabled>Select an Event</option>
-                {events.map(e => (
-                  <option key={e._id} value={e._id}>{e.name}</option>
-                ))}
-              </select>
+              <div className="w-full max-w-md relative z-20"><EventSearch events={events} value={selectedEventId} onChange={(val) => setSelectedEventId(val)} placeholder="Select an Event..." allowClear={false} /></div>
             </div>
 
             <div className="pt-4">
@@ -285,3 +277,4 @@ const BulkImport = () => {
 };
 
 export default BulkImport;
+
