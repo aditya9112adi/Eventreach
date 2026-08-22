@@ -63,7 +63,7 @@ const Register = () => {
           <div className="w-16 h-16 rounded-xl overflow-hidden flex items-center justify-center bg-white shadow-sm border border-border/50">
             <img 
               src="/logo.jpg" 
-              alt="EventReach Logo" 
+              alt="Events By Occasion Logo" 
               className="w-12 h-12 object-contain" 
             />
           </div>
@@ -72,7 +72,7 @@ const Register = () => {
           Create Account
         </h2>
         <p className="mt-2 text-center text-sm text-foreground/60">
-          Register to join EventReach
+          Register to join Events By Occasion
         </p>
       </div>
 
