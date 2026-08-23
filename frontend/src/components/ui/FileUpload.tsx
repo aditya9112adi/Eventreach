@@ -76,8 +76,9 @@ export const FileUpload: React.FC<FileUploadProps> = ({
         Support for a single or bulk upload. Strictly prohibit from uploading company data or other band files.
       </p>
       <p className="text-xs text-foreground/40 mt-2">
-        Allowed formats: .xlsx, .xls, .pdf (Max {maxSize / 1024 / 1024}MB)
+        Allowed formats: {accept ? Object.values(accept).flat().join(', ') : 'Any'} (Max {maxSize / 1024 / 1024}MB)
       </p>
     </div>
   );
 };
+

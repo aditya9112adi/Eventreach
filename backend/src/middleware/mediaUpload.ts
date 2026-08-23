@@ -24,13 +24,15 @@ const fileFilter = (req: any, file: any, cb: any) => {
     'image/png',
     'video/mp4',
     'audio/mpeg', // mp3
-    'application/pdf'
+    'application/pdf',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   ];
 
   if (allowedMimeTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error('Invalid file type. Only JPEG, PNG, MP4, MP3, and PDF files are allowed.'), false);
+    cb(new Error('Invalid file type. Only Images, Video, Audio, PDF, and Excel files are allowed.'), false);
   }
 };
 
