@@ -78,16 +78,19 @@ export const sendCampaign = async (req: Request, res: Response) => {
     const { eventId } = req.params;
     const { recipientIds } = req.body;
     
-    // Set status to sending
-    const campaign = await Campaign.findOneAndUpdate(
-      { eventId },
-      { status: 'Sending' },
-      { new: true }
-    );
-
+    const campaign = await Campaign.findOne({ eventId });
     if (!campaign) {
       return res.status(404).json({ error: 'Campaign not found' });
     }
+
+    // Set status and push current content to history
+    campaign.status = 'Sending';
+    campaign.history.push({
+      messageText: campaign.messageText,
+      mediaAttachments: campaign.mediaAttachments,
+      sentAt: new Date()
+    });
+    await campaign.save();
 
     // Trigger async processing queue
     await queueService.processCampaign(campaign._id.toString(), recipientIds);
@@ -111,3 +114,4 @@ export const getAllCampaigns = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch campaigns' });
   }
 };
+

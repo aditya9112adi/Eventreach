@@ -19,6 +19,7 @@ const Composer = () => {
   const [selectedEventId, setSelectedEventId] = useState<string>(defaultEventId);
   const [messageText, setMessageText] = useState('');
   const [attachments, setAttachments] = useState<MediaAttachment[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isSending, setIsSending] = useState(false);
   
@@ -187,6 +188,34 @@ const Composer = () => {
             </div>
 
 
+            {/* History Section */}
+            {history.length > 0 && (
+              <div className="mb-6 space-y-4">
+                <label className="block text-sm font-sans font-semibold text-foreground/80 mb-2">Previously Shared Messages</label>
+                {history.map((item, idx) => (
+                  <div key={`hist-box-${idx}`} className="bg-surface/50 border border-border rounded-lg p-4 opacity-80">
+                    <div className="flex justify-between items-center mb-2">
+                      <Badge variant="success">Sent</Badge>
+                      <span className="text-xs text-foreground/50">{new Date(item.sentAt).toLocaleString()}</span>
+                    </div>
+                    {item.messageText && (
+                      <p className="text-sm text-foreground whitespace-pre-wrap">{item.messageText}</p>
+                    )}
+                    {item.mediaAttachments && item.mediaAttachments.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {item.mediaAttachments.map((att: any, aIdx: number) => (
+                          <div key={`hist-att-${aIdx}`} className="flex items-center gap-1 text-xs bg-black/20 dark:bg-white/10 px-2 py-1 rounded">
+                            {att.type === 'image' ? <Image className="w-3 h-3" /> : <FileText className="w-3 h-3" />}
+                            <span className="truncate max-w-[120px]">{att.filename}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-sans text-foreground/80 mb-2">Message Content</label>
               <textarea
@@ -287,6 +316,29 @@ const Composer = () => {
                 {/* WA Chat Body */}
                 <div className="flex-1 p-4 overflow-y-auto" style={{ backgroundImage: "url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')", backgroundSize: 'contain' }}>
                   
+                  {/* History Messages */}
+                  {history.map((item, idx) => (
+                    <div key={`wa-hist-${idx}`}>
+                      {item.mediaAttachments && item.mediaAttachments.map((att: any, aIdx: number) => (
+                        <div key={`wa-hist-att-${aIdx}`} className="bg-white p-1 rounded-lg shadow-sm w-[85%] mb-2 float-left clear-both rounded-tl-none opacity-90">
+                          <div className="bg-slate-100 h-32 rounded flex items-center justify-center text-slate-400 mb-1">
+                            {att.type === 'image' ? <Image className="w-8 h-8" /> : <FileText className="w-8 h-8" />}
+                          </div>
+                          <p className="text-xs text-slate-500 truncate px-1">{att.filename}</p>
+                        </div>
+                      ))}
+                      {item.messageText && (
+                        <div className="bg-white p-2 rounded-lg shadow-sm w-[85%] mb-4 float-left clear-both rounded-tl-none relative pb-6 text-[13px] text-slate-800 whitespace-pre-wrap opacity-90">
+                          {item.messageText}
+                          <span className="absolute bottom-1 right-2 text-[10px] text-slate-400">
+                            {new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {/* Current Draft Messages */}
                   {attachments.map((att, idx) => (
                     <div key={idx} className="bg-white p-1 rounded-lg shadow-sm w-[85%] mb-2 float-left clear-both rounded-tl-none">
                       <div className="bg-slate-100 h-32 rounded flex items-center justify-center text-slate-400 mb-1">
@@ -324,6 +376,7 @@ const Composer = () => {
 };
 
 export default Composer;
+
 
 
 

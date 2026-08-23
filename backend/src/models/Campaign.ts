@@ -6,11 +6,18 @@ export interface IMediaAttachment {
   filename: string;
 }
 
+export interface IMessageHistory {
+  messageText: string;
+  mediaAttachments: IMediaAttachment[];
+  sentAt: Date;
+}
+
 export interface ICampaign extends Document {
   eventId: mongoose.Types.ObjectId;
   messageText: string;
   mediaAttachments: IMediaAttachment[];
   status: 'Draft' | 'Scheduled' | 'Sending' | 'Completed';
+  history: IMessageHistory[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,9 +45,15 @@ const campaignSchema = new Schema(
       type: String,
       enum: ['Draft', 'Scheduled', 'Sending', 'Completed'],
       default: 'Draft'
-    }
+    },
+    history: [{
+      messageText: String,
+      mediaAttachments: [mediaAttachmentSchema],
+      sentAt: { type: Date, default: Date.now }
+    }]
   },
   { timestamps: true }
 );
 
 export const Campaign = mongoose.model<ICampaign>('Campaign', campaignSchema);
+
