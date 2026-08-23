@@ -53,9 +53,13 @@ const Composer = () => {
         if (response.data) {
           setMessageText(response.data.messageText || '');
           setAttachments(response.data.mediaAttachments || []);
+          setHistory(response.data.history || []);
         }
       } catch (err) {
         console.error('Failed to fetch campaign', err);
+        setMessageText('');
+        setAttachments([]);
+        setHistory([]);
       }
     };
     fetchCampaign();
@@ -351,7 +355,9 @@ const Composer = () => {
                   {messageText && (
                     <div className="bg-white p-2 rounded-lg shadow-sm w-[85%] float-left clear-both rounded-tl-none relative pb-6 text-[13px] text-slate-800 whitespace-pre-wrap">
                       {getPreviewText()}
-                      <span className="absolute bottom-1 right-2 text-[10px] text-slate-400">12:00 PM</span>
+                      <span className="absolute bottom-1 right-2 text-[10px] text-slate-400">
+                        {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
                     </div>
                   )}
 
