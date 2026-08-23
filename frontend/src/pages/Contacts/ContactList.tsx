@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { Search, Plus, Phone, CheckCircle2, XCircle, AlertTriangle, Users, Trash2, Edit3 } from 'lucide-react';
+import { Search, Plus, Phone, CheckCircle2, XCircle, AlertTriangle, Users, Trash2, Edit3, X, ChevronRight } from 'lucide-react';
 import api from '../../services/api';
 import type { Contact, Event } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
-import { EventSearch } from '../../components/ui/EventSearch';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
@@ -22,14 +21,19 @@ type ContactForm = z.infer<typeof contactSchema>;
 
 const ContactList = () => {
   const [searchParams] = useSearchParams();
-  const selectedEventId = searchParams.get('eventId');
+  const initialEventId = searchParams.get('eventId');
   const { showToast } = useToast();
   
   const [events, setEvents] = useState<Event[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [activeEvent, setActiveEvent] = useState<string>(selectedEventId || '');
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Inline Event Search State
+  const [eventSearchQuery, setEventSearchQuery] = useState('');
+  const [activeEvent, setActiveEvent] = useState<Event | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
   
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
@@ -40,25 +44,42 @@ const ContactList = () => {
     defaultValues: { countryCode: 'US' }
   });
 
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
   useEffect(() => {
     const fetchEvents = async () => {
       try {
         const response = await api.get('/events');
         setEvents(response.data);
-        
+        if (initialEventId) {
+          const found = response.data.find((e: Event) => e._id === initialEventId);
+          if (found) {
+            setActiveEvent(found);
+            setEventSearchQuery(found.name);
+          }
+        }
       } catch (error) {
         console.error('Failed to fetch events', error);
       }
     };
     fetchEvents();
-  }, []);
+  }, [initialEventId]);
 
   useEffect(() => {
     const fetchContacts = async () => {
-      
       setIsLoading(true);
       try {
-        const response = await api.get(`/contacts/event/${activeEvent}`);
+        const endpoint = activeEvent ? `/contacts/event/${activeEvent._id}` : '/contacts';
+        const response = await api.get(endpoint);
         setContacts(response.data);
       } catch (error) {
         console.error('Failed to fetch contacts', error);
@@ -69,12 +90,44 @@ const ContactList = () => {
     fetchContacts();
   }, [activeEvent]);
 
+  // Live-filtered suggestions based on event search query
+  const eventSuggestions = useMemo(() => {
+    const q = eventSearchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return events.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.type?.toLowerCase().includes(q) ||
+        e.organizerName?.toLowerCase().includes(q) ||
+        e.venue?.toLowerCase().includes(q)
+    ).slice(0, 8);
+  }, [events, eventSearchQuery]);
+
+  const handleSelectEvent = (event: Event) => {
+    setActiveEvent(event);
+    setEventSearchQuery(event.name);
+    setSearchOpen(false);
+  };
+
+  const handleClearEventSearch = () => {
+    setActiveEvent(null);
+    setEventSearchQuery('');
+    setSearchOpen(false);
+  };
+
+  const handleEventSearchChange = (value: string) => {
+    setEventSearchQuery(value);
+    setActiveEvent(null);
+    setSearchOpen(value.trim().length > 0);
+  };
+
   const onAddContact = async (data: ContactForm) => {
+    if (!activeEvent) return;
     try {
       setAddError('');
       const response = await api.post('/contacts', {
         ...data,
-        eventId: activeEvent
+        eventId: activeEvent._id
       });
       setContacts([response.data, ...contacts]);
       setIsAddModalOpen(false);
@@ -133,12 +186,66 @@ const ContactList = () => {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in">
-        <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Guest List</h2>
+        <div>
+          <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Guest List</h2>
+          {activeEvent && (
+            <p className="text-xs text-foreground/50 mt-1 flex items-center gap-1">
+              Showing:
+              <span className="text-accent font-semibold">{activeEvent.name}</span>
+            </p>
+          )}
+        </div>
         
         <div className="flex items-center gap-3 w-full sm:w-auto">
-          <div className="w-full sm:w-64 relative z-50"><EventSearch events={events} value={activeEvent} onChange={(val) => setActiveEvent(val)} placeholder="Select an Event..." allowClear={true} /></div>
+          {/* Inline Event Search Autocomplete */}
+          <div className="flex flex-col w-full sm:w-64 relative z-50" ref={searchRef}>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/40 pointer-events-none" />
+              <input
+                type="text"
+                value={eventSearchQuery}
+                onChange={(e) => handleEventSearchChange(e.target.value)}
+                onFocus={() => { if (eventSearchQuery.trim()) setSearchOpen(true); }}
+                placeholder="All Events (Search...)"
+                className={'bg-surface border text-foreground pl-9 pr-8 py-2 rounded-md focus:outline-none transition-colors text-sm w-full placeholder:text-foreground/50 ' + (activeEvent ? 'border-accent/50 bg-accent/5' : 'border-border focus:border-accent')}
+              />
+              {eventSearchQuery && (
+                <button onClick={handleClearEventSearch} className="absolute right-2 top-1/2 -translate-y-1/2 text-foreground/40 hover:text-foreground transition-colors">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+
+              {/* Inline dropdown results */}
+              {searchOpen && eventSearchQuery.trim().length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-surface border border-border rounded-md shadow-xl overflow-hidden">
+                  {eventSuggestions.length === 0 ? (
+                    <div className="px-4 py-3 text-sm text-foreground/50 flex items-center gap-2">
+                      <Search className="w-4 h-4 opacity-40" />
+                      No events found
+                    </div>
+                  ) : (
+                    <div>
+                      {eventSuggestions.map((evt) => (
+                        <button
+                          key={evt._id}
+                          className={'w-full text-left px-4 py-2.5 hover:bg-surfaceHover transition-colors flex items-center justify-between gap-2 group ' + (activeEvent?._id === evt._id ? 'bg-accent/10' : '')}
+                          onMouseDown={(e) => { e.preventDefault(); handleSelectEvent(evt); }}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">{evt.name}</p>
+                            <p className="text-xs text-foreground/50 truncate">{evt.type} &middot; {evt.date}</p>
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-foreground/30 group-hover:text-accent shrink-0 transition-colors" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
           
-          <Link to={`/contacts/import?eventId=${activeEvent}`}>
+          <Link to={`/contacts/import?eventId=${activeEvent?._id || ''}`}>
             <Button variant="secondary" disabled={!activeEvent}>
               Import from File
             </Button>
