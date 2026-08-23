@@ -185,7 +185,7 @@ const ContactList = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in relative z-50">
         <div>
           <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Guest List</h2>
           {activeEvent && (

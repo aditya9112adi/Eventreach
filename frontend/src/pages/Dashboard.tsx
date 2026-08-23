@@ -180,7 +180,7 @@ const Dashboard = () => {
         </div>
 
         {isSuperAdmin && (
-          <div className='flex flex-col sm:flex-row items-start sm:items-end gap-3'>
+          <div className='flex flex-col sm:flex-row items-start sm:items-end gap-3 relative z-50'>
 
             {/* FILTER 1: Status Dropdown — independent, re-fetches stats */}
             <div className='flex flex-col'>
