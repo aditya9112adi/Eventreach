@@ -6,7 +6,7 @@ import { whatsappService } from './WhatsAppService';
 
 export class QueueService {
   
-  async processCampaign(campaignId: string, recipientIds?: string[]) {
+  async processCampaign(campaignId: string, recipientIds?: string[], messageText?: string, mediaAttachments?: any[]) {
     try {
       const campaign = await Campaign.findById(campaignId).populate('eventId');
       if (!campaign) throw new Error('Campaign not found');
@@ -43,7 +43,18 @@ export class QueueService {
 
       // 3. Process Async in Batches
       // Fire and forget (in a real production system, this would be pushed to Redis/BullMQ)
-      this.processBatch(campaignId, contacts, campaign, eventName, venue).catch(err => {
+      
+      // Fallback to history if not provided directly
+      let activeMsgText = messageText !== undefined ? messageText : campaign.messageText;
+      let activeAttachments = mediaAttachments !== undefined ? mediaAttachments : campaign.mediaAttachments;
+      
+      if (!activeMsgText && !activeAttachments?.length && campaign.history?.length > 0) {
+        const lastHistory = campaign.history[campaign.history.length - 1];
+        activeMsgText = lastHistory.messageText;
+        activeAttachments = lastHistory.mediaAttachments;
+      }
+      
+      this.processBatch(campaignId, contacts, activeMsgText, activeAttachments, eventName, venue).catch(err => {
         console.error('Async batch processing failed:', err);
       });
 
@@ -54,7 +65,7 @@ export class QueueService {
     }
   }
 
-  private async processBatch(campaignId: string, contacts: any[], campaign: any, eventName: string, venue: string) {
+  private async processBatch(campaignId: string, contacts: any[], messageText: string, mediaAttachments: any[], eventName: string, venue: string) {
     const BATCH_SIZE = 10;
     const DELAY_BETWEEN_BATCHES_MS = 2000;
 
@@ -63,14 +74,14 @@ export class QueueService {
       
       const promises = batch.map(async (contact) => {
         // Interpolate variables
-        let personalizedMsg = campaign.messageText;
+        let personalizedMsg = messageText || '';
         personalizedMsg = personalizedMsg.replace(/{{fullName}}/g, contact.fullName);
         personalizedMsg = personalizedMsg.replace(/{{eventName}}/g, eventName);
         personalizedMsg = personalizedMsg.replace(/{{venue}}/g, venue);
 
         try {
           // Send via WA Service
-          await whatsappService.sendMessage(contact.phoneNumber, personalizedMsg, campaign.mediaAttachments);
+          await whatsappService.sendMessage(contact.phoneNumber, personalizedMsg, mediaAttachments);
           
           // Update log
           await MessageLog.findOneAndUpdate(
@@ -102,4 +113,5 @@ export class QueueService {
 }
 
 export const queueService = new QueueService();
+
 

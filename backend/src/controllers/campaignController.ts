@@ -84,16 +84,24 @@ export const sendCampaign = async (req: Request, res: Response) => {
     }
 
     // Set status and push current content to history
+    const currentMessage = campaign.messageText;
+    const currentAttachments = campaign.mediaAttachments;
+
     campaign.status = 'Sending';
     campaign.history.push({
-      messageText: campaign.messageText,
-      mediaAttachments: campaign.mediaAttachments,
+      messageText: currentMessage,
+      mediaAttachments: currentAttachments,
       sentAt: new Date()
     });
+    
+    // Clear draft fields immediately so the user sees empty fields next time
+    campaign.messageText = '';
+    campaign.mediaAttachments = [];
+    
     await campaign.save();
 
-    // Trigger async processing queue
-    await queueService.processCampaign(campaign._id.toString(), recipientIds);
+    // Trigger async processing queue (pass the actual message to send)
+    await queueService.processCampaign(campaign._id.toString(), recipientIds, currentMessage, currentAttachments);
 
     res.json({ message: 'Campaign queued successfully', campaign });
   } catch (error) {
@@ -114,4 +122,5 @@ export const getAllCampaigns = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch campaigns' });
   }
 };
+
 
