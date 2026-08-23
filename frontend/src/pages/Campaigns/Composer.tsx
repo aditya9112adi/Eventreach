@@ -24,6 +24,8 @@ const Composer = () => {
   
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
   
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -61,19 +63,42 @@ const Composer = () => {
 
   const handleFileUpload = async (file: File) => {
     setIsUploading(true);
+    setUploadProgress(0);
+    const controller = new AbortController();
+    setAbortController(controller);
+    
     const formData = new FormData();
     formData.append('file', file);
     try {
       const response = await api.post('/campaigns/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal,
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setUploadProgress(percentCompleted);
+          }
+        }
       });
       setAttachments(prev => [...prev, response.data]);
       setUploadFile(null);
-    } catch (error) {
-      console.error('Upload failed', error);
-      showToast('error', 'Failed to upload file');
+    } catch (error: any) {
+      if (error.name === 'CanceledError' || error.message === 'canceled') {
+        showToast('info', 'Upload cancelled');
+      } else {
+        console.error('Upload failed', error);
+        showToast('error', 'Failed to upload file');
+      }
     } finally {
       setIsUploading(false);
+      setUploadProgress(0);
+      setAbortController(null);
+    }
+  };
+
+  const cancelUpload = () => {
+    if (abortController) {
+      abortController.abort();
     }
   };
 
@@ -212,7 +237,26 @@ const Composer = () => {
                       'video/mp4': ['.mp4']
                     }}
                   />
-                  {isUploading && <p className="text-sm text-accent mt-2 animate-pulse">Uploading...</p>}
+                  {isUploading && (
+                    <div className="mt-4 bg-surface border border-border rounded-lg p-4 animate-fade-in shadow-sm">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-sm text-foreground font-medium tracking-wide">Uploading... {uploadProgress}%</span>
+                        <button 
+                          onClick={cancelUpload}
+                          className="text-foreground/40 hover:text-destructive transition-colors p-1.5 rounded-full hover:bg-destructive/10"
+                          title="Cancel upload"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="w-full bg-black/10 dark:bg-white/10 rounded-full h-2.5 overflow-hidden">
+                        <div 
+                          className="bg-accent h-2.5 rounded-full transition-all duration-200 ease-out" 
+                          style={{ width: uploadProgress + '%' }}
+                        ></div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -280,5 +324,6 @@ const Composer = () => {
 };
 
 export default Composer;
+
 
 
