@@ -50,7 +50,6 @@ const EventList = () => {
 
   const getStatusBadge = (status: string) => {
     switch(status) {
-      case 'Draft': return <Badge variant="default">Draft</Badge>;
       case 'Upcoming': return <Badge variant="info">Upcoming</Badge>;
       case 'Completed': return <Badge variant="success">Completed</Badge>;
       case 'Cancelled': return <Badge variant="error">Cancelled</Badge>;

@@ -28,8 +28,8 @@ const EventSchema: Schema = new Schema(
     status: { 
       type: String, 
       required: true, 
-      enum: ['Draft', 'Upcoming', 'Completed', 'Cancelled'],
-      default: 'Draft' 
+      enum: ['Upcoming', 'Completed', 'Cancelled'],
+      default: 'Upcoming' 
     },
   },
   { timestamps: true }

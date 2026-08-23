@@ -18,7 +18,7 @@ export interface LoginResponse {
   token: string;
 }
 
-export type EventStatus = 'Draft' | 'Upcoming' | 'Completed' | 'Cancelled';
+export type EventStatus = 'Upcoming' | 'Completed' | 'Cancelled';
 
 export interface Event {
   _id: string;

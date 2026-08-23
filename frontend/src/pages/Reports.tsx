@@ -59,11 +59,10 @@ const Reports = () => {
       });
   }, [selectedEventId]);
 
-  const eventStatusVariant = (status: string): 'success' | 'warning' | 'info' | 'default' => {
+  const eventStatusVariant = (status: string) => {
     switch (status) {
       case 'Completed': return 'success';
       case 'Upcoming': return 'warning';
-      case 'Draft': return 'info';
       default: return 'default';
     }
   };
@@ -117,7 +116,7 @@ const Reports = () => {
                           {evt.date ? new Date(evt.date).toLocaleDateString() : 'N/A'}
                         </td>
                         <td className="py-4">
-                          <Badge variant={eventStatusVariant(evt.status)}>{evt.status || 'Draft'}</Badge>
+                          <Badge variant={eventStatusVariant(evt.status) as any}>{evt.status || 'Upcoming'}</Badge>
                         </td>
                         <td className="py-4 text-right">
                           <button
