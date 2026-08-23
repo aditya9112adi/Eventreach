@@ -19,31 +19,6 @@ const eventSchema = z.object({
   time: z.string().min(1, 'Time is required'),
   venue: z.string().min(1, 'Venue is required'),
   description: z.string().optional(),
-}).superRefine((data, ctx) => {
-  if (data.date) {
-    const now = new Date();
-    const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-    
-    if (data.date < todayStr) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Date cannot be in the past",
-        path: ['date'],
-      });
-    } else if (data.date === todayStr && data.time) {
-      const currentHours = now.getHours().toString().padStart(2, '0');
-      const currentMinutes = now.getMinutes().toString().padStart(2, '0');
-      const currentTimeStr = `${currentHours}:${currentMinutes}`;
-      
-      if (data.time < currentTimeStr) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Time cannot be in the past",
-          path: ['time'],
-        });
-      }
-    }
-  }
 });
 
 type EventForm = z.infer<typeof eventSchema>;
@@ -53,11 +28,11 @@ const EventEdit = () => {
   const navigate = useNavigate();
   const [error, setError] = useState('');
   const { showToast } = useToast();
-  const { showLoader, showSuccess, showError, hideLoader } = useLoader();
+  const { showLoader, showSuccess, showError } = useLoader();
   
   const [isLoading, setIsLoading] = useState(true);
   
-  const { register, handleSubmit, watch, setValue, reset, formState: { errors, isSubmitting } } = useForm<EventForm>({
+  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<EventForm>({
     resolver: zodResolver(eventSchema),
   });
 
@@ -88,17 +63,6 @@ const EventEdit = () => {
   }, [id, reset, navigate]);
 
 
-
-  const selectedDate = watch('date');
-  const now = new Date();
-  const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-
-  let minTime: string | undefined;
-  if (selectedDate === todayStr) {
-    const currentHours = now.getHours().toString().padStart(2, '0');
-    const currentMinutes = now.getMinutes().toString().padStart(2, '0');
-    minTime = `${currentHours}:${currentMinutes}`;
-  }
 
   const onSubmit = async (data: EventForm) => {
     showLoader('Updating event...');
@@ -171,14 +135,12 @@ const EventEdit = () => {
             <Input
               label="Date"
               type="date"
-              min={todayStr}
               {...register('date')}
               error={errors.date?.message}
             />
             <Input
               label="Time"
               type="time"
-              min={minTime}
               {...register('time')}
               error={errors.time?.message}
             />
