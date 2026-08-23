@@ -16,11 +16,16 @@ const registerSchema = z.object({
   accessEndDate: z.string().optional(),
 }).superRefine((data, ctx) => {
   if (data.role === 'Admin') {
+    const now = new Date();
     if (!data.accessStartDate) {
       ctx.addIssue({ code: 'custom', path: ['accessStartDate'], message: 'Access Start Date is required for Admin.' });
+    } else if (new Date(data.accessStartDate) < now) {
+      ctx.addIssue({ code: 'custom', path: ['accessStartDate'], message: 'Access Start Date cannot be in the past.' });
     }
     if (!data.accessEndDate) {
       ctx.addIssue({ code: 'custom', path: ['accessEndDate'], message: 'Access End Date is required for Admin.' });
+    } else if (new Date(data.accessEndDate) < now) {
+      ctx.addIssue({ code: 'custom', path: ['accessEndDate'], message: 'Access End Date cannot be in the past.' });
     }
     if (data.accessStartDate && data.accessEndDate && new Date(data.accessEndDate) <= new Date(data.accessStartDate)) {
       ctx.addIssue({ code: 'custom', path: ['accessEndDate'], message: 'Access End Date must be after Access Start Date.' });
@@ -48,6 +53,13 @@ const Register = () => {
   });
 
   const selectedRole = watch('role');
+
+  // Compute current local datetime in the format required by datetime-local min attribute
+  const getNowMin = () => {
+    const now = new Date();
+    const tzOffset = now.getTimezoneOffset() * 60000;
+    return new Date(now.getTime() - tzOffset).toISOString().slice(0, 16);
+  };
 
   const onSubmit = async (data: RegisterFormValues) => {
     try {
@@ -230,6 +242,7 @@ const Register = () => {
                     </label>
                     <input
                       type="datetime-local"
+                      min={getNowMin()}
                       {...register('accessStartDate')}
                       className={`block w-full px-3 py-2.5 border ${
                         errors.accessStartDate ? 'border-destructive' : 'border-input'
@@ -244,6 +257,7 @@ const Register = () => {
                     </label>
                     <input
                       type="datetime-local"
+                      min={getNowMin()}
                       {...register('accessEndDate')}
                       className={`block w-full px-3 py-2.5 border ${
                         errors.accessEndDate ? 'border-destructive' : 'border-input'
