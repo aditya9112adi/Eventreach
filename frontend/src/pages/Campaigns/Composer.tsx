@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, Send, Image, FileText, Plus, X } from 'lucide-react';
+import { ArrowLeft, Save, Send, Image, FileText, Plus, X, AlertTriangle } from 'lucide-react';
 import api from '../../services/api';
 import type { Event, MediaAttachment } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
@@ -29,6 +29,10 @@ const Composer = () => {
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Derive if the currently selected event is completed
+  const selectedEvent = events.find(e => e._id === selectedEventId) || null;
+  const isEventCompleted = selectedEvent?.status === 'Completed';
 
   useEffect(() => {
     const fetchEvents = async () => {
@@ -172,14 +176,24 @@ const Composer = () => {
           <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Campaign Composer</h2>
         </div>
         <div className="flex items-center space-x-3">
-          <Button variant="secondary" onClick={handleSave} isLoading={isSaving} disabled={isSending}>
+          <Button variant="secondary" onClick={handleSave} isLoading={isSaving} disabled={isSending || isEventCompleted}>
             <Save className="w-4 h-4 mr-2" /> Save Draft
           </Button>
-          <Button onClick={handleSend} isLoading={isSending} disabled={!selectedEventId || !messageText || isSaving}>
+          <Button onClick={handleSend} isLoading={isSending} disabled={!selectedEventId || !messageText || isSaving || isEventCompleted}>
             <Send className="w-4 h-4 mr-2" /> Proceed to Send
           </Button>
         </div>
       </div>
+
+      {/* Completed Event Banner */}
+      {isEventCompleted && (
+        <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-xl px-5 py-4 animate-fade-in">
+          <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+          <p className="text-sm font-medium">
+            This event has been completed. Adding contacts and sending messages are no longer available.
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
@@ -225,12 +239,14 @@ const Composer = () => {
               <textarea
                 ref={textAreaRef}
                 value={messageText}
-                onChange={(e) => setMessageText(e.target.value)}
-                className="w-full h-48 rounded-md border border-border bg-background text-foreground p-3 text-sm focus:ring-2 focus:ring-white/20 outline-none resize-none transition-colors"
+                onChange={(e) => !isEventCompleted && setMessageText(e.target.value)}
+                readOnly={isEventCompleted}
+                className={`w-full h-48 rounded-md border border-border bg-background text-foreground p-3 text-sm focus:ring-2 focus:ring-white/20 outline-none resize-none transition-colors ${isEventCompleted ? 'opacity-60 cursor-not-allowed' : ''}`}
                 placeholder="Type your WhatsApp message here..."
               />
             </div>
 
+            {!isEventCompleted && (
             <div>
               <label className="block text-sm font-sans text-foreground/80 mb-2">Attachments</label>
               <div className="space-y-4">
@@ -293,6 +309,7 @@ const Composer = () => {
                 </div>
               </div>
             </div>
+            )} {/* end !isEventCompleted */}
 
           </div>
         </div>

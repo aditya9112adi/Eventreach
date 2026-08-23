@@ -40,6 +40,9 @@ const ContactList = () => {
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [addError, setAddError] = useState('');
 
+  // Derive whether the currently selected event is completed
+  const isEventCompleted = activeEvent?.status === 'Completed';
+
   const { register, handleSubmit, reset, setValue, formState: { errors, isSubmitting } } = useForm<ContactForm>({
     resolver: zodResolver(contactSchema),
     defaultValues: { countryCode: 'US' }
@@ -247,25 +250,41 @@ const ContactList = () => {
           </div>
           
           <Link to={`/contacts/import?eventId=${activeEvent?._id || ''}`}>
-            <Button variant="secondary" disabled={!activeEvent}>
+            <Button variant="secondary" disabled={!activeEvent || isEventCompleted}>
               Import from File
             </Button>
           </Link>
           
-          <Button onClick={() => { 
-            if (!activeEvent) {
-              showToast('error', 'Please select an Event from the search box first');
-              return;
-            }
-            setEditingContact(null); 
-            reset({ countryCode: 'US', fullName: '', phoneNumber: '', email: '' }); 
-            setIsAddModalOpen(true); 
-          }}>
+          <Button
+            disabled={isEventCompleted}
+            onClick={() => { 
+              if (!activeEvent) {
+                showToast('error', 'Please select an Event from the search box first');
+                return;
+              }
+              if (isEventCompleted) {
+                showToast('error', 'This event has been completed. Adding contacts is no longer available.');
+                return;
+              }
+              setEditingContact(null); 
+              reset({ countryCode: 'US', fullName: '', phoneNumber: '', email: '' }); 
+              setIsAddModalOpen(true); 
+            }}>
             <Plus className="w-4 h-4 mr-2" />
             Add Guest
           </Button>
         </div>
       </div>
+
+      {/* Completed Event Banner */}
+      {isEventCompleted && (
+        <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-xl px-5 py-4 animate-fade-in">
+          <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+          <p className="text-sm font-medium">
+            This event has been completed. Adding contacts and sending messages are no longer available.
+          </p>
+        </div>
+      )}
 
       <div className="glass-panel rounded-3xl overflow-hidden flex flex-col min-h-[500px] animate-spring-up stagger-1">
         <div className="p-4 border-b border-border flex flex-col sm:flex-row justify-between gap-4">
