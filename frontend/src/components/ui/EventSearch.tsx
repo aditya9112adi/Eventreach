@@ -98,9 +98,8 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
                   onClick={() => { onChange(evt._id); setIsOpen(false); setSearchTerm(''); }}
                 >
                   <div className="font-medium truncate">{evt.name}</div>
-                  <div className="text-xs opacity-70 truncate flex justify-between mt-0.5">
-                    <span>{evt.type}</span>
-                    <span>{evt.date}</span>
+                  <div className="text-xs opacity-70 flex justify-between mt-0.5 gap-2">
+                    <span className="truncate">{evt.type}</span><span className="shrink-0">{evt.date}</span>
                   </div>
                 </div>
               ))
@@ -111,4 +110,5 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
     </div>
   );
 }
+
 

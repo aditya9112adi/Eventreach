@@ -45,9 +45,7 @@ const ContactList = () => {
       try {
         const response = await api.get('/events');
         setEvents(response.data);
-        if (!activeEvent && response.data.length > 0) {
-          setActiveEvent(response.data[0]._id);
-        }
+        
       } catch (error) {
         console.error('Failed to fetch events', error);
       }
@@ -57,7 +55,7 @@ const ContactList = () => {
 
   useEffect(() => {
     const fetchContacts = async () => {
-      if (!activeEvent) return;
+      
       setIsLoading(true);
       try {
         const response = await api.get(`/contacts/event/${activeEvent}`);
@@ -138,7 +136,7 @@ const ContactList = () => {
         <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Guest List</h2>
         
         <div className="flex items-center gap-3 w-full sm:w-auto">
-          <div className="w-full sm:w-64 relative z-20"><EventSearch events={events} value={activeEvent} onChange={(val) => setActiveEvent(val)} placeholder="Select an Event..." allowClear={true} /></div>
+          <div className="w-full sm:w-64 relative z-50"><EventSearch events={events} value={activeEvent} onChange={(val) => setActiveEvent(val)} placeholder="Select an Event..." allowClear={true} /></div>
           
           <Link to={`/contacts/import?eventId=${activeEvent}`}>
             <Button variant="secondary" disabled={!activeEvent}>
@@ -169,12 +167,7 @@ const ContactList = () => {
           </div>
         </div>
 
-        {!activeEvent ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-foreground/50">
-            <Users className="w-12 h-12 text-foreground/20 mb-4" />
-            <p>Please select an event to view guests.</p>
-          </div>
-        ) : isLoading ? (
+        {isLoading ? (
           <div className="flex-1 flex items-center justify-center p-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
           </div>
@@ -323,4 +316,5 @@ const ContactList = () => {
 };
 
 export default ContactList;
+
 

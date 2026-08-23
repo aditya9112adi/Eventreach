@@ -253,3 +253,12 @@ export const updateContact = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to update contact' });
   }
 };
+export const getAllContacts = async (req: Request, res: Response) => {
+  try {
+    const contacts = await Contact.find().sort({ createdAt: -1 });
+    res.json(contacts);
+  } catch (error) {
+    console.error('Get all contacts error:', error);
+    res.status(500).json({ error: 'Failed to fetch contacts' });
+  }
+};
