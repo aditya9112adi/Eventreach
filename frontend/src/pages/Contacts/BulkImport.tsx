@@ -125,14 +125,23 @@ const BulkImport = () => {
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
       
-      <div className="flex items-center space-x-4 mb-2 animate-fade-in">
-        <button 
-          onClick={() => navigate('/contacts')}
-          className="p-2 text-foreground/50 hover:text-foreground hover:bg-surfaceHover rounded-full transition-colors"
+      <div className="flex justify-between items-center mb-2 animate-fade-in">
+        <div className="flex items-center space-x-4">
+          <button 
+            onClick={() => navigate('/contacts')}
+            className="p-2 text-foreground/50 hover:text-foreground hover:bg-surfaceHover rounded-full transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Import Contacts</h2>
+        </div>
+        <Button 
+          variant="secondary" 
+          onClick={() => navigate(`/contacts?add=true&eventId=${selectedEventId}`)}
+          disabled={!selectedEventId}
         >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Import Contacts</h2>
+          Add Guest Manually
+        </Button>
       </div>
 
       <div className="glass-panel rounded-3xl overflow-hidden animate-spring-up stagger-1">
@@ -172,7 +181,14 @@ const BulkImport = () => {
               />
             </div>
 
-            <div className="pt-6 border-t border-border flex justify-end">
+            <div className="pt-6 border-t border-border flex justify-between">
+              <Button 
+                variant="secondary"
+                onClick={() => navigate(`/contacts?add=true&eventId=${selectedEventId}`)}
+                disabled={!selectedEventId}
+              >
+                Add Guest Manually instead
+              </Button>
               <Button 
                 onClick={handleUploadAndPreview}
                 disabled={!file || !selectedEventId}
@@ -277,4 +293,6 @@ const BulkImport = () => {
 };
 
 export default BulkImport;
+
+
 

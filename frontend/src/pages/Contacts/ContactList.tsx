@@ -22,6 +22,7 @@ type ContactForm = z.infer<typeof contactSchema>;
 const ContactList = () => {
   const [searchParams] = useSearchParams();
   const initialEventId = searchParams.get('eventId');
+  const openAddModal = searchParams.get('add') === 'true';
   const { showToast } = useToast();
   
   const [events, setEvents] = useState<Event[]>([]);
@@ -35,7 +36,7 @@ const ContactList = () => {
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
   
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(openAddModal);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [addError, setAddError] = useState('');
 
@@ -251,7 +252,15 @@ const ContactList = () => {
             </Button>
           </Link>
           
-          <Button onClick={() => { setEditingContact(null); reset({ countryCode: 'US', fullName: '', phoneNumber: '', email: '' }); setIsAddModalOpen(true); }} disabled={!activeEvent}>
+          <Button onClick={() => { 
+            if (!activeEvent) {
+              showToast('error', 'Please select an Event from the search box first');
+              return;
+            }
+            setEditingContact(null); 
+            reset({ countryCode: 'US', fullName: '', phoneNumber: '', email: '' }); 
+            setIsAddModalOpen(true); 
+          }}>
             <Plus className="w-4 h-4 mr-2" />
             Add Guest
           </Button>
@@ -423,5 +432,7 @@ const ContactList = () => {
 };
 
 export default ContactList;
+
+
 
 
