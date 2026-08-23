@@ -39,7 +39,13 @@ export class QueueService {
         status: 'Pending'
       }));
       
-      await MessageLog.insertMany(logsToInsert);
+      const insertedLogs = await MessageLog.insertMany(logsToInsert);
+
+      // Match contacts with their specific log ID for this run
+      const contactsWithLogs = contacts.map((c, index) => ({
+        contact: c,
+        logId: insertedLogs[index]._id
+      }));
 
       // 3. Process Async in Batches
       // Fire and forget (in a real production system, this would be pushed to Redis/BullMQ)
@@ -54,7 +60,7 @@ export class QueueService {
         activeAttachments = lastHistory.mediaAttachments;
       }
       
-      this.processBatch(campaignId, contacts, activeMsgText, activeAttachments, eventName, venue).catch(err => {
+      this.processBatch(campaignId, contactsWithLogs, activeMsgText, activeAttachments, eventName, venue).catch(err => {
         console.error('Async batch processing failed:', err);
       });
 
@@ -65,14 +71,15 @@ export class QueueService {
     }
   }
 
-  private async processBatch(campaignId: string, contacts: any[], messageText: string, mediaAttachments: any[], eventName: string, venue: string) {
+  private async processBatch(campaignId: string, contactsWithLogs: any[], messageText: string, mediaAttachments: any[], eventName: string, venue: string) {
     const BATCH_SIZE = 10;
     const DELAY_BETWEEN_BATCHES_MS = 2000;
 
-    for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
-      const batch = contacts.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < contactsWithLogs.length; i += BATCH_SIZE) {
+      const batch = contactsWithLogs.slice(i, i + BATCH_SIZE);
       
-      const promises = batch.map(async (contact) => {
+      const promises = batch.map(async (item) => {
+        const { contact, logId } = item;
         // Interpolate variables
         let personalizedMsg = messageText || '';
         personalizedMsg = personalizedMsg.replace(/{{fullName}}/g, contact.fullName);
@@ -83,15 +90,15 @@ export class QueueService {
           // Send via WA Service
           await whatsappService.sendMessage(contact.phoneNumber, personalizedMsg, mediaAttachments);
           
-          // Update log
-          await MessageLog.findOneAndUpdate(
-            { campaignId, contactId: contact._id },
+          // Update log using specific logId
+          await MessageLog.findByIdAndUpdate(
+            logId,
             { status: 'Sent' }
           );
         } catch (err: any) {
-          // Update log with failure
-          await MessageLog.findOneAndUpdate(
-            { campaignId, contactId: contact._id },
+          // Update log with failure using specific logId
+          await MessageLog.findByIdAndUpdate(
+            logId,
             { status: 'Failed', errorReason: err.message }
           );
         }
@@ -101,7 +108,7 @@ export class QueueService {
       await Promise.allSettled(promises);
 
       // Delay to respect rate limits
-      if (i + BATCH_SIZE < contacts.length) {
+      if (i + BATCH_SIZE < contactsWithLogs.length) {
         await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_BATCHES_MS));
       }
     }
@@ -113,5 +120,6 @@ export class QueueService {
 }
 
 export const queueService = new QueueService();
+
 
 
