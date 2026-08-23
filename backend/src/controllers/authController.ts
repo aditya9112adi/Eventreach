@@ -16,6 +16,8 @@ const registerSchema = z.object({
   email: z.string().email('Invalid email address'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
   role: z.enum(['Admin', 'User']),
+  accessStartDate: z.string().optional(),
+  accessEndDate: z.string().optional(),
 });
 
 export const register = async (req: Request, res: Response) => {
@@ -25,7 +27,17 @@ export const register = async (req: Request, res: Response) => {
       return res.status(400).json({ error: parsed.error.errors[0].message });
     }
 
-    const { name, email, password, role } = parsed.data;
+    const { name, email, password, role, accessStartDate, accessEndDate } = parsed.data;
+
+    // For Admin, access dates are required
+    if (role === 'Admin') {
+      if (!accessStartDate || !accessEndDate) {
+        return res.status(400).json({ error: 'Access Start Date and Access End Date are required for Admin registration.' });
+      }
+      if (new Date(accessEndDate) <= new Date(accessStartDate)) {
+        return res.status(400).json({ error: 'Access End Date must be after Access Start Date.' });
+      }
+    }
 
     const existingAdmin = await Admin.findOne({ email });
     const existingUser = await User.findOne({ email });
@@ -46,6 +58,8 @@ export const register = async (req: Request, res: Response) => {
         passwordHash,
         role: 'Admin',
         status,
+        pendingAccessStartDate: new Date(accessStartDate!),
+        pendingAccessEndDate: new Date(accessEndDate!),
       });
       
       // Fire and forget email notification

@@ -11,6 +11,9 @@ export interface IAdmin extends Document {
   accessExpiryDate?: Date;
   accessDurationDays?: number;
   isAccessCancelled?: boolean;
+  pendingAccessStartDate?: Date;
+  pendingAccessEndDate?: Date;
+  rejectionReason?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -49,6 +52,10 @@ const AdminSchema: Schema = new Schema(
     accessDurationValue: { type: Number },
     accessDurationUnit: { type: String, enum: ['minutes', 'hours', 'days'] },
     isAccessCancelled: { type: Boolean, default: false },
+    // Requested by Admin during registration, used by SuperAdmin on approval
+    pendingAccessStartDate: { type: Date },
+    pendingAccessEndDate: { type: Date },
+    rejectionReason: { type: String },
   },
   {
     timestamps: true,

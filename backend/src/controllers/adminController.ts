@@ -21,29 +21,41 @@ export const approveUser = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { type } = req.query; // 'Admin' | 'User'
-    const { accessStartDate, accessDurationValue, accessDurationUnit, accessExpiryDate } = req.body;
-    
-    if (!accessStartDate || !accessDurationValue || !accessDurationUnit || !accessExpiryDate) {
-      return res.status(400).json({ error: 'Missing access duration details' });
-    }
 
-    const updatePayload = {
-      status: 'Active',
-      accessGrantedOn: new Date(),
-      accessStartDate: new Date(accessStartDate),
-      accessDurationValue: Number(accessDurationValue),
-      accessDurationUnit: String(accessDurationUnit),
-      accessExpiryDate: new Date(accessExpiryDate),
-      isAccessCancelled: false
-    };
-    
     let user;
     if (type === 'Admin') {
-      user = await Admin.findByIdAndUpdate(id, updatePayload, { new: true }).select('-passwordHash');
+      // For Admins: use the access dates they requested during registration
+      const admin = await Admin.findById(id);
+      if (!admin) return res.status(404).json({ error: 'Admin not found' });
+
+      if (!admin.pendingAccessStartDate || !admin.pendingAccessEndDate) {
+        return res.status(400).json({ error: 'This admin did not submit access dates during registration.' });
+      }
+
+      user = await Admin.findByIdAndUpdate(
+        id,
+        {
+          status: 'Active',
+          accessGrantedOn: new Date(),
+          accessStartDate: admin.pendingAccessStartDate,
+          accessExpiryDate: admin.pendingAccessEndDate,
+          isAccessCancelled: false,
+        },
+        { new: true }
+      ).select('-passwordHash');
     } else {
-      user = await User.findByIdAndUpdate(id, updatePayload, { new: true }).select('-passwordHash');
+      // For regular Users: grant immediate access
+      user = await User.findByIdAndUpdate(
+        id,
+        {
+          status: 'Active',
+          accessGrantedOn: new Date(),
+          isAccessCancelled: false,
+        },
+        { new: true }
+      ).select('-passwordHash');
     }
-    
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -58,10 +70,15 @@ export const rejectUser = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { type } = req.query;
+    const { reason } = req.body;
+
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ error: 'A rejection reason is required.' });
+    }
 
     let user;
     if (type === 'Admin') {
-      user = await Admin.findByIdAndUpdate(id, { status: 'Rejected' }, { new: true }).select('-passwordHash');
+      user = await Admin.findByIdAndUpdate(id, { status: 'Rejected', rejectionReason: String(reason).trim() }, { new: true }).select('-passwordHash');
     } else {
       user = await User.findByIdAndUpdate(id, { status: 'Rejected' }, { new: true }).select('-passwordHash');
     }

@@ -2,23 +2,32 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { User } from '@eventreach/shared';
 import api from '../../services/api';
-import { Check, X, Loader2, Users } from 'lucide-react';
+import { Check, X, Users, Calendar, AlertTriangle } from 'lucide-react';
 import { useLoader } from '../../components/ui/FullScreenLoader';
+
+const fmt = (d?: string | Date) => {
+  if (!d) return 'N/A';
+  return new Date(d).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
 
 const UserApprovals = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
-  
-  // Modal State
-  const [modalOpen, setModalOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<any>(null);
-  
-  // Access configuration state
-  const [startDate, setStartDate] = useState('');
-  const [durationValue, setDurationValue] = useState<number>(30);
-  const [durationUnit, setDurationUnit] = useState<'minutes' | 'hours' | 'days'>('days');
 
-  const { showLoader, showSuccess, showError, hideLoader } = useLoader();
+  // Approve modal
+  const [approveModalOpen, setApproveModalOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<any>(null);
+
+  // Reject modal
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [rejectingUser, setRejectingUser] = useState<any>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectError, setRejectError] = useState('');
+
+  const { showLoader, showSuccess, showError } = useLoader();
 
   const fetchUsers = async () => {
     try {
@@ -35,66 +44,49 @@ const UserApprovals = () => {
     fetchUsers();
   }, []);
 
-  const getLocalISOString = (d: Date) => {
-    const tzoffset = d.getTimezoneOffset() * 60000;
-    return new Date(d.getTime() - tzoffset).toISOString().slice(0, 16);
-  };
-
-  const openModal = (user: any) => {
+  const openApproveModal = (user: any) => {
     setSelectedUser(user);
-    setStartDate(getLocalISOString(new Date()));
-    setDurationValue(30);
-    setDurationUnit('days');
-    setModalOpen(true);
+    setApproveModalOpen(true);
   };
 
-  const calculateExpiry = () => {
-    if (!startDate) return '';
-    const start = new Date(startDate);
-    if (durationUnit === 'days') {
-      start.setDate(start.getDate() + durationValue);
-    } else if (durationUnit === 'hours') {
-      start.setHours(start.getHours() + durationValue);
-    } else if (durationUnit === 'minutes') {
-      start.setMinutes(start.getMinutes() + durationValue);
-    }
-    return getLocalISOString(start);
+  const openRejectModal = (user: any) => {
+    setRejectingUser(user);
+    setRejectReason('');
+    setRejectError('');
+    setRejectModalOpen(true);
   };
 
   const handleApproveSubmit = async () => {
     if (!selectedUser) return;
-    showLoader('Granting access...');
+    showLoader('Approving request...');
     try {
-      const expiryDate = new Date(calculateExpiry()).toISOString();
-      const startIso = new Date(startDate).toISOString();
-      
-      await api.put(`/admin/users/${selectedUser._id}/approve?type=${selectedUser.type}`, {
-        accessStartDate: startIso,
-        accessDurationValue: durationValue,
-        accessDurationUnit: durationUnit,
-        accessExpiryDate: expiryDate
-      });
-      
+      await api.put(`/admin/users/${selectedUser._id}/approve?type=${selectedUser.type}`);
       setUsers(users.filter((u: any) => u._id !== selectedUser._id));
-      setModalOpen(false);
+      setApproveModalOpen(false);
       setSelectedUser(null);
-      await showSuccess('Access granted successfully');
-    } catch (error) {
+      await showSuccess('Access approved successfully');
+    } catch (error: any) {
       console.error('Failed to approve user', error);
-      await showError('Failed to grant access');
+      await showError(error?.response?.data?.error || 'Failed to approve request');
     }
   };
 
-  const handleReject = async (id: string, type: string) => {
-    if (!window.confirm('Are you sure you want to reject this request?')) return;
-    showLoader('Rejecting user...');
+  const handleRejectSubmit = async () => {
+    if (!rejectingUser) return;
+    if (!rejectReason.trim()) {
+      setRejectError('Please enter a reason for rejection.');
+      return;
+    }
+    showLoader('Rejecting request...');
     try {
-      await api.put(`/admin/users/${id}/reject?type=${type}`);
-      setUsers(users.filter((u: any) => u._id !== id));
-      await showSuccess('User rejected');
-    } catch (error) {
+      await api.put(`/admin/users/${rejectingUser._id}/reject?type=${rejectingUser.type}`, { reason: rejectReason.trim() });
+      setUsers(users.filter((u: any) => u._id !== rejectingUser._id));
+      setRejectModalOpen(false);
+      setRejectingUser(null);
+      await showSuccess('Request rejected');
+    } catch (error: any) {
       console.error('Failed to reject user', error);
-      await showError('Failed to reject user');
+      await showError(error?.response?.data?.error || 'Failed to reject request');
     }
   };
 
@@ -131,6 +123,7 @@ const UserApprovals = () => {
                   <th className="px-6 py-4">Name</th>
                   <th className="px-6 py-4">Email</th>
                   <th className="px-6 py-4">Requested Role</th>
+                  <th className="px-6 py-4">Requested Access Period</th>
                   <th className="px-6 py-4 text-right">Actions</th>
                 </tr>
               </thead>
@@ -144,15 +137,25 @@ const UserApprovals = () => {
                         {user.role}
                       </span>
                     </td>
+                    <td className="px-6 py-4 text-xs text-foreground/70">
+                      {user.role === 'Admin' && user.pendingAccessStartDate ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span><span className="font-medium text-foreground/50">From:</span> {fmt(user.pendingAccessStartDate)}</span>
+                          <span><span className="font-medium text-foreground/50">To:</span> {fmt(user.pendingAccessEndDate)}</span>
+                        </div>
+                      ) : (
+                        <span className="text-foreground/40 italic">—</span>
+                      )}
+                    </td>
                     <td className="px-6 py-4 text-right space-x-2">
                       <button
-                        onClick={() => openModal(user)}
+                        onClick={() => openApproveModal(user)}
                         className="inline-flex items-center px-3 py-1.5 bg-green-500/20 text-green-500 hover:bg-green-500/30 font-bold uppercase tracking-wide text-xs rounded transition-colors"
                       >
                         <Check className="w-4 h-4 mr-1" /> Approve
                       </button>
                       <button
-                        onClick={() => handleReject(user._id, user.type)}
+                        onClick={() => openRejectModal(user)}
                         className="inline-flex items-center px-3 py-1.5 bg-red-500/20 text-red-500 hover:bg-red-500/30 font-bold uppercase tracking-wide text-xs rounded transition-colors"
                       >
                         <X className="w-4 h-4 mr-1" /> Reject
@@ -166,81 +169,109 @@ const UserApprovals = () => {
         )}
       </div>
 
-      {/* Approval Modal */}
-      {modalOpen && selectedUser && typeof document !== 'undefined'
+      {/* ===== APPROVE CONFIRMATION MODAL ===== */}
+      {approveModalOpen && selectedUser && typeof document !== 'undefined'
         ? createPortal(
             <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
               <div className="bg-surface border border-border rounded-xl shadow-2xl w-full max-w-md animate-scale-in flex flex-col">
                 <div className="p-6 border-b border-border">
-                  <h2 className="text-xl font-bold uppercase tracking-wide text-foreground">Configure Access</h2>
+                  <h2 className="text-xl font-bold uppercase tracking-wide text-foreground">Confirm Approval</h2>
                   <p className="text-sm text-foreground/60 mt-1">
-                    Granting access for <span className="text-accent font-bold">{selectedUser.name}</span>
+                    Approving registration for <span className="text-accent font-bold">{selectedUser.name}</span>
                   </p>
                 </div>
-                
-                <div className="p-6 space-y-5">
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-foreground/80 mb-2">
-                      Access Start Date & Time
-                    </label>
-                    <input
-                      type="datetime-local"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
-                      className="w-full bg-background border border-border text-foreground px-4 py-2.5 rounded focus:outline-none focus:border-accent transition-colors"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-foreground/80 mb-2">
-                      Access Duration
-                    </label>
-                    <div className="flex space-x-2">
-                      <input
-                        type="number"
-                        min="1"
-                        value={durationValue}
-                        onChange={(e) => setDurationValue(parseInt(e.target.value) || 1)}
-                        className="w-full bg-background border border-border text-foreground px-4 py-2.5 rounded focus:outline-none focus:border-accent transition-colors"
-                      />
-                      <select
-                        value={durationUnit}
-                        onChange={(e) => setDurationUnit(e.target.value as 'minutes' | 'hours' | 'days')}
-                        className="w-1/2 bg-background border border-border text-foreground px-4 py-2.5 rounded focus:outline-none focus:border-accent transition-colors"
-                      >
-                        <option value="minutes">Minutes</option>
-                        <option value="hours">Hours</option>
-                        <option value="days">Days</option>
-                      </select>
-                    </div>
-                  </div>
 
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-foreground/80 mb-2">
-                      Access Expiry Date & Time
-                    </label>
-                    <input
-                      type="datetime-local"
-                      value={calculateExpiry()}
-                      disabled
-                      className="w-full bg-background/50 border border-border/50 text-foreground/60 px-4 py-2.5 rounded cursor-not-allowed"
-                    />
-                    <p className="text-xs text-foreground/50 mt-2">Automatically calculated based on duration.</p>
+                <div className="p-6 space-y-4">
+                  <div className="rounded-lg border border-border bg-background/50 p-4 space-y-3">
+                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-foreground/60">
+                      <Calendar className="w-4 h-4" /> Requested Access Period
+                    </div>
+                    {selectedUser.pendingAccessStartDate ? (
+                      <div className="space-y-1.5 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-foreground/60">Start:</span>
+                          <span className="font-semibold text-foreground">{fmt(selectedUser.pendingAccessStartDate)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-foreground/60">End:</span>
+                          <span className="font-semibold text-foreground">{fmt(selectedUser.pendingAccessEndDate)}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-foreground/50 italic">No specific access period requested (User role).</p>
+                    )}
                   </div>
+                  <p className="text-xs text-foreground/50">
+                    Clicking <strong>Approve</strong> will grant access exactly as requested above.
+                  </p>
                 </div>
 
                 <div className="p-6 border-t border-border flex justify-end space-x-3 bg-white/5 rounded-b-xl">
                   <button
-                    onClick={() => setModalOpen(false)}
+                    onClick={() => { setApproveModalOpen(false); setSelectedUser(null); }}
                     className="px-4 py-2 text-sm font-bold uppercase tracking-wide text-foreground/60 hover:text-foreground transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleApproveSubmit}
-                    className="px-4 py-2 bg-accent text-white text-sm font-bold uppercase tracking-wide hover:bg-accent/90 rounded transition-colors"
+                    className="px-4 py-2 bg-green-600 text-white text-sm font-bold uppercase tracking-wide hover:bg-green-700 rounded transition-colors"
                   >
-                    Approve & Grant Access
+                    Approve
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {/* ===== REJECT WITH REASON MODAL ===== */}
+      {rejectModalOpen && rejectingUser && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+              <div className="bg-surface border border-border rounded-xl shadow-2xl w-full max-w-md animate-scale-in flex flex-col">
+                <div className="p-6 border-b border-border">
+                  <h2 className="text-xl font-bold uppercase tracking-wide text-foreground text-red-400">Reject Request</h2>
+                  <p className="text-sm text-foreground/60 mt-1">
+                    Rejecting registration for <span className="text-red-400 font-bold">{rejectingUser.name}</span>
+                  </p>
+                </div>
+
+                <div className="p-6 space-y-4">
+                  {rejectError && (
+                    <div className="flex items-center gap-2 bg-destructive/10 border border-destructive/30 text-destructive rounded-lg px-4 py-3 text-sm">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      {rejectError}
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-sm font-bold text-foreground mb-2">
+                      Reason for Rejection <span className="text-destructive">*</span>
+                    </label>
+                    <textarea
+                      value={rejectReason}
+                      onChange={(e) => { setRejectReason(e.target.value); setRejectError(''); }}
+                      rows={4}
+                      className="w-full bg-background border border-border text-foreground px-4 py-2.5 rounded-lg focus:outline-none focus:border-destructive resize-none transition-colors text-sm"
+                      placeholder="Explain why this registration request is being rejected..."
+                    />
+                    <p className="text-xs text-foreground/50 mt-1">This reason may be communicated to the applicant.</p>
+                  </div>
+                </div>
+
+                <div className="p-6 border-t border-border flex justify-end space-x-3 bg-white/5 rounded-b-xl">
+                  <button
+                    onClick={() => { setRejectModalOpen(false); setRejectingUser(null); }}
+                    className="px-4 py-2 text-sm font-bold uppercase tracking-wide text-foreground/60 hover:text-foreground transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleRejectSubmit}
+                    className="px-4 py-2 bg-red-600 text-white text-sm font-bold uppercase tracking-wide hover:bg-red-700 rounded transition-colors"
+                  >
+                    Reject Request
                   </button>
                 </div>
               </div>

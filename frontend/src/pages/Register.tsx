@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
-import { User, Mail, Lock, EyeOff, Eye, Loader2, Sun, Moon, Briefcase } from 'lucide-react';
+import { User, Mail, Lock, EyeOff, Eye, Loader2, Sun, Moon, Briefcase, Calendar } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
 
 const registerSchema = z.object({
@@ -12,6 +12,20 @@ const registerSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
   role: z.enum(['Admin', 'User']),
+  accessStartDate: z.string().optional(),
+  accessEndDate: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.role === 'Admin') {
+    if (!data.accessStartDate) {
+      ctx.addIssue({ code: 'custom', path: ['accessStartDate'], message: 'Access Start Date is required for Admin.' });
+    }
+    if (!data.accessEndDate) {
+      ctx.addIssue({ code: 'custom', path: ['accessEndDate'], message: 'Access End Date is required for Admin.' });
+    }
+    if (data.accessStartDate && data.accessEndDate && new Date(data.accessEndDate) <= new Date(data.accessStartDate)) {
+      ctx.addIssue({ code: 'custom', path: ['accessEndDate'], message: 'Access End Date must be after Access Start Date.' });
+    }
+  }
 });
 
 type RegisterFormValues = z.infer<typeof registerSchema>;
@@ -26,11 +40,14 @@ const Register = () => {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<RegisterFormValues>({
     resolver: zodResolver(registerSchema),
     defaultValues: { role: 'User' },
   });
+
+  const selectedRole = watch('role');
 
   const onSubmit = async (data: RegisterFormValues) => {
     try {
@@ -196,6 +213,46 @@ const Register = () => {
                   </select>
                 </div>
               </div>
+
+              {/* Access Date Fields — shown only when Admin is selected */}
+              {selectedRole === 'Admin' && (
+                <div className="rounded-xl border border-accent/20 bg-accent/5 p-4 space-y-4 animate-fade-in">
+                  <p className="text-xs font-bold uppercase tracking-wider text-accent flex items-center gap-2">
+                    <Calendar className="w-4 h-4" /> Access Period Request
+                  </p>
+                  <p className="text-xs text-foreground/60">
+                    Specify the period during which you require access. The Super Admin will approve this request as-is.
+                  </p>
+
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1.5">
+                      Access Start Date & Time <span className="text-destructive">*</span>
+                    </label>
+                    <input
+                      type="datetime-local"
+                      {...register('accessStartDate')}
+                      className={`block w-full px-3 py-2.5 border ${
+                        errors.accessStartDate ? 'border-destructive' : 'border-input'
+                      } rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm`}
+                    />
+                    {errors.accessStartDate && <p className="mt-1.5 text-sm text-destructive font-medium">{errors.accessStartDate.message}</p>}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1.5">
+                      Access End Date & Time <span className="text-destructive">*</span>
+                    </label>
+                    <input
+                      type="datetime-local"
+                      {...register('accessEndDate')}
+                      className={`block w-full px-3 py-2.5 border ${
+                        errors.accessEndDate ? 'border-destructive' : 'border-input'
+                      } rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm`}
+                    />
+                    {errors.accessEndDate && <p className="mt-1.5 text-sm text-destructive font-medium">{errors.accessEndDate.message}</p>}
+                  </div>
+                </div>
+              )}
 
               <button
                 type="submit"
