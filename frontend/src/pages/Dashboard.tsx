@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../store/authStore';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 import {
   CalendarDays, Users, Megaphone, Send,
-  CheckCircle2, XCircle, Clock, Search, X,
+  CheckCircle2, XCircle, Clock, Search, X, ChevronRight,
 } from 'lucide-react';
 import api from '../services/api';
 import type { Event, Campaign, EventStatus } from '@eventreach/shared';
@@ -39,17 +39,40 @@ const Dashboard = () => {
   const [recentCampaigns, setRecentCampaigns] = useState<Campaign[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  // FILTER 1 - independent dropdown
+
+  // FILTER 1 — Status dropdown (re-fetches stats from API)
   const [statusFilter, setStatusFilter] = useState<'' | EventStatus>('');
-  // FILTER 2 - independent search
+
+  // FILTER 2 — Event search autocomplete (re-fetches stats for selected event)
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+
   const { user } = useAuth();
 
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  // Fetch when status filter OR selected event changes
   useEffect(() => {
     const fetchAll = async () => {
       setIsLoading(true);
       try {
-        const query = statusFilter ? ('?status=' + statusFilter) : '';
+        let query = '';
+        if (selectedEvent) {
+          query = '?eventId=' + selectedEvent._id;
+        } else if (statusFilter) {
+          query = '?status=' + statusFilter;
+        }
         const [statsRes, activityRes, eventsRes] = await Promise.all([
           api.get('/dashboard/stats' + query),
           api.get('/dashboard/activity' + query),
@@ -66,19 +89,38 @@ const Dashboard = () => {
       }
     };
     fetchAll();
-  }, [statusFilter]);
+  }, [statusFilter, selectedEvent]);
 
-  const searchedEvents = useMemo(() => {
+  // Live-filtered suggestions based on search query
+  const suggestions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return events;
+    if (!q) return [];
     return events.filter(
       (e) =>
         e.name.toLowerCase().includes(q) ||
         e.type?.toLowerCase().includes(q) ||
         e.organizerName?.toLowerCase().includes(q) ||
         e.venue?.toLowerCase().includes(q)
-    );
+    ).slice(0, 8);
   }, [events, searchQuery]);
+
+  const handleSelectEvent = (event: Event) => {
+    setSelectedEvent(event);
+    setSearchQuery(event.name);
+    setSearchOpen(false);
+  };
+
+  const handleClearSearch = () => {
+    setSelectedEvent(null);
+    setSearchQuery('');
+    setSearchOpen(false);
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    setSelectedEvent(null); // clear selection when user edits
+    setSearchOpen(value.trim().length > 0);
+  };
 
   if (isLoading) {
     return (
@@ -122,15 +164,30 @@ const Dashboard = () => {
 
   return (
     <div className='space-y-6'>
+
+      {/* Header row with both independent filters */}
       <div className='flex flex-col sm:flex-row sm:items-end justify-between gap-4'>
-        <h2 className='text-3xl font-sans font-bold text-foreground animate-slide-in uppercase shrink-0'>Dashboard Overview</h2>
+        <div>
+          <h2 className='text-3xl font-sans font-bold text-foreground animate-slide-in uppercase'>Dashboard Overview</h2>
+          {/* Active filter indicator */}
+          {isSuperAdmin && (selectedEvent || statusFilter) && (
+            <p className='text-xs text-foreground/50 mt-1 flex items-center gap-1'>
+              Showing:
+              {selectedEvent && <span className='text-accent font-semibold'>{selectedEvent.name}</span>}
+              {!selectedEvent && statusFilter && <span className='text-accent font-semibold'>{statusFilter} events</span>}
+            </p>
+          )}
+        </div>
+
         {isSuperAdmin && (
           <div className='flex flex-col sm:flex-row items-start sm:items-end gap-3'>
+
+            {/* FILTER 1: Status Dropdown — independent, re-fetches stats */}
             <div className='flex flex-col'>
               <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Filter by Status</label>
               <select
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as ('' | EventStatus))}
+                onChange={(e) => { setStatusFilter(e.target.value as ('' | EventStatus)); setSelectedEvent(null); setSearchQuery(''); }}
                 className='bg-surface border border-border text-foreground px-4 py-2 rounded-md focus:outline-none focus:border-accent transition-colors font-medium text-sm min-w-[160px] cursor-pointer'
               >
                 {STATUS_OPTIONS.map((opt) => (
@@ -138,28 +195,61 @@ const Dashboard = () => {
                 ))}
               </select>
             </div>
-            <div className='flex flex-col'>
-              <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Search Events</label>
+
+            {/* FILTER 2: Event Search Autocomplete — selects a specific event */}
+            <div className='flex flex-col' ref={searchRef}>
+              <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Search Event</label>
               <div className='relative'>
                 <Search className='absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/40 pointer-events-none' />
                 <input
                   type='text'
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder='Name, type, venue...'
-                  className='bg-surface border border-border text-foreground pl-9 pr-8 py-2 rounded-md focus:outline-none focus:border-accent transition-colors text-sm w-[220px] placeholder:text-foreground/30'
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  onFocus={() => { if (searchQuery.trim()) setSearchOpen(true); }}
+                  placeholder='Search by name, type...'
+                  className={'bg-surface border text-foreground pl-9 pr-8 py-2 rounded-md focus:outline-none transition-colors text-sm w-[240px] placeholder:text-foreground/30 ' + (selectedEvent ? 'border-accent/50 bg-accent/5' : 'border-border focus:border-accent')}
                 />
                 {searchQuery && (
-                  <button onClick={() => setSearchQuery('')} className='absolute right-2 top-1/2 -translate-y-1/2 text-foreground/40 hover:text-foreground transition-colors'>
+                  <button onClick={handleClearSearch} className='absolute right-2 top-1/2 -translate-y-1/2 text-foreground/40 hover:text-foreground transition-colors'>
                     <X className='w-3.5 h-3.5' />
                   </button>
                 )}
+
+                {/* Inline dropdown results */}
+                {searchOpen && searchQuery.trim().length > 0 && (
+                  <div className='absolute top-full left-0 right-0 mt-1 z-50 bg-surface border border-border rounded-md shadow-xl overflow-hidden'>
+                    {suggestions.length === 0 ? (
+                      <div className='px-4 py-3 text-sm text-foreground/50 flex items-center gap-2'>
+                        <Search className='w-4 h-4 opacity-40' />
+                        No events found
+                      </div>
+                    ) : (
+                      <div>
+                        {suggestions.map((evt) => (
+                          <button
+                            key={evt._id}
+                            className={'w-full text-left px-4 py-2.5 hover:bg-surfaceHover transition-colors flex items-center justify-between gap-2 group ' + (selectedEvent?._id === evt._id ? 'bg-accent/10' : '')}
+                            onMouseDown={(e) => { e.preventDefault(); handleSelectEvent(evt); }}
+                          >
+                            <div className='min-w-0'>
+                              <p className='text-sm font-medium text-foreground truncate'>{evt.name}</p>
+                              <p className='text-xs text-foreground/50 truncate'>{evt.type} &middot; {evt.date}</p>
+                            </div>
+                            <ChevronRight className='w-4 h-4 text-foreground/30 group-hover:text-accent shrink-0 transition-colors' />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
+
           </div>
         )}
       </div>
 
+      {/* Stat Cards */}
       <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6'>
         {statCards.map((stat, idx) => (
           <div key={idx} className={'glass-panel rounded-2xl p-6 flex items-center hover:-translate-y-1 hover:shadow-glass-lg hover:border-accent/30 transition-all duration-300 animate-spring-up stagger-' + ((idx % 5) + 1)}>
@@ -174,6 +264,7 @@ const Dashboard = () => {
         ))}
       </div>
 
+      {/* Charts */}
       <div className='grid grid-cols-1 lg:grid-cols-2 gap-6'>
         <div className='glass-panel rounded-2xl p-6 animate-spring-up stagger-4'>
           <h3 className='text-lg font-sans font-bold text-foreground mb-4 uppercase tracking-wider'>Messages Sent vs Delivered</h3>
@@ -218,58 +309,6 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {isSuperAdmin && (
-        <div className='glass-panel rounded-2xl overflow-hidden animate-spring-up stagger-5'>
-          <div className='px-6 py-4 border-b border-border flex items-center justify-between flex-wrap gap-2'>
-            <h3 className='text-sm font-sans font-bold text-foreground uppercase tracking-wider'>
-              Events
-              {searchQuery && (
-                <span className='ml-2 text-accent font-normal text-sm normal-case'>
-                  {'— ' + searchedEvents.length + ' result' + (searchedEvents.length !== 1 ? 's' : '') + ' for ' + JSON.stringify(searchQuery)}
-                </span>
-              )}
-            </h3>
-            {searchQuery && (<span className='text-xs text-foreground/40 italic'>Independent of Status filter</span>)}
-          </div>
-          {searchedEvents.length === 0 ? (
-            <div className='p-10 text-center text-foreground/40'>
-              <Search className='w-8 h-8 mx-auto mb-3 opacity-30' />
-              <p className='font-medium'>{'No events match ' + JSON.stringify(searchQuery)}</p>
-            </div>
-          ) : (
-            <div className='overflow-x-auto'>
-              <table className='w-full text-left border-collapse'>
-                <thead>
-                  <tr className='bg-surfaceHover text-foreground/60 font-medium border-b border-border uppercase tracking-wide text-xs'>
-                    <th className='py-3 px-4'>Event Name</th>
-                    <th className='py-3 px-4'>Type</th>
-                    <th className='py-3 px-4'>Organizer</th>
-                    <th className='py-3 px-4'>Date</th>
-                    <th className='py-3 px-4'>Venue</th>
-                    <th className='py-3 px-4'>Status</th>
-                  </tr>
-                </thead>
-                <tbody className='divide-y divide-border'>
-                  {searchedEvents.map((event, idx) => (
-                    <tr key={event._id} className={'hover:bg-surfaceHover transition-colors animate-fade-up stagger-' + ((idx % 5) + 1)}>
-                      <td className='py-3 px-4 font-medium text-foreground'>{event.name}</td>
-                      <td className='py-3 px-4 text-sm text-foreground/70'>{event.type}</td>
-                      <td className='py-3 px-4 text-sm text-foreground/70'>{event.organizerName}</td>
-                      <td className='py-3 px-4 text-sm text-foreground/70 whitespace-nowrap'>{event.date}</td>
-                      <td className='py-3 px-4 text-sm text-foreground/70'>{event.venue}</td>
-                      <td className='py-3 px-4'>
-                        <span className={'text-xs font-semibold px-2 py-0.5 rounded-full ' + (event.status === 'Upcoming' ? 'bg-blue-500/10 text-blue-500' : event.status === 'Completed' ? 'bg-emerald-500/10 text-emerald-500' : event.status === 'Cancelled' ? 'bg-rose-500/10 text-rose-500' : 'bg-foreground/10 text-foreground/50')}>
-                          {event.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 };
