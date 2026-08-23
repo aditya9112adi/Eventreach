@@ -1,11 +1,13 @@
 import { Request, Response } from 'express';
 import { Event } from '../models/Event';
+import { updateExpiredEvents } from './eventController';
 import { Contact } from '../models/Contact';
 import { Campaign } from '../models/Campaign';
 import { MessageLog } from '../models/MessageLog';
 
 export const getDashboardStats = async (req: Request, res: Response) => {
   try {
+    await updateExpiredEvents();
     const { eventId, status } = req.query;
 
     let eventQuery: any = {};
@@ -79,6 +81,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
 
 export const getRecentCampaignActivity = async (req: Request, res: Response) => {
   try {
+    await updateExpiredEvents();
     const { eventId, status } = req.query;
 
     const sevenDaysAgo = new Date();
@@ -150,3 +153,4 @@ export const getRecentCampaignActivity = async (req: Request, res: Response) => 
     res.status(500).json({ error: 'Failed to fetch recent activity' });
   }
 };
+

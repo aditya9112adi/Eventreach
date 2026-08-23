@@ -90,8 +90,26 @@ export const createEvent = async (req: Request, res: Response) => {
   }
 };
 
+export const updateExpiredEvents = async () => {
+  try {
+    const events = await Event.find({ status: { $nin: ['Completed', 'Cancelled'] } });
+    const now = new Date();
+    
+    for (const event of events) {
+      // Parse event time explicitly as IST (+05:30)
+      const eventDateTime = new Date(`${event.date}T${event.time}:00+05:30`);
+      if (eventDateTime < now) {
+        event.status = 'Completed';
+        await event.save();
+      }
+    }
+  } catch (err) {
+    console.error('Error updating expired events:', err);
+  }
+};
 export const getEvents = async (req: Request, res: Response) => {
   try {
+    await updateExpiredEvents();
     const events = await Event.find().sort({ createdAt: -1 });
     res.json(events);
   } catch (error) {
@@ -102,6 +120,7 @@ export const getEvents = async (req: Request, res: Response) => {
 
 export const getEventById = async (req: Request, res: Response) => {
   try {
+    await updateExpiredEvents();
     const event = await Event.findById(req.params.id);
     if (!event) return res.status(404).json({ error: 'Event not found' });
     
@@ -131,4 +150,6 @@ export const updateEvent = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to update event' });
   }
 };
+
+
 
