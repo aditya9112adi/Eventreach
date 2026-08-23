@@ -24,7 +24,6 @@ interface DashboardStats {
 
 const STATUS_OPTIONS: { label: string; value: '' | EventStatus }[] = [
   { label: 'All', value: '' },
-  { label: 'Draft', value: 'Draft' },
   { label: 'Upcoming', value: 'Upcoming' },
   { label: 'Completed', value: 'Completed' },
   { label: 'Cancelled', value: 'Cancelled' },
