@@ -249,11 +249,17 @@ const ContactList = () => {
             </div>
           </div>
           
-          <Link to={`/contacts/import?eventId=${activeEvent?._id || ''}`}>
-            <Button variant="secondary" disabled={!activeEvent || isEventCompleted}>
+          {isEventCompleted ? (
+            <Button variant="secondary" disabled>
               Import from File
             </Button>
-          </Link>
+          ) : (
+            <Link to={`/contacts/import?eventId=${activeEvent?._id || ''}`}>
+              <Button variant="secondary" disabled={!activeEvent}>
+                Import from File
+              </Button>
+            </Link>
+          )}
           
           <Button
             disabled={isEventCompleted}
