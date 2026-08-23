@@ -14,7 +14,7 @@ interface FileUploadProps {
 export const FileUpload: React.FC<FileUploadProps> = ({ 
   onFileSelect, 
   accept, 
-  maxSize = 10485760, // 10MB default
+  maxSize = 104857600, // 100MB default
   selectedFile,
   onClear
 }) => {
@@ -81,4 +81,5 @@ export const FileUpload: React.FC<FileUploadProps> = ({
     </div>
   );
 };
+
 
