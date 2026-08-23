@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle, XCircle, Clock, Send, Users, TrendingUp, AlertTriangle, Printer } from 'lucide-react';
+import { ArrowLeft, CheckCircle, XCircle, Clock, Send, Users, TrendingUp, AlertTriangle, Printer, Download } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import api from '../../services/api';
 import { Badge } from '../../components/ui/Badge';
@@ -12,6 +12,7 @@ interface CampaignStats {
   campaignId: string;
   campaignStatus: string;
   eventName: string;
+  messageContent?: string;
   total: number;
   breakdown: {
     Pending: number;
@@ -140,50 +141,111 @@ export const CampaignReportContent = ({
     }
   };
 
+  const handleDownloadCSV = () => {
+    if (!stats) return;
+
+    const escapeCsv = (str: string) => {
+      if (!str) return '""';
+      const clean = String(str).replace(/"/g, '""');
+      return `"${clean}"`;
+    };
+
+    let csvContent = `Event Name,${escapeCsv(stats.eventName || 'Unknown')}\n`;
+    csvContent += `Event Status,${escapeCsv(stats.campaignStatus || 'Unknown')}\n`;
+    csvContent += `Message Content,${escapeCsv(stats.messageContent || 'N/A')}\n`;
+    csvContent += `\n--- LEADERBOARD / DELIVERY LOG ---\n`;
+    csvContent += `Contact Name,Mobile Number,Status,Details\n`;
+
+    logs.forEach(log => {
+      const name = log.contactId?.fullName || 'Unknown';
+      const phone = log.contactId?.phoneNumber || log.phoneNumber || 'Unknown';
+      const status = log.status;
+      const details = log.errorReason || (status === 'Pending' ? 'Queued' : 'Delivered');
+      csvContent += `${escapeCsv(name)},${escapeCsv(phone)},${escapeCsv(status)},${escapeCsv(details)}\n`;
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `Campaign_Report_${stats.eventName?.replace(/\s+/g, '_') || 'Export'}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       {/* Header */}
-      {!hideHeader && (
-        <div className="flex items-center justify-between mb-8 animate-fade-in">
-          {/* Left: Buttons */}
-          <div className="flex flex-col items-start space-y-3 w-1/3">
-            {!hideBackButton && (
-              <button
-                onClick={() => onBack ? onBack() : navigate(-1)}
-                className="text-foreground/50 hover:text-foreground text-sm font-medium flex items-center transition-colors"
-              >
-                <ArrowLeft className="w-4 h-4 mr-1" />
-                Back
-              </button>
-            )}
+        {!hideHeader && (
+          <div className="flex items-center justify-between mb-8 animate-fade-in">
+            {/* Left: Buttons */}
+            <div className="flex flex-col items-start space-y-3 w-1/3">
+              {!hideBackButton && (
+                <button
+                  onClick={() => onBack ? onBack() : navigate(-1)}
+                  className="text-foreground/50 hover:text-foreground text-sm font-medium flex items-center transition-colors"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-1" />
+                  Back
+                </button>
+              )}
+              
+              <div className="flex items-center space-x-3">
+                <button 
+                  onClick={handleDownloadCSV}
+                  className="inline-flex items-center px-4 py-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-md font-medium text-sm transition-colors border border-primary/20"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Download Report
+                </button>
+
+                {showPrintButton && (
+                  <button 
+                    onClick={() => window.print()}
+                    className="inline-flex items-center px-4 py-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 rounded-md font-medium text-sm transition-colors border border-emerald-500/20"
+                  >
+                    <Printer className="w-4 h-4 mr-2" />
+                    Print Report
+                  </button>
+                )}
+              </div>
+            </div>
             
-            {showPrintButton && (
-              <button 
-                onClick={() => window.print()}
-                className="inline-flex items-center px-4 py-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 rounded-md font-medium text-sm transition-colors border border-emerald-500/20"
-              >
-                <Printer className="w-4 h-4 mr-2" />
-                Print Report
-              </button>
-            )}
-          </div>
-          
-          {/* Center: Titles */}
-          <div className="text-center w-1/3">
-            <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Campaign Report</h2>
-            <p className="text-foreground/50 text-sm mt-1">{stats.eventName}</p>
-          </div>
+            {/* Center: Titles */}
+            <div className="text-center w-1/3">
+              <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Campaign Report</h2>
+              <div className="mt-2 flex items-center justify-center space-x-3">
+                <span className="text-primary font-medium tracking-wide">{stats.eventName}</span>
+                <span className="text-foreground/30">•</span>
+                <Badge variant={stats.campaignStatus === 'Completed' ? 'success' : 'warning'}>
+                  {stats.campaignStatus}
+                </Badge>
+              </div>
+            </div>
 
-          {/* Right: Badge */}
-          <div className="w-1/3 flex justify-end">
-            <Badge variant={stats.campaignStatus === 'Completed' ? 'success' : 'warning'}>
-              {stats.campaignStatus}
-            </Badge>
+            {/* Right: Empty for balance */}
+            <div className="w-1/3"></div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* KPI Cards */}
+        {/* Message Content Card */}
+        {stats.messageContent && (
+          <div className="bg-surface rounded-xl border border-border p-6 animate-fade-up">
+            <h3 className="text-sm font-sans font-medium text-foreground/50 uppercase tracking-wide mb-3 flex items-center">
+              <Send className="w-4 h-4 mr-2" />
+              Campaign Message
+            </h3>
+            <div className="bg-surfaceHover/50 rounded-lg p-4 border border-border/50 text-foreground/80 whitespace-pre-wrap font-sans text-sm">
+              {stats.messageContent}
+            </div>
+          </div>
+        )}
+
+        {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-up stagger-1">
         <div className="bg-surface rounded-xl border border-border p-5 group hover:border-accent/50 transition-colors">
           <div className="flex items-center justify-between mb-3">

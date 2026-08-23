@@ -38,10 +38,15 @@ export const getCampaignStats = async (req: Request, res: Response) => {
     const successCount = breakdown.Sent + breakdown.Delivered;
     const successRate = total > 0 ? Math.round((successCount / total) * 100) : 0;
 
+    const historyLen = campaign.history?.length || 0;
+    const latestMessage = historyLen > 0 ? campaign.history[historyLen - 1].messageText : campaign.messageText;
+
     res.json({
       campaignId,
       campaignStatus: campaign.status,
       eventName: (campaign.eventId as any).name,
+      eventDetails: campaign.eventId,
+      messageContent: latestMessage,
       total,
       breakdown,
       successRate
@@ -87,3 +92,4 @@ export const getCampaignLogs = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch campaign logs' });
   }
 };
+
