@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, CheckCircle, XCircle, Clock, Send, Users, TrendingUp, AlertTriangle, Printer } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
@@ -6,6 +6,7 @@ import api from '../../services/api';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../store/authStore';
+import { useSocket } from '../../contexts/SocketContext';
 
 interface CampaignStats {
   campaignId: string;
@@ -64,48 +65,50 @@ export const CampaignReportContent = ({
   // Authorization check
   const hasReportAccess = user?.role === 'SuperAdmin' || (user?.accessExpiryDate && new Date(user.accessExpiryDate) > new Date() && !user?.isAccessCancelled);
 
+  const fetchReport = useCallback(async (isSilent = false) => {
+    if (!campaignId) return;
+    if (!isSilent) setIsLoading(true);
+    try {
+      const [statsRes, logsRes] = await Promise.all([
+        api.get(`/reports/campaign/${campaignId}/stats`),
+        api.get(`/reports/campaign/${campaignId}/logs`, { params: { status: statusFilter === 'All' ? undefined : statusFilter } })
+      ]);
+      setStats(statsRes.data);
+      setLogs(logsRes.data.logs);
+    } catch (error) {
+      console.error('Failed to fetch report', error);
+    } finally {
+      if (!isSilent) setIsLoading(false);
+    }
+  }, [campaignId, statusFilter]);
+
   useEffect(() => {
     if (!hasReportAccess) {
       showToast('error', 'You do not have permission to view reports. Please request access from the Super Admin.');
       navigate('/dashboard');
       return;
     }
-
-    const fetchReport = async () => {
-      if (!campaignId) return;
-      setIsLoading(true);
-      try {
-        const [statsRes, logsRes] = await Promise.all([
-          api.get(`/reports/campaign/${campaignId}/stats`),
-          api.get(`/reports/campaign/${campaignId}/logs`)
-        ]);
-        setStats(statsRes.data);
-        setLogs(logsRes.data.logs);
-      } catch (error) {
-        console.error('Failed to fetch report', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
     fetchReport();
-  }, [campaignId]);
+  }, [fetchReport, hasReportAccess, navigate, showToast]);
 
+  const { socket } = useSocket();
   useEffect(() => {
-    const fetchFilteredLogs = async () => {
-      if (!campaignId) return;
-      try {
-        const logsRes = await api.get(`/reports/campaign/${campaignId}/logs`, {
-          params: { status: statusFilter }
-        });
-        setLogs(logsRes.data.logs);
-      } catch (error) {
-        console.error('Failed to fetch filtered logs', error);
+    if (!socket || !campaignId) return;
+
+    const handleUpdate = (data: any) => {
+      if (data.campaignId === campaignId) {
+        fetchReport(true);
       }
     };
-    if (!isLoading) {
-      fetchFilteredLogs();
-    }
-  }, [statusFilter, campaignId, isLoading]);
+
+    socket.on('message-log-updated', handleUpdate);
+    socket.on('campaign-status-changed', handleUpdate);
+
+    return () => {
+      socket.off('message-log-updated', handleUpdate);
+      socket.off('campaign-status-changed', handleUpdate);
+    };
+  }, [socket, campaignId, fetchReport]);
 
   if (isLoading) {
     return (

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { Event } from '../models/Event';
 import { Contact } from '../models/Contact';
+import { getIO } from '../services/socketService';
 
 const createEventSchema = z.object({
   organizerName: z.string().min(1, 'Organizer name is required'),
@@ -101,6 +102,14 @@ export const updateExpiredEvents = async () => {
       if (eventDateTime < now) {
         event.status = 'Completed';
         await event.save();
+        
+        // Emit live socket event to notify clients
+        try {
+            getIO().emit('event-status-changed', { eventId: event._id, status: 'Completed' });
+            getIO().emit('dashboard-updated');
+        } catch (e) {
+            console.error('Socket emit error:', e);
+        }
       }
     }
   } catch (err) {
@@ -150,6 +159,7 @@ export const updateEvent = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to update event' });
   }
 };
+
 
 
 

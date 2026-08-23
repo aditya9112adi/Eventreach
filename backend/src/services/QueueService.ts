@@ -3,6 +3,7 @@ import { Contact } from '../models/Contact';
 import { Event } from '../models/Event';
 import { MessageLog } from '../models/MessageLog';
 import { whatsappService } from './WhatsAppService';
+import { getIO } from './socketService';
 
 export class QueueService {
   
@@ -95,12 +96,22 @@ export class QueueService {
             logId,
             { status: 'Sent' }
           );
+          
+          try {
+            getIO().emit('message-log-updated', { logId, status: 'Sent', campaignId });
+            getIO().emit('dashboard-updated');
+          } catch (e) {}
         } catch (err: any) {
           // Update log with failure using specific logId
           await MessageLog.findByIdAndUpdate(
             logId,
             { status: 'Failed', errorReason: err.message }
           );
+          
+          try {
+            getIO().emit('message-log-updated', { logId, status: 'Failed', campaignId, errorReason: err.message });
+            getIO().emit('dashboard-updated');
+          } catch (e) {}
         }
       });
 
@@ -120,6 +131,7 @@ export class QueueService {
 }
 
 export const queueService = new QueueService();
+
 
 
 

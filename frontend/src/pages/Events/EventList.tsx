@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useSocket } from '../../contexts/SocketContext';
 import { Link } from 'react-router-dom';
 import { Plus, Search, Calendar, MapPin } from 'lucide-react';
 import api from '../../services/api';
@@ -12,19 +13,36 @@ const EventList = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
 
-  useEffect(() => {
-    const fetchEvents = async () => {
-      try {
-        const response = await api.get('/events');
-        setEvents(response.data);
-      } catch (error) {
-        console.error('Failed to fetch events', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchEvents();
+  const fetchEvents = useCallback(async () => {
+    try {
+      const response = await api.get('/events');
+      setEvents(response.data);
+    } catch (error) {
+      console.error('Failed to fetch events', error);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchEvents();
+  }, [fetchEvents]);
+
+  // Listen for real-time event status changes (e.g. auto-completion when time passes)
+  const { socket } = useSocket();
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleEventChanged = () => {
+      fetchEvents(); // Re-fetch the events list quietly in the background
+    };
+
+    socket.on('event-status-changed', handleEventChanged);
+    
+    return () => {
+      socket.off('event-status-changed', handleEventChanged);
+    };
+  }, [socket, fetchEvents]);
 
   const filteredEvents = events.filter(e => 
     e.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -135,3 +153,4 @@ const EventList = () => {
 };
 
 export default EventList;
+

@@ -3,7 +3,9 @@ import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 import path from 'path';
+import { createServer } from 'http';
 import { connectDB } from './config/database';
+import { initSocket } from './services/socketService';
 import authRoutes from './routes/authRoutes';
 import eventRoutes from './routes/eventRoutes';
 import contactRoutes from './routes/contactRoutes';
@@ -50,3 +52,4 @@ const startServer = async () => {
 };
 
 startServer();
+
