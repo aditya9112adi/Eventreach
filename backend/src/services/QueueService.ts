@@ -25,6 +25,8 @@ export class QueueService {
       
       if (contacts.length === 0) {
         campaign.status = 'Completed';
+        campaign.messageText = '';
+        campaign.mediaAttachments = [];
         await campaign.save();
         return;
       }
@@ -94,9 +96,10 @@ export class QueueService {
     }
 
     // Mark campaign as completed
-    await Campaign.findByIdAndUpdate(campaignId, { status: 'Completed' });
+    await Campaign.findByIdAndUpdate(campaignId, { status: 'Completed', messageText: '', mediaAttachments: [] });
     console.log(`Campaign ${campaignId} processing completed.`);
   }
 }
 
 export const queueService = new QueueService();
+
