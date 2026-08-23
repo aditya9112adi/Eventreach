@@ -4,6 +4,8 @@ import { ArrowLeft, CheckCircle, XCircle, Clock, Send, Users, TrendingUp, AlertT
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import api from '../../services/api';
 import { Badge } from '../../components/ui/Badge';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../store/authStore';
 import { useSocket } from '../../contexts/SocketContext';
@@ -141,40 +143,54 @@ export const CampaignReportContent = ({
     }
   };
 
-  const handleDownloadCSV = () => {
+  const handleDownloadPDF = () => {
     if (!stats) return;
 
-    const escapeCsv = (str: string) => {
-      if (!str) return '""';
-      const clean = String(str).replace(/"/g, '""');
-      return `"${clean}"`;
-    };
+    const doc = new jsPDF();
+    const eventName = stats.eventName || 'Unknown Event';
+    
+    // Add title
+    doc.setFontSize(20);
+    doc.text('Campaign Delivery Report', 14, 22);
+    
+    // Add Event Info
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`Event Name: ${eventName}`, 14, 32);
+    doc.text(`Status: ${stats.campaignStatus || 'Unknown'}`, 14, 38);
+    
+    // Add Message Content
+    doc.setFontSize(12);
+    doc.setTextColor(0);
+    doc.text('Message Content:', 14, 50);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(80);
+    const messageLines = doc.splitTextToSize(stats.messageContent || 'N/A', 180);
+    doc.text(messageLines, 14, 58);
+    
+    // Calculate Y position for the table based on message length
+    const nextY = 58 + (messageLines.length * 5) + 10;
+    
+    // Create Table Data
+    const tableColumn = ["Contact Name", "Mobile Number", "Status", "Details"];
+    const tableRows = logs.map(log => [
+      log.contactId?.fullName || 'Unknown',
+      log.contactId?.phoneNumber || log.phoneNumber || 'Unknown',
+      log.status,
+      log.errorReason || (log.status === 'Pending' ? 'Queued' : 'Delivered')
+    ]);
 
-    let csvContent = `Event Name,${escapeCsv(stats.eventName || 'Unknown')}\n`;
-    csvContent += `Event Status,${escapeCsv(stats.campaignStatus || 'Unknown')}\n`;
-    csvContent += `Message Content,${escapeCsv(stats.messageContent || 'N/A')}\n`;
-    csvContent += `\n--- LEADERBOARD / DELIVERY LOG ---\n`;
-    csvContent += `Contact Name,Mobile Number,Status,Details\n`;
-
-    logs.forEach(log => {
-      const name = log.contactId?.fullName || 'Unknown';
-      const phone = log.contactId?.phoneNumber || log.phoneNumber || 'Unknown';
-      const status = log.status;
-      const details = log.errorReason || (status === 'Pending' ? 'Queued' : 'Delivered');
-      csvContent += `${escapeCsv(name)},${escapeCsv(phone)},${escapeCsv(status)},${escapeCsv(details)}\n`;
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: nextY,
+      theme: 'grid',
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [79, 70, 229] } // primary color
     });
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    if (link.download !== undefined) {
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `Campaign_Report_${stats.eventName?.replace(/\s+/g, '_') || 'Export'}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
+    doc.save(`Campaign_Report_${eventName.replace(/\s+/g, '_')}.pdf`);
   };
 
   return (
@@ -196,7 +212,7 @@ export const CampaignReportContent = ({
               
               <div className="flex items-center space-x-3">
                 <button 
-                  onClick={handleDownloadCSV}
+                  onClick={handleDownloadPDF}
                   className="inline-flex items-center px-4 py-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-md font-medium text-sm transition-colors border border-primary/20"
                 >
                   <Download className="w-4 h-4 mr-2" />
