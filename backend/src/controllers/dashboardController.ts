@@ -6,55 +6,60 @@ import { MessageLog } from '../models/MessageLog';
 
 export const getDashboardStats = async (req: Request, res: Response) => {
   try {
-    const { eventId } = req.query;
+    const { eventId, status } = req.query;
 
-    let eventQuery = {};
-    let contactQuery = {};
-    let campaignQuery = {};
+    let eventQuery: any = {};
+    let contactQuery: any = {};
+    let campaignQuery: any = {};
     let messageMatchQuery: any = {};
-    
+
+    // Filter by status (new dropdown filter)
+    if (status) {
+      eventQuery.status = status;
+    }
+
+    // Filter by specific event (old per-event filter, kept for compatibility)
     if (eventId) {
-      eventQuery = { _id: eventId };
-      contactQuery = { eventId };
-      campaignQuery = { eventId };
-      
+      eventQuery._id = eventId;
+      contactQuery.eventId = eventId;
+      campaignQuery.eventId = eventId;
+
       const campaigns = await Campaign.find({ eventId }).select('_id');
       const campaignIds = campaigns.map((c) => c._id);
-      
-      if (campaignIds.length > 0) {
-        messageMatchQuery = { campaignId: { $in: campaignIds } };
-      } else {
-        // If no campaigns for this event, we want to force 0 messages
-        messageMatchQuery = { campaignId: null }; 
-      }
+
+      messageMatchQuery = campaignIds.length > 0
+        ? { campaignId: { $in: campaignIds } }
+        : { campaignId: null };
+    } else if (status) {
+      // When filtering by status, count contacts/campaigns under matching events
+      const matchingEvents = await Event.find(eventQuery).select('_id');
+      const matchingEventIds = matchingEvents.map((e) => e._id);
+
+      contactQuery.eventId = { $in: matchingEventIds };
+      campaignQuery.eventId = { $in: matchingEventIds };
+
+      const campaigns = await Campaign.find(campaignQuery).select('_id');
+      const campaignIds = campaigns.map((c) => c._id);
+
+      messageMatchQuery = campaignIds.length > 0
+        ? { campaignId: { $in: campaignIds } }
+        : { campaignId: null };
     }
 
     const totalEvents = await Event.countDocuments(eventQuery);
     const totalContacts = await Contact.countDocuments(contactQuery);
     const totalCampaigns = await Campaign.countDocuments(campaignQuery);
 
-    // Aggregate message stats from MessageLog
     const messageStats = await MessageLog.aggregate([
       { $match: messageMatchQuery },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 }
-        }
-      }
+      { $group: { _id: '$status', count: { $sum: 1 } } }
     ]);
 
     const msgBreakdown: Record<string, number> = {
-      Sent: 0,
-      Delivered: 0,
-      Failed: 0,
-      Pending: 0
+      Sent: 0, Delivered: 0, Failed: 0, Pending: 0
     };
-
     messageStats.forEach((s: any) => {
-      if (msgBreakdown[s._id] !== undefined) {
-        msgBreakdown[s._id] = s.count;
-      }
+      if (msgBreakdown[s._id] !== undefined) msgBreakdown[s._id] = s.count;
     });
 
     res.json({
@@ -74,28 +79,29 @@ export const getDashboardStats = async (req: Request, res: Response) => {
 
 export const getRecentCampaignActivity = async (req: Request, res: Response) => {
   try {
-    const { eventId } = req.query;
+    const { eventId, status } = req.query;
 
-    // Get the last 7 campaigns or recent message activity grouped by day
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    let messageMatchQuery: any = {
-      createdAt: { $gte: sevenDaysAgo }
-    };
-    
+    let messageMatchQuery: any = { createdAt: { $gte: sevenDaysAgo } };
     let campaignQuery: any = {};
 
     if (eventId) {
       campaignQuery = { eventId };
       const campaigns = await Campaign.find({ eventId }).select('_id');
       const campaignIds = campaigns.map((c) => c._id);
-      
-      if (campaignIds.length > 0) {
-        messageMatchQuery.campaignId = { $in: campaignIds };
-      } else {
-        messageMatchQuery.campaignId = null;
-      }
+      messageMatchQuery.campaignId = campaignIds.length > 0
+        ? { $in: campaignIds } : null;
+    } else if (status) {
+      // Filter by event status
+      const matchingEvents = await Event.find({ status }).select('_id');
+      const matchingEventIds = matchingEvents.map((e) => e._id);
+      campaignQuery = { eventId: { $in: matchingEventIds } };
+      const campaigns = await Campaign.find(campaignQuery).select('_id');
+      const campaignIds = campaigns.map((c) => c._id);
+      messageMatchQuery.campaignId = campaignIds.length > 0
+        ? { $in: campaignIds } : null;
     }
 
     const dailyActivity = await MessageLog.aggregate([

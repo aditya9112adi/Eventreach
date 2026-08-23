@@ -8,5 +8,6 @@ router.use(requireAuth);
 
 router.get('/stats', getDashboardStats);
 router.get('/recent-activity', getRecentCampaignActivity);
+router.get('/activity', getRecentCampaignActivity); // alias used by frontend
 
 export default router;
