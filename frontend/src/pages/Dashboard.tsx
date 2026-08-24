@@ -108,7 +108,7 @@ const Dashboard = () => {
   }
 
   const statCards = [
-    { label: 'Total Events',     value: stats.totalEvents,       icon: CalendarDays,  color: 'text-blue-500 dark:text-blue-400',      bg: 'bg-blue-500/10' },
+    ...(selectedEventId ? [] : [{ label: 'Total Events',     value: stats.totalEvents,       icon: CalendarDays,  color: 'text-blue-500 dark:text-blue-400',      bg: 'bg-blue-500/10' }]),
     { label: 'Total Contacts',   value: stats.totalContacts,     icon: Users,         color: 'text-indigo-500 dark:text-indigo-400',   bg: 'bg-indigo-500/10' },
     { label: 'Active Campaigns', value: stats.totalCampaigns,    icon: Megaphone,     color: 'text-purple-500 dark:text-purple-400',   bg: 'bg-purple-500/10' },
     { label: 'Messages Sent',    value: stats.messagesSent,      icon: Send,          color: 'text-sky-500 dark:text-sky-400',         bg: 'bg-sky-500/10' },
