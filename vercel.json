@@ -1,4 +1,7 @@
 {
+  "buildCommand": "npm install && cd shared && npm run build && cd ../frontend && npm run build --prefix ../shared && npx tsc -b && npx vite build",
+  "outputDirectory": "frontend/dist",
+  "installCommand": "npm install",
   "rewrites": [
     {
       "source": "/(.*)",

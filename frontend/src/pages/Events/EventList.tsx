@@ -72,12 +72,13 @@ const EventList = () => {
       <div className="bg-surface rounded-xl border border-border overflow-hidden animate-fade-up stagger-1">
         <div className="p-4 border-b border-border">
           <div className="relative max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/40" />
-            <Input 
-              placeholder="Search events..." 
-              className="pl-9 bg-background"
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/40 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search events..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full rounded-md border border-border bg-surface/50 pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-foreground/40 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 hover:border-border/80 transition-all duration-200"
             />
           </div>
         </div>

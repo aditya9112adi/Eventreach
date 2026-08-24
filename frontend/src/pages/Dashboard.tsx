@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../store/authStore';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -7,10 +7,11 @@ import {
 } from 'recharts';
 import {
   CalendarDays, Users, Megaphone, Send,
-  CheckCircle2, XCircle, Clock, Search, X, ChevronRight,
+  CheckCircle2, XCircle, Clock,
 } from 'lucide-react';
 import api from '../services/api';
 import type { Event, Campaign, EventStatus } from '@eventreach/shared';
+import { EventSearch } from '../components/ui/EventSearch';
 
 interface DashboardStats {
   totalEvents: number;
@@ -42,24 +43,12 @@ const Dashboard = () => {
   // FILTER 1 — Status dropdown (re-fetches stats from API)
   const [statusFilter, setStatusFilter] = useState<'' | EventStatus>('');
 
-  // FILTER 2 — Event search autocomplete (re-fetches stats for selected event)
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchRef = useRef<HTMLDivElement>(null);
+  // FILTER 2 — Event search via EventSearch dropdown
+  const [selectedEventId, setSelectedEventId] = useState<string>('');
 
   const { user } = useAuth();
 
-  // Close dropdown on outside click
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
-        setSearchOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
+  const selectedEvent = events.find(e => e._id === selectedEventId) || null;
 
   // Fetch when status filter OR selected event changes
   useEffect(() => {
@@ -67,8 +56,8 @@ const Dashboard = () => {
       setIsLoading(true);
       try {
         let query = '';
-        if (selectedEvent) {
-          query = '?eventId=' + selectedEvent._id;
+        if (selectedEventId) {
+          query = '?eventId=' + selectedEventId;
         } else if (statusFilter) {
           query = '?status=' + statusFilter;
         }
@@ -88,38 +77,7 @@ const Dashboard = () => {
       }
     };
     fetchAll();
-  }, [statusFilter, selectedEvent]);
-
-  // Live-filtered suggestions based on search query
-  const suggestions = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return [];
-    return events.filter(
-      (e) =>
-        e.name.toLowerCase().includes(q) ||
-        e.type?.toLowerCase().includes(q) ||
-        e.organizerName?.toLowerCase().includes(q) ||
-        e.venue?.toLowerCase().includes(q)
-    ).slice(0, 8);
-  }, [events, searchQuery]);
-
-  const handleSelectEvent = (event: Event) => {
-    setSelectedEvent(event);
-    setSearchQuery(event.name);
-    setSearchOpen(false);
-  };
-
-  const handleClearSearch = () => {
-    setSelectedEvent(null);
-    setSearchQuery('');
-    setSearchOpen(false);
-  };
-
-  const handleSearchChange = (value: string) => {
-    setSearchQuery(value);
-    setSelectedEvent(null); // clear selection when user edits
-    setSearchOpen(value.trim().length > 0);
-  };
+  }, [statusFilter, selectedEventId]);
 
   if (isLoading) {
     return (
@@ -186,7 +144,7 @@ const Dashboard = () => {
               <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Filter by Status</label>
               <select
                 value={statusFilter}
-                onChange={(e) => { setStatusFilter(e.target.value as ('' | EventStatus)); setSelectedEvent(null); setSearchQuery(''); }}
+                onChange={(e) => { setStatusFilter(e.target.value as ('' | EventStatus)); setSelectedEventId(''); }}
                 className='bg-surface border border-border text-foreground px-4 py-2 rounded-md focus:outline-none focus:border-accent transition-colors font-medium text-sm min-w-[160px] cursor-pointer'
               >
                 {STATUS_OPTIONS.map((opt) => (
@@ -195,53 +153,16 @@ const Dashboard = () => {
               </select>
             </div>
 
-            {/* FILTER 2: Event Search Autocomplete — selects a specific event */}
-            <div className='flex flex-col' ref={searchRef}>
+            {/* FILTER 2: Event Search dropdown — selects a specific event */}
+            <div className='flex flex-col w-[260px]'>
               <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Search Event</label>
-              <div className='relative'>
-                <Search className='absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/40 pointer-events-none' />
-                <input
-                  type='text'
-                  value={searchQuery}
-                  onChange={(e) => handleSearchChange(e.target.value)}
-                  onFocus={() => { if (searchQuery.trim()) setSearchOpen(true); }}
-                  placeholder='Search by name, type...'
-                  className={'bg-surface border text-foreground pl-9 pr-8 py-2 rounded-md focus:outline-none transition-colors text-sm w-[240px] placeholder:text-foreground/30 ' + (selectedEvent ? 'border-accent/50 bg-accent/5' : 'border-border focus:border-accent')}
-                />
-                {searchQuery && (
-                  <button onClick={handleClearSearch} className='absolute right-2 top-1/2 -translate-y-1/2 text-foreground/40 hover:text-foreground transition-colors'>
-                    <X className='w-3.5 h-3.5' />
-                  </button>
-                )}
-
-                {/* Inline dropdown results */}
-                {searchOpen && searchQuery.trim().length > 0 && (
-                  <div className='absolute top-full left-0 right-0 mt-1 z-50 bg-surface border border-border rounded-md shadow-xl overflow-hidden'>
-                    {suggestions.length === 0 ? (
-                      <div className='px-4 py-3 text-sm text-foreground/50 flex items-center gap-2'>
-                        <Search className='w-4 h-4 opacity-40' />
-                        No events found
-                      </div>
-                    ) : (
-                      <div>
-                        {suggestions.map((evt) => (
-                          <button
-                            key={evt._id}
-                            className={'w-full text-left px-4 py-2.5 hover:bg-surfaceHover transition-colors flex items-center justify-between gap-2 group ' + (selectedEvent?._id === evt._id ? 'bg-accent/10' : '')}
-                            onMouseDown={(e) => { e.preventDefault(); handleSelectEvent(evt); }}
-                          >
-                            <div className='min-w-0'>
-                              <p className='text-sm font-medium text-foreground truncate'>{evt.name}</p>
-                              <p className='text-xs text-foreground/50 truncate'>{evt.type} &middot; {evt.date}</p>
-                            </div>
-                            <ChevronRight className='w-4 h-4 text-foreground/30 group-hover:text-accent shrink-0 transition-colors' />
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+              <EventSearch
+                events={events}
+                value={selectedEventId}
+                onChange={(id) => { setSelectedEventId(id); setStatusFilter(''); }}
+                placeholder='Search events...'
+                allowClear={true}
+              />
             </div>
 
           </div>
