@@ -13,10 +13,16 @@ import { z } from 'zod';
 import { EventSearch } from '../../components/ui/EventSearch';
 
 const contactSchema = z.object({
-  fullName: z.string().min(1, 'Name is required'),
-  phoneNumber: z.string().min(1, 'Phone is required'),
+  fullName: z.string().min(1, 'Name is required').max(50, 'Full name must be at most 50 characters'),
+  phoneNumber: z.string().regex(/^\d{10}$/, 'WhatsApp number must be exactly 10 digits'),
   countryCode: z.string().min(1, 'Code required'),
-  email: z.string().email('Invalid email').optional().or(z.literal('')),
+  email: z.string()
+    .optional()
+    .or(z.literal(''))
+    .refine(
+      (val) => !val || /^[^@]{1,50}@gmail\.com$/.test(val),
+      { message: 'Only @gmail.com emails allowed (name part max 50 characters)' }
+    ),
 });
 type ContactForm = z.infer<typeof contactSchema>;
 
@@ -317,12 +323,15 @@ const ContactList = () => {
                 </div>
               )}
               <form onSubmit={handleSubmit(editingContact ? onEditContact : onAddContact)} className="space-y-4">
-                <Input
-                  label="Full Name"
-                  placeholder="John Doe"
-                  {...register('fullName')}
-                  error={errors.fullName?.message}
-                />
+                <div>
+                  <Input
+                    label="Full Name"
+                    placeholder="John Doe"
+                    maxLength={50}
+                    {...register('fullName')}
+                    error={errors.fullName?.message}
+                  />
+                </div>
                 
                 <div className="flex gap-2">
                   <div className="w-1/3">
@@ -341,18 +350,22 @@ const ContactList = () => {
                     <Input
                       label="WhatsApp Number"
                       placeholder="e.g. 555 123 4567"
+                      maxLength={10}
                       {...register('phoneNumber')}
                       error={errors.phoneNumber?.message}
                     />
                   </div>
                 </div>
 
-                <Input
-                  label="Email (Optional)"
-                  placeholder="john@example.com"
-                  {...register('email')}
-                  error={errors.email?.message}
-                />
+                <div>
+                  <Input
+                    label="Email (Optional)"
+                    placeholder="john@gmail.com"
+                    maxLength={60} // 50 for name + 10 for @gmail.com
+                    {...register('email')}
+                    error={errors.email?.message}
+                  />
+                </div>
 
                 <div className="flex justify-end gap-3 mt-6">
                   <Button type="button" variant="ghost" onClick={() => { setIsAddModalOpen(false); setEditingContact(null); reset(); }}>
