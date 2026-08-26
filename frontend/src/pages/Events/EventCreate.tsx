@@ -19,25 +19,25 @@ const LIMITS = {
 };
 
 const eventSchema = z.object({
-  organizerName: z.string().min(1, 'Organizer name is required').max(LIMITS.organizerName, `Organizer name must be at most ${LIMITS.organizerName} characters`),
-  organizerMobile: z.string().regex(/^\d{10}$/, 'Mobile number must be exactly 10 digits'),
-  name: z.string().min(1, 'Event name is required').max(LIMITS.name, `Event name must be at most ${LIMITS.name} characters`),
-  type: z.string().min(1, 'Event type is required').max(LIMITS.type, `Event type must be at most ${LIMITS.type} characters`),
-  date: z.string().min(1, 'Date is required'),
-  time: z.string().min(1, 'Time is required'),
-  venue: z.string().min(1, 'Venue is required').max(LIMITS.venue, `Venue must be at most ${LIMITS.venue} characters`),
-  description: z.string().max(LIMITS.description, `Description must be at most ${LIMITS.description} characters`).optional(),
+  organizerName:    z.string().min(1, 'Event Organizer is required').max(LIMITS.organizerName, `Event Organizer max ${LIMITS.organizerName} characters`),
+  organizerMobile:  z.string().regex(/^\d{10}$/, 'Mobile No must be exactly 10 digits'),
+  eventName:        z.string().min(1, 'Event Name is required').max(LIMITS.name, `Event Name max ${LIMITS.name} characters`),
+  eventType:        z.string().min(1, 'Event Type is required').max(LIMITS.type, `Event Type max ${LIMITS.type} characters`),
+  eventDate:        z.string().min(1, 'Event Date is required'),
+  eventTime:        z.string().min(1, 'Event Time is required'),
+  eventVenue:       z.string().min(1, 'Event Venue is required').max(LIMITS.venue, `Event Venue max ${LIMITS.venue} characters`),
+  eventDescription: z.string().max(LIMITS.description, `Event Description max ${LIMITS.description} characters`).optional(),
 }).superRefine((data, ctx) => {
-  if (data.date) {
+  if (data.eventDate) {
     const now = new Date();
     const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-    if (data.date < todayStr) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Date cannot be in the past', path: ['date'] });
-    } else if (data.date === todayStr && data.time) {
+    if (data.eventDate < todayStr) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Event Date cannot be in the past', path: ['eventDate'] });
+    } else if (data.eventDate === todayStr && data.eventTime) {
       const currentHours = now.getHours().toString().padStart(2, '0');
       const currentMinutes = now.getMinutes().toString().padStart(2, '0');
-      if (data.time < `${currentHours}:${currentMinutes}`) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Time cannot be in the past', path: ['time'] });
+      if (data.eventTime < `${currentHours}:${currentMinutes}`) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Event Time cannot be in the past', path: ['eventTime'] });
       }
     }
   }
@@ -65,9 +65,9 @@ const EventCreate = () => {
     resolver: zodResolver(eventSchema),
   });
 
-  const [wOrgName, wOrgMobile, wName, wType, wVenue, wDesc] = watch(['organizerName', 'organizerMobile', 'name', 'type', 'venue', 'description']);
-  const selectedDate = watch('date');
-  const selectedTime = watch('time');
+  const [wOrgName, wOrgMobile, wName, wType, wVenue, wDesc] = watch(['organizerName', 'organizerMobile', 'eventName', 'eventType', 'eventVenue', 'eventDescription']);
+  const selectedDate = watch('eventDate');
+  const selectedTime = watch('eventTime');
 
   const now = new Date();
   const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
@@ -79,10 +79,10 @@ const EventCreate = () => {
 
   useEffect(() => {
     if (selectedDate === todayStr && selectedTime && minTime && selectedTime < minTime) {
-      setValue('time', minTime, { shouldValidate: true });
+      setValue('eventTime', minTime, { shouldValidate: true });
       showToast('warning', 'Past time selected. Automatically adjusted to current time.');
     } else if (selectedDate && selectedDate < todayStr) {
-      setValue('date', todayStr, { shouldValidate: true });
+      setValue('eventDate', todayStr, { shouldValidate: true });
       showToast('warning', 'Past date selected. Automatically adjusted to today.');
     }
   }, [selectedDate, selectedTime, minTime, todayStr, setValue, showToast]);
@@ -147,8 +147,8 @@ const EventCreate = () => {
                 label="Event Name"
                 placeholder="e.g. Annual Tech Conference 2026"
                 maxLength={LIMITS.name}
-                {...register('name')}
-                error={errors.name?.message}
+                {...register('eventName')}
+                error={errors.eventName?.message}
               />
               <CharCount value={wName} max={LIMITS.name} />
             </div>
@@ -157,8 +157,8 @@ const EventCreate = () => {
                 label="Event Type"
                 placeholder="e.g. Conference, Webinar, Wedding"
                 maxLength={LIMITS.type}
-                {...register('type')}
-                error={errors.type?.message}
+                {...register('eventType')}
+                error={errors.eventType?.message}
               />
               <CharCount value={wType} max={LIMITS.type} />
             </div>
@@ -166,15 +166,15 @@ const EventCreate = () => {
               label="Event Date"
               type="date"
               min={todayStr}
-              {...register('date')}
-              error={errors.date?.message}
+              {...register('eventDate')}
+              error={errors.eventDate?.message}
             />
             <Input
               label="Event Time"
               type="time"
               min={minTime}
-              {...register('time')}
-              error={errors.time?.message}
+              {...register('eventTime')}
+              error={errors.eventTime?.message}
             />
           </div>
 
@@ -183,8 +183,8 @@ const EventCreate = () => {
               label="Event Venue"
               placeholder="e.g. Grand Hotel OR Zoom Link"
               maxLength={LIMITS.venue}
-              {...register('venue')}
-              error={errors.venue?.message}
+              {...register('eventVenue')}
+              error={errors.eventVenue?.message}
             />
             <CharCount value={wVenue} max={LIMITS.venue} />
           </div>
@@ -197,11 +197,11 @@ const EventCreate = () => {
               className="w-full rounded-md border border-border bg-surface/50 text-foreground p-3 text-sm focus:ring-2 focus:ring-white/20 outline-none min-h-[100px] resize-y transition-all duration-200"
               placeholder="Enter Event Description."
               maxLength={LIMITS.description}
-              {...register('description')}
+              {...register('eventDescription')}
             ></textarea>
             <CharCount value={wDesc} max={LIMITS.description} />
-            {errors.description && (
-              <p className="mt-1 text-sm text-destructive">{errors.description.message}</p>
+            {errors.eventDescription && (
+              <p className="mt-1 text-sm text-destructive">{errors.eventDescription.message}</p>
             )}
           </div>
 

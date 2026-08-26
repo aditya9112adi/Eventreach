@@ -13,8 +13,8 @@ export class QueueService {
       if (!campaign) throw new Error('Campaign not found');
 
       const event = campaign.eventId as any; // populated event doc
-      const eventName = event.name;
-      const venue = event.venue;
+      const eventName = event.eventName;
+      const venue = event.eventVenue;
 
       // 1. Fetch contacts for this event. If recipientIds is provided, filter by it.
       let query: any = { eventId: event._id, status: 'Valid' };

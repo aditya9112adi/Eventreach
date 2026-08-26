@@ -72,8 +72,8 @@ const SendPreview = () => {
     if (!campaign?.messageText) return '';
     let text = campaign.messageText;
     text = text.replace(/{{fullName}}/g, contact.fullName);
-    text = text.replace(/{{eventName}}/g, event?.name || '');
-    text = text.replace(/{{venue}}/g, event?.venue || '');
+    text = text.replace(/{{eventName}}/g, event?.eventName || '');
+    text = text.replace(/{{venue}}/g, event?.eventVenue || '');
     return text;
   };
 
@@ -126,7 +126,7 @@ const SendPreview = () => {
           </button>
           <div>
             <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Review & Send</h2>
-            <p className="text-sm text-foreground/50">{event.name}</p>
+            <p className="text-sm text-foreground/50">{event.eventName}</p>
           </div>
         </div>
         <Button onClick={handleSend} isLoading={isSending} disabled={selectedIds.size === 0}>

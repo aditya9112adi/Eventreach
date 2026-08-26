@@ -24,13 +24,13 @@ export interface Event {
   _id: string;
   organizerName: string;
   organizerMobile: string;
-  name: string;
-  type: string;
-  date: string;
-  time: string;
-  venue: string;
-  description?: string;
-  status: EventStatus;
+  eventName: string;
+  eventType: string;
+  eventDate: string;
+  eventTime: string;
+  eventVenue: string;
+  eventDescription?: string;
+  eventStatus: EventStatus;
   createdAt: string;
   updatedAt: string;
 }

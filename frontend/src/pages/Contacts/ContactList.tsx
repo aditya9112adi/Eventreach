@@ -61,7 +61,7 @@ const ContactList = () => {
   const activeEvent = events.find(e => e._id === activeEventId) || null;
 
   // Derive whether the currently selected event is completed
-  const isEventCompleted = activeEvent?.status === 'Completed';
+  const isEventCompleted = activeEvent?.eventStatus === 'Completed';
 
   const { register, handleSubmit, reset, watch, setValue, formState: { errors, isSubmitting } } = useForm<ContactForm>({
     resolver: zodResolver(contactSchema),
@@ -175,7 +175,7 @@ const ContactList = () => {
           {activeEvent && (
             <p className="text-xs text-foreground/50 mt-1 flex items-center gap-1">
               Showing:
-              <span className="text-accent font-semibold">{activeEvent.name}</span>
+              <span className="text-accent font-semibold">{activeEvent.eventName}</span>
             </p>
           )}
         </div>

@@ -62,14 +62,14 @@ const EventDetail = () => {
           <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-3 mb-2">
-                <h1 className="text-4xl font-sans font-bold text-foreground">{event.name}</h1>
-                <Badge variant={event.status === 'Completed' ? 'success' : 'info'}>{event.status}</Badge>
+                <h1 className="text-4xl font-sans font-bold text-foreground">{event.eventName}</h1>
+                <Badge variant={event.eventStatus === 'Completed' ? 'success' : 'info'}>{event.eventStatus}</Badge>
               </div>
-              <p className="text-foreground/50 text-lg uppercase tracking-wider">{event.type}</p>
+              <p className="text-foreground/50 text-lg uppercase tracking-wider">{event.eventType}</p>
             </div>
-            {event.status !== 'Completed' && (
-              <Button 
-                variant="secondary" 
+            {event.eventStatus !== 'Completed' && (
+              <Button
+                variant="secondary"
                 onClick={() => navigate(`/events/${event._id}/edit`)}
               >
                 <Edit3 className="w-4 h-4 mr-2" />
@@ -82,37 +82,37 @@ const EventDetail = () => {
             <div className="flex items-start">
               <Calendar className="w-5 h-5 text-foreground/40 mr-3 mt-0.5" />
               <div>
-                <p className="text-sm font-sans font-medium text-foreground/80 uppercase">Date and Time</p>
-                <p className="text-foreground">{event.date} at {event.time}</p>
+                <p className="text-sm font-sans font-medium text-foreground/80 uppercase">Event Date & Time</p>
+                <p className="text-foreground">{event.eventDate} at {event.eventTime}</p>
               </div>
             </div>
             <div className="flex items-start">
               <MapPin className="w-5 h-5 text-foreground/40 mr-3 mt-0.5" />
               <div>
-                <p className="text-sm font-sans font-medium text-foreground/80 uppercase">Venue</p>
-                <p className="text-foreground">{event.venue}</p>
+                <p className="text-sm font-sans font-medium text-foreground/80 uppercase">Event Venue</p>
+                <p className="text-foreground">{event.eventVenue}</p>
               </div>
             </div>
             <div className="flex items-start">
               <UserCircle className="w-5 h-5 text-foreground/40 mr-3 mt-0.5" />
               <div>
-                <p className="text-sm font-sans font-medium text-foreground/80 uppercase">Organizer</p>
+                <p className="text-sm font-sans font-medium text-foreground/80 uppercase">Event Organizer</p>
                 <p className="text-foreground">{event.organizerName || 'Not Provided'}</p>
               </div>
             </div>
             <div className="flex items-start">
               <Phone className="w-5 h-5 text-foreground/40 mr-3 mt-0.5" />
               <div>
-                <p className="text-sm font-sans font-medium text-foreground/80 uppercase">Mobile Number</p>
+                <p className="text-sm font-sans font-medium text-foreground/80 uppercase">Mobile No</p>
                 <p className="text-foreground">{event.organizerMobile || 'Not Provided'}</p>
               </div>
             </div>
           </div>
-          
-          {event.description && (
+
+          {event.eventDescription && (
             <div className="mt-8 pt-6 border-t border-border">
-              <h3 className="text-sm font-sans font-medium text-foreground/80 mb-2 uppercase">Description</h3>
-              <p className="text-foreground/70 whitespace-pre-wrap">{event.description}</p>
+              <h3 className="text-sm font-sans font-medium text-foreground/80 mb-2 uppercase">Event Description</h3>
+              <p className="text-foreground/70 whitespace-pre-wrap">{event.eventDescription}</p>
             </div>
           )}
         </div>

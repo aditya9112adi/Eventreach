@@ -19,8 +19,8 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
   const selectedEvent = events.find(e => e._id === value);
 
   const filteredEvents = events.filter(e =>
-    e.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    e.type?.toLowerCase().includes(searchTerm.toLowerCase())
+    e.eventName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    e.eventType?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   useEffect(() => {
@@ -45,7 +45,7 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
       >
         {selectedEvent ? (
           <span className="truncate flex-1 text-sm font-medium text-foreground">
-            {selectedEvent.name}
+            {selectedEvent.eventName}
           </span>
         ) : (
           <span className="truncate flex-1 text-sm text-foreground/50">
@@ -108,10 +108,10 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
                   onClick={() => { onChange(evt._id); setIsOpen(false); setSearchTerm(''); }}
                 >
                   <div className="min-w-0">
-                    <p className="text-sm font-bold text-foreground truncate">{evt.name}</p>
-                    <p className="text-xs text-foreground/50 mt-0.5 truncate">{evt.type}</p>
+                    <p className="text-sm font-bold text-foreground truncate">{evt.eventName}</p>
+                    <p className="text-xs text-foreground/50 mt-0.5 truncate">{evt.eventType}</p>
                   </div>
-                  <span className="text-xs text-foreground/50 shrink-0 mt-0.5">{evt.date}</span>
+                  <span className="text-xs text-foreground/50 shrink-0 mt-0.5">{evt.eventDate}</span>
                 </div>
               ))
             )}

@@ -32,7 +32,7 @@ const Composer = () => {
 
   // Derive if the currently selected event is completed
   const selectedEvent = events.find(e => e._id === selectedEventId) || null;
-  const isEventCompleted = selectedEvent?.status === 'Completed';
+  const isEventCompleted = selectedEvent?.eventStatus === 'Completed';
 
   useEffect(() => {
     const fetchEvents = async () => {
@@ -158,8 +158,8 @@ const Composer = () => {
   const getPreviewText = () => {
     let preview = messageText;
     preview = preview.replace(/{{fullName}}/g, 'John Doe');
-    preview = preview.replace(/{{eventName}}/g, events.find(e => e._id === selectedEventId)?.name || 'The Event');
-    preview = preview.replace(/{{venue}}/g, events.find(e => e._id === selectedEventId)?.venue || 'The Venue');
+    preview = preview.replace(/{{eventName}}/g, events.find(e => e._id === selectedEventId)?.eventName || 'The Event');
+    preview = preview.replace(/{{venue}}/g, events.find(e => e._id === selectedEventId)?.eventVenue || 'The Venue');
     return preview;
   };
 

@@ -130,7 +130,7 @@ const Dashboard = () => {
           {isSuperAdmin && (selectedEvent || statusFilter) && (
             <p className='text-xs text-foreground/50 mt-1 flex items-center gap-1'>
               Showing:
-              {selectedEvent && <span className='text-accent font-semibold'>{selectedEvent.name}</span>}
+              {selectedEvent && <span className='text-accent font-semibold'>{selectedEvent.eventName}</span>}
               {!selectedEvent && statusFilter && <span className='text-accent font-semibold'>{statusFilter} events</span>}
             </p>
           )}
