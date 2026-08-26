@@ -67,7 +67,7 @@ const EventEdit = () => {
     resolver: zodResolver(eventSchema),
   });
 
-  const [wOrgName, wName, wType, wVenue, wDesc] = watch(['organizerName', 'name', 'type', 'venue', 'description']);
+  const [wOrgName, wOrgMobile, wName, wType, wVenue, wDesc] = watch(['organizerName', 'organizerMobile', 'name', 'type', 'venue', 'description']);
 
   useEffect(() => {
     const fetchEvent = async () => {
@@ -159,6 +159,7 @@ const EventEdit = () => {
                 {...register('organizerMobile')}
                 error={errors.organizerMobile?.message}
               />
+              <CharCount value={wOrgMobile} max={10} />
             </div>
             <div>
               <Input

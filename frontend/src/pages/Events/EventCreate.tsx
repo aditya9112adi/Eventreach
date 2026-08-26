@@ -65,7 +65,7 @@ const EventCreate = () => {
     resolver: zodResolver(eventSchema),
   });
 
-  const [wOrgName, wName, wType, wVenue, wDesc] = watch(['organizerName', 'name', 'type', 'venue', 'description']);
+  const [wOrgName, wOrgMobile, wName, wType, wVenue, wDesc] = watch(['organizerName', 'organizerMobile', 'name', 'type', 'venue', 'description']);
   const selectedDate = watch('date');
   const selectedTime = watch('time');
 
@@ -140,6 +140,7 @@ const EventCreate = () => {
                 {...register('organizerMobile')}
                 error={errors.organizerMobile?.message}
               />
+              <CharCount value={wOrgMobile} max={10} />
             </div>
             <div>
               <Input

@@ -26,6 +26,16 @@ const contactSchema = z.object({
 });
 type ContactForm = z.infer<typeof contactSchema>;
 
+const CharCount = ({ value, max }: { value: string | undefined; max: number }) => {
+  const len = value?.length ?? 0;
+  const atLimit = len >= max;
+  return (
+    <p className={`mt-1 text-xs text-right ${atLimit ? 'text-destructive font-semibold' : 'text-foreground/40'}`}>
+      {len}/{max}{atLimit ? ' — limit reached' : ''}
+    </p>
+  );
+};
+
 const ContactList = () => {
   const [searchParams] = useSearchParams();
   const initialEventId = searchParams.get('eventId');
@@ -49,10 +59,12 @@ const ContactList = () => {
   // Derive whether the currently selected event is completed
   const isEventCompleted = activeEvent?.status === 'Completed';
 
-  const { register, handleSubmit, reset, setValue, formState: { errors, isSubmitting } } = useForm<ContactForm>({
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors, isSubmitting } } = useForm<ContactForm>({
     resolver: zodResolver(contactSchema),
     defaultValues: { countryCode: 'US' }
   });
+
+  const [wFullName, wPhone, wEmail] = watch(['fullName', 'phoneNumber', 'email']);
 
   useEffect(() => {
     const fetchEvents = async () => {
@@ -331,6 +343,7 @@ const ContactList = () => {
                     {...register('fullName')}
                     error={errors.fullName?.message}
                   />
+                  <CharCount value={wFullName} max={50} />
                 </div>
                 
                 <div className="flex gap-2">
@@ -354,6 +367,7 @@ const ContactList = () => {
                       {...register('phoneNumber')}
                       error={errors.phoneNumber?.message}
                     />
+                    <CharCount value={wPhone} max={10} />
                   </div>
                 </div>
 
@@ -365,6 +379,7 @@ const ContactList = () => {
                     {...register('email')}
                     error={errors.email?.message}
                   />
+                  <CharCount value={wEmail} max={60} />
                 </div>
 
                 <div className="flex justify-end gap-3 mt-6">
