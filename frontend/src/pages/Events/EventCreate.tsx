@@ -10,37 +10,34 @@ import { Input } from '../../components/ui/Input';
 import { useLoader } from '../../components/ui/FullScreenLoader';
 import { useToast } from '../../components/ui/Toast';
 
+const LIMITS = {
+  organizerName: 50,
+  name: 50,
+  type: 20,
+  venue: 50,
+  description: 256,
+};
+
 const eventSchema = z.object({
-  organizerName: z.string().min(1, 'Organizer name is required').max(50, 'Organizer name must be at most 50 characters'),
+  organizerName: z.string().min(1, 'Organizer name is required').max(LIMITS.organizerName, `Organizer name must be at most ${LIMITS.organizerName} characters`),
   organizerMobile: z.string().regex(/^\d{10}$/, 'Mobile number must be exactly 10 digits'),
-  name: z.string().min(1, 'Event name is required').max(50, 'Event name must be at most 50 characters'),
-  type: z.string().min(1, 'Event type is required').max(20, 'Event type must be at most 20 characters'),
+  name: z.string().min(1, 'Event name is required').max(LIMITS.name, `Event name must be at most ${LIMITS.name} characters`),
+  type: z.string().min(1, 'Event type is required').max(LIMITS.type, `Event type must be at most ${LIMITS.type} characters`),
   date: z.string().min(1, 'Date is required'),
   time: z.string().min(1, 'Time is required'),
-  venue: z.string().min(1, 'Venue is required').max(50, 'Venue must be at most 50 characters'),
-  description: z.string().max(256, 'Description must be at most 256 characters').optional(),
+  venue: z.string().min(1, 'Venue is required').max(LIMITS.venue, `Venue must be at most ${LIMITS.venue} characters`),
+  description: z.string().max(LIMITS.description, `Description must be at most ${LIMITS.description} characters`).optional(),
 }).superRefine((data, ctx) => {
   if (data.date) {
     const now = new Date();
     const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-    
     if (data.date < todayStr) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Date cannot be in the past",
-        path: ['date'],
-      });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Date cannot be in the past', path: ['date'] });
     } else if (data.date === todayStr && data.time) {
       const currentHours = now.getHours().toString().padStart(2, '0');
       const currentMinutes = now.getMinutes().toString().padStart(2, '0');
-      const currentTimeStr = `${currentHours}:${currentMinutes}`;
-      
-      if (data.time < currentTimeStr) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Time cannot be in the past",
-          path: ['time'],
-        });
+      if (data.time < `${currentHours}:${currentMinutes}`) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Time cannot be in the past', path: ['time'] });
       }
     }
   }
@@ -48,35 +45,42 @@ const eventSchema = z.object({
 
 type EventForm = z.infer<typeof eventSchema>;
 
+const CharCount = ({ value, max }: { value: string | undefined; max: number }) => {
+  const len = value?.length ?? 0;
+  const atLimit = len >= max;
+  return (
+    <p className={`mt-1 text-xs text-right ${atLimit ? 'text-destructive font-semibold' : 'text-foreground/40'}`}>
+      {len}/{max}{atLimit ? ' — limit reached' : ''}
+    </p>
+  );
+};
+
 const EventCreate = () => {
   const navigate = useNavigate();
   const [error, setError] = useState('');
   const { showToast } = useToast();
-  const { showLoader, showSuccess, showError, hideLoader } = useLoader();
-  
+  const { showLoader, showSuccess, showError } = useLoader();
+
   const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm<EventForm>({
     resolver: zodResolver(eventSchema),
   });
 
+  const [wOrgName, wName, wType, wVenue, wDesc] = watch(['organizerName', 'name', 'type', 'venue', 'description']);
   const selectedDate = watch('date');
   const selectedTime = watch('time');
-  
+
   const now = new Date();
   const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
 
   let minTime: string | undefined;
   if (selectedDate === todayStr) {
-    const currentHours = now.getHours().toString().padStart(2, '0');
-    const currentMinutes = now.getMinutes().toString().padStart(2, '0');
-    minTime = `${currentHours}:${currentMinutes}`;
+    minTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
   }
 
   useEffect(() => {
-    if (selectedDate === todayStr && selectedTime && minTime) {
-      if (selectedTime < minTime) {
-        setValue('time', minTime, { shouldValidate: true });
-        showToast('warning', 'Past time selected. Automatically adjusted to current time.');
-      }
+    if (selectedDate === todayStr && selectedTime && minTime && selectedTime < minTime) {
+      setValue('time', minTime, { shouldValidate: true });
+      showToast('warning', 'Past time selected. Automatically adjusted to current time.');
     } else if (selectedDate && selectedDate < todayStr) {
       setValue('date', todayStr, { shouldValidate: true });
       showToast('warning', 'Past date selected. Automatically adjusted to today.');
@@ -99,9 +103,8 @@ const EventCreate = () => {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      
       <div className="flex items-center space-x-4 mb-2 animate-fade-in">
-        <button 
+        <button
           onClick={() => navigate('/events')}
           className="p-2 text-foreground/50 hover:text-foreground hover:bg-surfaceHover rounded-full transition-colors"
         >
@@ -119,30 +122,45 @@ const EventCreate = () => {
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Input
-              label="Event Organizer"
-              placeholder="e.g. John Doe"
-              {...register('organizerName')}
-              error={errors.organizerName?.message}
-            />
-            <Input
-              label="Organizer Mobile Number"
-              placeholder="e.g. +1234567890"
-              {...register('organizerMobile')}
-              error={errors.organizerMobile?.message}
-            />
-            <Input
-              label="Event Name"
-              placeholder="e.g. Annual Tech Conference 2026"
-              {...register('name')}
-              error={errors.name?.message}
-            />
-            <Input
-              label="Event Type"
-              placeholder="e.g. Conference, Webinar, Wedding"
-              {...register('type')}
-              error={errors.type?.message}
-            />
+            <div>
+              <Input
+                label="Event Organizer"
+                placeholder="e.g. John Doe"
+                maxLength={LIMITS.organizerName}
+                {...register('organizerName')}
+                error={errors.organizerName?.message}
+              />
+              <CharCount value={wOrgName} max={LIMITS.organizerName} />
+            </div>
+            <div>
+              <Input
+                label="Organizer Mobile Number"
+                placeholder="e.g. 9876543210"
+                maxLength={10}
+                {...register('organizerMobile')}
+                error={errors.organizerMobile?.message}
+              />
+            </div>
+            <div>
+              <Input
+                label="Event Name"
+                placeholder="e.g. Annual Tech Conference 2026"
+                maxLength={LIMITS.name}
+                {...register('name')}
+                error={errors.name?.message}
+              />
+              <CharCount value={wName} max={LIMITS.name} />
+            </div>
+            <div>
+              <Input
+                label="Event Type"
+                placeholder="e.g. Conference, Webinar, Wedding"
+                maxLength={LIMITS.type}
+                {...register('type')}
+                error={errors.type?.message}
+              />
+              <CharCount value={wType} max={LIMITS.type} />
+            </div>
             <Input
               label="Date"
               type="date"
@@ -159,12 +177,16 @@ const EventCreate = () => {
             />
           </div>
 
-          <Input
-            label="Venue / Location"
-            placeholder="e.g. Grand Hotel OR Zoom Link"
-            {...register('venue')}
-            error={errors.venue?.message}
-          />
+          <div>
+            <Input
+              label="Venue / Location"
+              placeholder="e.g. Grand Hotel OR Zoom Link"
+              maxLength={LIMITS.venue}
+              {...register('venue')}
+              error={errors.venue?.message}
+            />
+            <CharCount value={wVenue} max={LIMITS.venue} />
+          </div>
 
           <div>
             <label className="block text-sm font-sans font-medium text-foreground/80 mb-2 uppercase tracking-wide">
@@ -173,26 +195,20 @@ const EventCreate = () => {
             <textarea
               className="w-full rounded-md border border-border bg-surface/50 text-foreground p-3 text-sm focus:ring-2 focus:ring-white/20 outline-none min-h-[100px] resize-y transition-all duration-200"
               placeholder="Enter Description."
-              maxLength={256}
+              maxLength={LIMITS.description}
               {...register('description')}
             ></textarea>
+            <CharCount value={wDesc} max={LIMITS.description} />
             {errors.description && (
               <p className="mt-1 text-sm text-destructive">{errors.description.message}</p>
             )}
           </div>
 
           <div className="flex justify-end space-x-4 pt-4 border-t border-border">
-            <Button 
-              type="button" 
-              variant="secondary" 
-              onClick={() => navigate('/events')}
-            >
+            <Button type="button" variant="secondary" onClick={() => navigate('/events')}>
               Cancel
             </Button>
-            <Button 
-              type="submit" 
-              isLoading={isSubmitting}
-            >
+            <Button type="submit" isLoading={isSubmitting}>
               Create Event
             </Button>
           </div>
