@@ -94,13 +94,13 @@ const EventList = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border uppercase tracking-wide text-xs">
-                  <th className="py-3 px-4">Organizer</th>
-                  <th className="py-3 px-4">Mobile</th>
+                  <th className="py-3 px-4">Event Organizer</th>
+                  <th className="py-3 px-4">Mobile No</th>
                   <th className="py-3 px-4">Event Name</th>
-                  <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">Date & Time</th>
-                  <th className="py-3 px-4">Venue</th>
-                  <th className="py-3 px-4">Status</th>
+                  <th className="py-3 px-4">Event Type</th>
+                  <th className="py-3 px-4">Event Date & Time</th>
+                  <th className="py-3 px-4">Event Venue</th>
+                  <th className="py-3 px-4">Event Status</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
