@@ -18,11 +18,11 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           ref={ref}
           className={`
             w-full rounded-md border bg-surface/50 px-4 py-2.5 text-sm transition-all duration-200
-            focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 focus:bg-surface
+            focus:outline-none focus:bg-surface
             disabled:cursor-not-allowed disabled:opacity-50
             ${error 
-              ? 'border-destructive focus:ring-destructive text-destructive placeholder-destructive/50' 
-              : 'border-border text-foreground placeholder-foreground/30 hover:border-border/80'
+              ? 'border-destructive focus:border-destructive focus:ring-2 focus:ring-destructive text-destructive placeholder-destructive/50' 
+              : 'border-border focus:ring-2 focus:ring-white/20 focus:border-white/40 text-foreground placeholder-foreground/30 hover:border-border/80'
             }
             ${className}
           `}
