@@ -21,7 +21,7 @@ const contactSchema = z.object({
     .or(z.literal(''))
     .refine(
       (val) => !val || /^[^@]{1,50}@gmail\.com$/.test(val),
-      { message: 'Only @gmail.com emails allowed (name part max 50 characters)' }
+      { message: 'Only @gmail.com emails allowed' }
     ),
 });
 type ContactForm = z.infer<typeof contactSchema>;
