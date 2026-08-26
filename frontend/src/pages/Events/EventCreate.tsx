@@ -163,14 +163,14 @@ const EventCreate = () => {
               <CharCount value={wType} max={LIMITS.type} />
             </div>
             <Input
-              label="Date"
+              label="Event Date"
               type="date"
               min={todayStr}
               {...register('date')}
               error={errors.date?.message}
             />
             <Input
-              label="Time"
+              label="Event Time"
               type="time"
               min={minTime}
               {...register('time')}
