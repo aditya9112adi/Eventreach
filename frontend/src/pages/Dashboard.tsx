@@ -141,7 +141,7 @@ const Dashboard = () => {
 
             {/* FILTER 1: Status Dropdown — independent, re-fetches stats */}
             <div className='flex flex-col'>
-              <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Event by Status</label>
+              <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Select Event Status</label>
               <select
                 value={statusFilter}
                 onChange={(e) => { setStatusFilter(e.target.value as ('' | EventStatus)); setSelectedEventId(''); }}
@@ -155,7 +155,7 @@ const Dashboard = () => {
 
             {/* FILTER 2: Event Search dropdown — selects a specific event */}
             <div className='flex flex-col w-[260px]'>
-              <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Search Event</label>
+              <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Search Event Name</label>
               <EventSearch
                 events={events}
                 value={selectedEventId}
