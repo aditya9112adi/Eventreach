@@ -347,7 +347,7 @@ const ContactList = () => {
               <span>
                 {((currentPage - 1) * rowsPerPage) + 1}-{Math.min(currentPage * rowsPerPage, filteredContacts.length)} of {filteredContacts.length}
               </span>
-              <div className="flex gap-1">
+              <div className="flex items-center gap-1">
                 <button
                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                   disabled={currentPage === 1}
@@ -355,6 +355,9 @@ const ContactList = () => {
                 >
                   <ChevronLeft className="w-5 h-5" />
                 </button>
+                <span className="px-3 py-1 font-medium text-sm border border-border rounded bg-surface/50">
+                  {currentPage}
+                </span>
                 <button
                   onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                   disabled={currentPage === totalPages || totalPages === 0}
