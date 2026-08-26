@@ -11,14 +11,14 @@ import { useLoader } from '../../components/ui/FullScreenLoader';
 import { useToast } from '../../components/ui/Toast';
 
 const eventSchema = z.object({
-  organizerName: z.string().min(1, 'Organizer name is required'),
-  organizerMobile: z.string().min(1, 'Organizer mobile is required'),
-  name: z.string().min(1, 'Event name is required'),
-  type: z.string().min(1, 'Event type is required'),
+  organizerName: z.string().min(1, 'Organizer name is required').max(50, 'Organizer name must be at most 50 characters'),
+  organizerMobile: z.string().regex(/^\d{10}$/, 'Mobile number must be exactly 10 digits'),
+  name: z.string().min(1, 'Event name is required').max(50, 'Event name must be at most 50 characters'),
+  type: z.string().min(1, 'Event type is required').max(20, 'Event type must be at most 20 characters'),
   date: z.string().min(1, 'Date is required'),
   time: z.string().min(1, 'Time is required'),
-  venue: z.string().min(1, 'Venue is required'),
-  description: z.string().optional(),
+  venue: z.string().min(1, 'Venue is required').max(50, 'Venue must be at most 50 characters'),
+  description: z.string().max(256, 'Description must be at most 256 characters').optional(),
 }).superRefine((data, ctx) => {
   if (data.date) {
     const now = new Date();
@@ -172,7 +172,8 @@ const EventCreate = () => {
             </label>
             <textarea
               className="w-full rounded-md border border-border bg-surface/50 text-foreground p-3 text-sm focus:ring-2 focus:ring-white/20 outline-none min-h-[100px] resize-y transition-all duration-200"
-              placeholder="Provide a brief description of the event..."
+              placeholder="Enter Description."
+              maxLength={256}
               {...register('description')}
             ></textarea>
             {errors.description && (
