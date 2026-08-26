@@ -36,7 +36,7 @@ const DashboardLayout = () => {
   const navItems = [
     { name: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
     { name: 'Events', to: '/events', icon: CalendarDays },
-    { name: 'Contacts', to: '/contacts', icon: Users },
+    { name: 'Guests', to: '/contacts', icon: Users },
     { name: 'Campaigns', to: '/campaigns', icon: Megaphone },
     { name: 'Reports', to: '/reports', icon: PieChart },
   ];
