@@ -12,7 +12,7 @@ import { useToast } from '../../components/ui/Toast';
 
 const LIMITS = {
   organizerName: 50,
-  name: 50,
+  name: 20,
   type: 20,
   venue: 50,
   description: 256,
@@ -180,7 +180,7 @@ const EventCreate = () => {
 
           <div>
             <Input
-              label="Venue / Location"
+              label="Event Venue"
               placeholder="e.g. Grand Hotel OR Zoom Link"
               maxLength={LIMITS.venue}
               {...register('venue')}
@@ -191,11 +191,11 @@ const EventCreate = () => {
 
           <div>
             <label className="block text-sm font-sans font-medium text-foreground/80 mb-2 uppercase tracking-wide">
-              Description (Optional)
+              Event Description (Optional)
             </label>
             <textarea
               className="w-full rounded-md border border-border bg-surface/50 text-foreground p-3 text-sm focus:ring-2 focus:ring-white/20 outline-none min-h-[100px] resize-y transition-all duration-200"
-              placeholder="Enter Description."
+              placeholder="Enter Event Description."
               maxLength={LIMITS.description}
               {...register('description')}
             ></textarea>
