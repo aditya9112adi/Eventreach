@@ -291,7 +291,7 @@ const ContactList = () => {
                       {new Date(contact.createdAt).toLocaleDateString()}
                     </td>
                     <td className="py-3 px-4">
-                      <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center space-x-1 transition-opacity">
                         <button
                           onClick={() => openEditModal(contact)}
                           className="p-1.5 text-foreground/40 hover:text-accent hover:bg-accent/10 rounded transition-colors"
