@@ -17,7 +17,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
 
     // Filter by status (new dropdown filter)
     if (status) {
-      eventQuery.status = status;
+      eventQuery.eventStatus = status;
     }
 
     // Filter by specific event (old per-event filter, kept for compatibility)
@@ -98,7 +98,7 @@ export const getRecentCampaignActivity = async (req: Request, res: Response) => 
         ? { $in: campaignIds } : null;
     } else if (status) {
       // Filter by event status
-      const matchingEvents = await Event.find({ status }).select('_id');
+      const matchingEvents = await Event.find({ eventStatus: status }).select('_id');
       const matchingEventIds = matchingEvents.map((e) => e._id);
       campaignQuery = { eventId: { $in: matchingEventIds } };
       const campaigns = await Campaign.find(campaignQuery).select('_id');
@@ -139,7 +139,7 @@ export const getRecentCampaignActivity = async (req: Request, res: Response) => 
 
     // Get recent campaigns with their stats
     const recentCampaigns = await Campaign.find(campaignQuery)
-      .populate('eventId', 'name')
+      .populate('eventId', 'eventName')
       .sort({ updatedAt: -1 })
       .limit(5)
       .lean();

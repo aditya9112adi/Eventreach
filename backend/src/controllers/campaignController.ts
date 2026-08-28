@@ -113,7 +113,7 @@ export const sendCampaign = async (req: Request, res: Response) => {
 export const getAllCampaigns = async (req: Request, res: Response) => {
   try {
     const campaigns = await Campaign.find()
-      .populate('eventId', 'name')
+      .populate('eventId', 'eventName')
       .sort({ updatedAt: -1 })
       .lean();
     res.json(campaigns);
