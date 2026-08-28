@@ -39,4 +39,10 @@ const messageLogSchema = new Schema(
   { timestamps: true }
 );
 
+// Indexes to speed up dashboard analytics queries
+messageLogSchema.index({ createdAt: -1 });
+messageLogSchema.index({ status: 1 });
+messageLogSchema.index({ campaignId: 1, status: 1 });
+messageLogSchema.index({ campaignId: 1, createdAt: -1 });
+
 export const MessageLog = mongoose.model<IMessageLog>('MessageLog', messageLogSchema);

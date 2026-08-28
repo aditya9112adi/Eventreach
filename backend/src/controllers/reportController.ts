@@ -44,7 +44,7 @@ export const getCampaignStats = async (req: Request, res: Response) => {
     res.json({
       campaignId,
       campaignStatus: campaign.status,
-      eventName: (campaign.eventId as any).name,
+      eventName: (campaign.eventId as any).eventName,
       eventDetails: campaign.eventId,
       messageContent: latestMessage,
       total,

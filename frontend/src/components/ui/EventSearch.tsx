@@ -21,7 +21,7 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
   const filteredEvents = events.filter(e =>
     e.eventName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     e.eventType?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  ).slice(0, 50);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {

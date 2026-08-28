@@ -67,7 +67,7 @@ export const addContact = async (req: Request, res: Response) => {
 export const getContactsByEvent = async (req: Request, res: Response) => {
   try {
     const { eventId } = req.params;
-    const contacts = await Contact.find({ eventId }).sort({ createdAt: -1 });
+    const contacts = await Contact.find({ eventId }).sort({ createdAt: -1 }).lean();
     res.json(contacts);
   } catch (error) {
     console.error('Get contacts error:', error);
@@ -255,7 +255,7 @@ export const updateContact = async (req: Request, res: Response) => {
 };
 export const getAllContacts = async (req: Request, res: Response) => {
   try {
-    const contacts = await Contact.find().sort({ createdAt: -1 });
+    const contacts = await Contact.find().sort({ createdAt: -1 }).lean();
     res.json(contacts);
   } catch (error) {
     console.error('Get all contacts error:', error);

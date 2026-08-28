@@ -111,7 +111,7 @@ export const updateExpiredEvents = async () => {
 export const getEvents = async (req: Request, res: Response) => {
   try {
     await updateExpiredEvents();
-    const events = await Event.find().sort({ createdAt: -1 });
+    const events = await Event.find().sort({ createdAt: -1 }).lean();
     res.json(events.map(serialize));
   } catch (error) {
     console.error('Get events error:', error);
@@ -122,7 +122,7 @@ export const getEvents = async (req: Request, res: Response) => {
 export const getEventById = async (req: Request, res: Response) => {
   try {
     await updateExpiredEvents();
-    const event = await Event.findById(req.params.id);
+    const event = await Event.findById(req.params.id).lean();
     if (!event) return res.status(404).json({ error: 'Event not found' });
     const contactCount = await Contact.countDocuments({ eventId: event._id });
     res.json({ ...serialize(event), contactCount });
