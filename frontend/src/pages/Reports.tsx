@@ -6,6 +6,15 @@ import { useNavigate } from 'react-router-dom';
 import { CampaignReportContent } from './Campaigns/CampaignReport';
 import { FileText } from 'lucide-react';
 import { Badge } from '../components/ui/Badge';
+import { EventSearch } from '../components/ui/EventSearch';
+import type { EventStatus } from '@eventreach/shared';
+
+const STATUS_OPTIONS: { label: string; value: '' | EventStatus }[] = [
+  { label: 'All', value: '' },
+  { label: 'Upcoming', value: 'Upcoming' },
+  { label: 'Completed', value: 'Completed' },
+  { label: 'Cancelled', value: 'Cancelled' },
+];
 
 const Reports = () => {
   const { user } = useAuth();
@@ -13,7 +22,8 @@ const Reports = () => {
   const navigate = useNavigate();
   
   const [events, setEvents] = useState<any[]>([]);
-  const [selectedEventId, setSelectedEventId] = useState<string>('all');
+  const [selectedEventId, setSelectedEventId] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<'' | EventStatus>('');
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [loadingCampaign, setLoadingCampaign] = useState(false);
 
@@ -34,7 +44,7 @@ const Reports = () => {
   }, [hasReportAccess, navigate, showToast]);
 
   useEffect(() => {
-    if (!selectedEventId || selectedEventId === 'all') {
+    if (!selectedEventId) {
       setCampaignId(null);
       return;
     }
@@ -67,35 +77,60 @@ const Reports = () => {
     }
   };
 
+  const filteredEvents = events.filter(evt => {
+    if (statusFilter && evt.eventStatus !== statusFilter) return false;
+    return true;
+  });
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-3xl font-sans font-bold text-foreground animate-slide-in uppercase">Event Reports</h2>
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <h2 className="text-3xl font-sans font-bold text-foreground animate-slide-in uppercase">Event Reports</h2>
+          {/* Active filter indicator */}
+          {(!selectedEventId && statusFilter) && (
+            <p className='text-xs text-foreground/50 mt-1 flex items-center gap-1'>
+              Showing: <span className='text-accent font-semibold'>{statusFilter} events</span>
+            </p>
+          )}
+        </div>
         
-        <div className="flex flex-col">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1">Event Filter</label>
-          <select
-            value={selectedEventId}
-            onChange={(e) => setSelectedEventId(e.target.value)}
-            className="bg-surface border border-border text-foreground px-4 py-2 rounded-md focus:outline-none focus:border-accent transition-colors font-medium text-sm min-w-[220px]"
-          >
-            <option value="all">All Events</option>
-            {events.map((evt) => (
-              <option key={evt._id} value={evt._id}>
-                {evt.eventName}
-              </option>
-            ))}
-          </select>
+        <div className="flex flex-col sm:flex-row items-start sm:items-end gap-3 relative z-50">
+          {/* FILTER 1: Status Dropdown */}
+          <div className='flex flex-col'>
+            <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Select Event Status</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value as ('' | EventStatus)); setSelectedEventId(''); }}
+              className='bg-surface border border-border text-foreground px-4 py-2 rounded-md focus:outline-none focus:border-accent transition-colors font-medium text-sm min-w-[160px] cursor-pointer'
+            >
+              {STATUS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* FILTER 2: Event Search dropdown */}
+          <div className='flex flex-col w-[260px]'>
+            <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Select Event Name</label>
+            <EventSearch
+              events={events}
+              value={selectedEventId}
+              onChange={(id) => { setSelectedEventId(id); setStatusFilter(''); }}
+              placeholder='Search events...'
+              allowClear={true}
+            />
+          </div>
         </div>
       </div>
 
       <div className="pt-4">
-        {selectedEventId === 'all' ? (
+        {!selectedEventId ? (
           <div className="glass-panel rounded-2xl p-6 animate-spring-up">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-sans font-bold text-foreground uppercase tracking-wider">All Events</h3>
             </div>
-            {events.length > 0 ? (
+            {filteredEvents.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -107,7 +142,7 @@ const Reports = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {events.map((evt: any) => (
+                    {filteredEvents.map((evt: any) => (
                       <tr key={evt._id} className="hover:bg-surfaceHover transition-colors group">
                         <td className="py-4 font-medium text-foreground">
                           {evt.eventName}
@@ -132,7 +167,7 @@ const Reports = () => {
                 </table>
               </div>
             ) : (
-              <p className="text-foreground/40 text-center py-8">No events created yet.</p>
+              <p className="text-foreground/40 text-center py-8">No events found.</p>
             )}
           </div>
         ) : loadingCampaign ? (
@@ -146,7 +181,7 @@ const Reports = () => {
               hideHeader={false} 
               hideBackButton={false}
               showPrintButton={true}
-              onBack={() => setSelectedEventId('all')}
+              onBack={() => setSelectedEventId('')}
             />
           </div>
         ) : (
@@ -155,7 +190,7 @@ const Reports = () => {
             <h3 className="text-xl font-bold text-foreground/70 mb-2">No Reports Available</h3>
             <p className="text-foreground/50">There are no sent or completed campaigns for this event yet.</p>
             <button
-              onClick={() => setSelectedEventId('all')}
+              onClick={() => setSelectedEventId('')}
               className="mt-6 text-accent hover:text-accent/80 font-medium text-sm transition-colors"
             >
               ← Back to All Events
