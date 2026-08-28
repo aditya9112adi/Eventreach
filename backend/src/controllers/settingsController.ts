@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { Settings } from '../models/Settings';
+import { AuditService } from '../services/AuditService';
+import { RequestWithId } from '../middleware/requestMiddleware';
 
 const ALLOWED_KEYS = [
   'whatsapp_token',
@@ -36,7 +38,7 @@ export const getSettings = async (req: Request, res: Response) => {
   }
 };
 
-export const updateSettings = async (req: Request, res: Response) => {
+export const updateSettings = async (req: RequestWithId, res: Response) => {
   try {
     const updates: Record<string, string> = req.body;
 
@@ -46,11 +48,24 @@ export const updateSettings = async (req: Request, res: Response) => {
       // Don't overwrite token with masked value
       if (key === 'whatsapp_token' && value.startsWith('••••')) continue;
 
-      await Settings.findOneAndUpdate(
+      const beforeSetting = await Settings.findOne({ key });
+      
+      const afterSetting = await Settings.findOneAndUpdate(
         { key },
         { value },
         { upsert: true, new: true }
       );
+
+      await AuditService.log({
+        action: 'SETTINGS_UPDATED',
+        collectionName: 'settings',
+        documentId: afterSetting._id.toString(),
+        actor: AuditService.getActorFromReq(req),
+        request: AuditService.getRequestInfo(req),
+        before: beforeSetting,
+        after: afterSetting,
+        description: `Updated setting: ${key}`
+      });
     }
 
     res.json({ message: 'Settings updated successfully' });

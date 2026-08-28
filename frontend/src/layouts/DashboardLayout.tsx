@@ -14,7 +14,8 @@ import {
   Settings,
   Sun,
   Moon,
-  PieChart
+  PieChart,
+  Shield
 } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
 
@@ -44,6 +45,7 @@ const DashboardLayout = () => {
   if (user?.role === 'SuperAdmin') {
     navItems.push({ name: 'User Approvals', to: '/admin/approvals', icon: Users });
     navItems.push({ name: 'Just Access', to: '/admin/just-access', icon: MessageSquare });
+    navItems.push({ name: 'Audit Logs', to: '/admin/audit-logs', icon: Shield });
   }
 
   navItems.push({ name: 'Settings', to: '/settings', icon: Settings });

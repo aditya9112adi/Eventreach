@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { User } from '../models/User';
 import { Admin } from '../models/Admin';
 import { sendApprovalEmail } from '../utils/email';
+import { AuditService } from '../services/AuditService';
+import { RequestWithId } from '../middleware/requestMiddleware';
 
 const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -20,7 +22,7 @@ const registerSchema = z.object({
   accessEndDate: z.string().optional(),
 });
 
-export const register = async (req: Request, res: Response) => {
+export const register = async (req: RequestWithId, res: Response) => {
   try {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -29,7 +31,6 @@ export const register = async (req: Request, res: Response) => {
 
     const { name, email, password, role, accessStartDate, accessEndDate } = parsed.data;
 
-    // For Admin, access dates are required
     if (role === 'Admin') {
       if (!accessStartDate || !accessEndDate) {
         return res.status(400).json({ error: 'Access Start Date and Access End Date are required for Admin registration.' });
@@ -61,10 +62,7 @@ export const register = async (req: Request, res: Response) => {
         pendingAccessStartDate: new Date(accessStartDate!),
         pendingAccessEndDate: new Date(accessEndDate!),
       });
-      
-      // Fire and forget email notification
       sendApprovalEmail(name, email);
-      
     } else {
       createdUser = await User.create({
         name,
@@ -73,6 +71,15 @@ export const register = async (req: Request, res: Response) => {
         status,
       });
     }
+
+    await AuditService.log({
+      action: role === 'Admin' ? 'ADMIN_CREATED' : 'USER_CREATED',
+      collectionName: role === 'Admin' ? 'admins' : 'users',
+      documentId: createdUser._id.toString(),
+      request: AuditService.getRequestInfo(req),
+      after: createdUser,
+      description: `New ${role} registration pending approval`
+    });
 
     res.status(201).json({
       message: 'Registration successful. Please wait for Super Admin approval.',
@@ -90,7 +97,7 @@ export const register = async (req: Request, res: Response) => {
   }
 };
 
-export const login = async (req: Request, res: Response) => {
+export const login = async (req: RequestWithId, res: Response) => {
   try {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -101,10 +108,12 @@ export const login = async (req: Request, res: Response) => {
 
     let user: any = await Admin.findOne({ email });
     let resolvedRole = user ? user.role : null;
+    let collection = 'admins';
     
     if (!user) {
       user = await User.findOne({ email });
       resolvedRole = user ? 'User' : null;
+      collection = 'users';
     }
 
     if (!user) {
@@ -113,6 +122,15 @@ export const login = async (req: Request, res: Response) => {
 
     const isValidPassword = await bcrypt.compare(password, user.passwordHash);
     if (!isValidPassword) {
+      await AuditService.log({
+        action: 'LOGIN_FAILED',
+        collectionName: collection,
+        documentId: user._id.toString(),
+        request: AuditService.getRequestInfo(req),
+        success: false,
+        error: { message: 'Invalid credentials' },
+        description: `Failed login attempt for email: ${email}`
+      });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -124,7 +142,6 @@ export const login = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Your account registration was rejected.' });
     }
 
-    // Time-bound access enforcement
     if (resolvedRole !== 'SuperAdmin' && user.accessGrantedOn) {
       if (user.isAccessCancelled) {
         return res.status(403).json({ error: 'Your access has been revoked.' });
@@ -147,6 +164,18 @@ export const login = async (req: Request, res: Response) => {
       process.env.JWT_SECRET,
       { expiresIn: '1d' }
     );
+
+    // Temp set req.user to pass to audit logger
+    (req as any).user = { id: user._id.toString(), email: user.email, role: resolvedRole, name: user.name };
+
+    await AuditService.log({
+      action: 'LOGIN_SUCCESS',
+      collectionName: collection,
+      documentId: user._id.toString(),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      description: `User logged in successfully`
+    });
 
     res.json({
       user: {

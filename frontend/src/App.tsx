@@ -21,6 +21,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const Register = lazy(() => import('./pages/Register'));
 const UserApprovals = lazy(() => import('./pages/Admin/UserApprovals'));
 const JustAccess = lazy(() => import('./pages/Admin/JustAccess'));
+const AuditLogs = lazy(() => import('./pages/Admin/AuditLogs'));
 
 const PageLoader = () => (
   <div className="flex items-center justify-center h-[60vh]">
@@ -71,6 +72,7 @@ function App() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/admin/approvals" element={<UserApprovals />} />
             <Route path="/admin/just-access" element={<JustAccess />} />
+            <Route path="/admin/audit-logs" element={<AuditLogs />} />
           </Route>
           
           <Route path="/" element={<Navigate to="/dashboard" replace />} />

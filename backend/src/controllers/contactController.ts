@@ -4,6 +4,9 @@ import { parsePhoneNumberWithError } from 'libphonenumber-js';
 import { Contact } from '../models/Contact';
 import { extractFromExcel, extractFromPDF, RawContact } from '../utils/fileExtractors';
 import type { ExtractedContact } from '@eventreach/shared';
+import { AuditService } from '../services/AuditService';
+import { RequestWithId } from '../middleware/requestMiddleware';
+import crypto from 'crypto';
 
 const createContactSchema = z.object({
   fullName: z.string().min(1, 'Full name is required'),
@@ -13,7 +16,7 @@ const createContactSchema = z.object({
   eventId: z.string().min(1, 'Event ID is required'),
 });
 
-export const addContact = async (req: Request, res: Response) => {
+export const addContact = async (req: RequestWithId, res: Response) => {
   try {
     const parsed = createContactSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -39,7 +42,6 @@ export const addContact = async (req: Request, res: Response) => {
       validationReason = error.message || 'Error parsing phone number';
     }
 
-    // Check duplicate
     const existing = await Contact.findOne({ eventId, phoneNumber: normalizedPhone });
     if (existing) {
       status = 'Duplicate';
@@ -55,6 +57,16 @@ export const addContact = async (req: Request, res: Response) => {
       status,
       validationReason,
       source: 'Manual',
+    });
+
+    await AuditService.log({
+      action: 'CONTACT_CREATED',
+      collectionName: 'contacts',
+      documentId: contact._id.toString(),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      after: contact,
+      description: `Manually added contact ${fullName}`
     });
 
     res.status(201).json(contact);
@@ -95,7 +107,6 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
 
     const previewContacts: ExtractedContact[] = [];
     
-    // Existing numbers in event to check duplicates
     const existingContacts = await Contact.find({ eventId }).select('phoneNumber');
     const existingNumbers = new Set(existingContacts.map(c => c.phoneNumber));
 
@@ -123,7 +134,6 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
         validationReason = 'Already in event';
       }
       
-      // Also check against duplicates IN the file itself
       if (status === 'Valid') {
         const fileDuplicate = previewContacts.find(c => c.phoneNumber === normalizedPhone);
         if (fileDuplicate) {
@@ -150,7 +160,8 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
   }
 };
 
-export const bulkImportContacts = async (req: Request, res: Response) => {
+export const bulkImportContacts = async (req: RequestWithId, res: Response) => {
+  const bulkOperationId = `BULK-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
   try {
     const { eventId } = req.params;
     const { contacts } = req.body as { contacts: ExtractedContact[] };
@@ -159,7 +170,6 @@ export const bulkImportContacts = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No contacts provided' });
     }
 
-    // Only import Valid contacts
     const validContacts = contacts.filter(c => c.status === 'Valid');
 
     const documentsToInsert = validContacts.map(c => ({
@@ -172,8 +182,23 @@ export const bulkImportContacts = async (req: Request, res: Response) => {
       source: 'Bulk Import',
     }));
 
-    // Use unordered insertMany so if some fail due to unique constraint, others continue
     const result = await Contact.insertMany(documentsToInsert, { ordered: false });
+
+    await AuditService.log({
+      action: 'BULK_CONTACT_IMPORTED',
+      collectionName: 'contacts',
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      bulkOperationId,
+      bulk: {
+        isBulk: true,
+        operationType: 'IMPORT',
+        totalRecords: validContacts.length,
+        successfulRecords: result.length,
+        failedRecords: validContacts.length - result.length
+      },
+      description: `Bulk imported ${result.length} contacts`
+    });
 
     res.status(201).json({ 
       importedCount: result.length, 
@@ -181,11 +206,24 @@ export const bulkImportContacts = async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     if (error.code === 11000) {
-      // Bulk write error for duplicates
-      console.error('Bulk import duplicate error');
+      const imported = error.insertedDocs?.length || 0;
+      await AuditService.log({
+        action: 'BULK_CONTACT_IMPORTED',
+        collectionName: 'contacts',
+        actor: AuditService.getActorFromReq(req),
+        request: AuditService.getRequestInfo(req),
+        bulkOperationId,
+        bulk: {
+          isBulk: true,
+          operationType: 'IMPORT',
+          successfulRecords: imported
+        },
+        description: `Bulk imported ${imported} contacts with some duplicates ignored`
+      });
+
       return res.status(207).json({ 
         message: 'Partial success. Some records were ignored due to duplicates.',
-        importedCount: error.insertedDocs?.length || 0 
+        importedCount: imported
       });
     }
     console.error('Bulk import error:', error);
@@ -193,13 +231,26 @@ export const bulkImportContacts = async (req: Request, res: Response) => {
   }
 };
 
-export const deleteContact = async (req: Request, res: Response) => {
+export const deleteContact = async (req: RequestWithId, res: Response) => {
   try {
     const { id } = req.params;
-    const contact = await Contact.findByIdAndDelete(id);
+    const contact = await Contact.findById(id);
     if (!contact) {
       return res.status(404).json({ error: 'Contact not found' });
     }
+    
+    await Contact.findByIdAndDelete(id);
+
+    await AuditService.log({
+      action: 'CONTACT_DELETED',
+      collectionName: 'contacts',
+      documentId: id,
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      before: contact,
+      description: `Deleted contact ${contact.fullName}`
+    });
+
     res.json({ message: 'Contact deleted' });
   } catch (error) {
     console.error('Delete contact error:', error);
@@ -207,12 +258,16 @@ export const deleteContact = async (req: Request, res: Response) => {
   }
 };
 
-export const updateContact = async (req: Request, res: Response) => {
+export const updateContact = async (req: RequestWithId, res: Response) => {
   try {
     const { id } = req.params;
     const { fullName, phoneNumber, countryCode, email } = req.body;
 
-    // Re-validate phone number
+    const beforeContact = await Contact.findById(id);
+    if (!beforeContact) {
+      return res.status(404).json({ error: 'Contact not found' });
+    }
+
     let status = 'Valid';
     let validationReason = undefined;
     let normalizedPhone = phoneNumber;
@@ -230,7 +285,7 @@ export const updateContact = async (req: Request, res: Response) => {
       validationReason = error.message || 'Error parsing phone number';
     }
 
-    const contact = await Contact.findByIdAndUpdate(
+    const afterContact = await Contact.findByIdAndUpdate(
       id,
       {
         fullName,
@@ -243,11 +298,18 @@ export const updateContact = async (req: Request, res: Response) => {
       { new: true }
     );
 
-    if (!contact) {
-      return res.status(404).json({ error: 'Contact not found' });
-    }
+    await AuditService.log({
+      action: 'CONTACT_UPDATED',
+      collectionName: 'contacts',
+      documentId: id,
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      before: beforeContact,
+      after: afterContact,
+      description: `Updated contact ${fullName}`
+    });
 
-    res.json(contact);
+    res.json(afterContact);
   } catch (error) {
     console.error('Update contact error:', error);
     res.status(500).json({ error: 'Failed to update contact' });

@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { Event } from '../models/Event';
 import { Contact } from '../models/Contact';
 import { getIO } from '../services/socketService';
+import { AuditService } from '../services/AuditService';
+import { RequestWithId } from '../middleware/requestMiddleware';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -63,7 +65,7 @@ const eventBody = z.object({
 
 // ─── Controllers ──────────────────────────────────────────────────────────────
 
-export const createEvent = async (req: Request, res: Response) => {
+export const createEvent = async (req: RequestWithId, res: Response) => {
   try {
     const parsed = eventBody.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message });
@@ -75,6 +77,17 @@ export const createEvent = async (req: Request, res: Response) => {
       eventDate: new Date(eventDate + 'T00:00:00.000Z'),
       eventTime: timeToMinutes(eventTime),
     });
+
+    await AuditService.log({
+      action: 'EVENT_CREATED',
+      collectionName: 'events',
+      documentId: event._id.toString(),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      after: event,
+      description: `Created event: ${event.eventName}`
+    });
+
     res.status(201).json(serialize(event));
   } catch (error) {
     console.error('Create event error:', error);
@@ -93,8 +106,19 @@ export const updateExpiredEvents = async () => {
       const eventDateTime = new Date(`${dateStr}T${timeStr}:00+05:30`);
 
       if (eventDateTime < now) {
+        const beforeEvent = { ...event.toObject() };
         event.eventStatus = 'Completed';
         await event.save();
+        
+        await AuditService.log({
+          action: 'EVENT_COMPLETED',
+          collectionName: 'events',
+          documentId: event._id.toString(),
+          before: beforeEvent,
+          after: event,
+          description: `Event automatically marked as completed: ${event.eventName}`
+        });
+
         try {
           getIO().emit('event-status-changed', { eventId: event._id, status: 'Completed' });
           getIO().emit('dashboard-updated');
@@ -132,10 +156,12 @@ export const getEventById = async (req: Request, res: Response) => {
   }
 };
 
-export const updateEvent = async (req: Request, res: Response) => {
+export const updateEvent = async (req: RequestWithId, res: Response) => {
   try {
     const parsed = eventBody.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message });
+
+    const beforeEvent = await Event.findById(req.params.id);
 
     const { organizerMobile, eventDate, eventTime, ...rest } = parsed.data;
     const event = await Event.findByIdAndUpdate(
@@ -149,6 +175,18 @@ export const updateEvent = async (req: Request, res: Response) => {
       { new: true }
     );
     if (!event) return res.status(404).json({ error: 'Event not found' });
+
+    await AuditService.log({
+      action: 'EVENT_UPDATED',
+      collectionName: 'events',
+      documentId: event._id.toString(),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      before: beforeEvent,
+      after: event,
+      description: `Updated event: ${event.eventName}`
+    });
+
     res.json(serialize(event));
   } catch (error) {
     console.error('Update event error:', error);

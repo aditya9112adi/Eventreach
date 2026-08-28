@@ -1,6 +1,9 @@
 import { Request, Response } from 'express';
 import { Campaign } from '../models/Campaign';
 import { queueService } from '../services/QueueService';
+import { AuditService } from '../services/AuditService';
+import { RequestWithId } from '../middleware/requestMiddleware';
+import crypto from 'crypto';
 
 export const uploadMedia = async (req: Request, res: Response) => {
   try {
@@ -51,10 +54,12 @@ export const getCampaign = async (req: Request, res: Response) => {
   }
 };
 
-export const saveCampaign = async (req: Request, res: Response) => {
+export const saveCampaign = async (req: RequestWithId, res: Response) => {
   try {
     const { eventId } = req.params;
     const { messageText, mediaAttachments, status } = req.body;
+
+    const beforeCampaign = await Campaign.findOne({ eventId });
 
     const campaign = await Campaign.findOneAndUpdate(
       { eventId },
@@ -66,6 +71,17 @@ export const saveCampaign = async (req: Request, res: Response) => {
       { new: true, upsert: true }
     );
 
+    await AuditService.log({
+      action: beforeCampaign ? 'CAMPAIGN_UPDATED' : 'CAMPAIGN_CREATED',
+      collectionName: 'campaigns',
+      documentId: campaign._id.toString(),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      before: beforeCampaign,
+      after: campaign,
+      description: beforeCampaign ? 'Saved existing campaign' : 'Created new campaign'
+    });
+
     res.json(campaign);
   } catch (error) {
     console.error('Save campaign error:', error);
@@ -73,17 +89,17 @@ export const saveCampaign = async (req: Request, res: Response) => {
   }
 };
 
-export const sendCampaign = async (req: Request, res: Response) => {
+export const sendCampaign = async (req: RequestWithId, res: Response) => {
   try {
     const { eventId } = req.params;
     const { recipientIds } = req.body;
+    const bulkOperationId = `BULK-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
     
     const campaign = await Campaign.findOne({ eventId });
     if (!campaign) {
       return res.status(404).json({ error: 'Campaign not found' });
     }
 
-    // Set status and push current content to history
     const currentMessage = campaign.messageText;
     const currentAttachments = campaign.mediaAttachments;
 
@@ -94,16 +110,31 @@ export const sendCampaign = async (req: Request, res: Response) => {
       sentAt: new Date()
     });
     
-    // Clear draft fields immediately so the user sees empty fields next time
     campaign.messageText = '';
     campaign.mediaAttachments = [];
     
     await campaign.save();
 
-    // Trigger async processing queue (pass the actual message to send)
-    await queueService.processCampaign(campaign._id.toString(), recipientIds, currentMessage, currentAttachments);
+    await AuditService.log({
+      action: 'CAMPAIGN_STARTED',
+      collectionName: 'campaigns',
+      documentId: campaign._id.toString(),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      bulkOperationId,
+      description: `Started sending campaign`
+    });
 
-    res.json({ message: 'Campaign queued successfully', campaign });
+    // Pass audit info to queue service
+    const auditInfo = {
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      bulkOperationId
+    };
+
+    await queueService.processCampaign(campaign._id.toString(), recipientIds, currentMessage, currentAttachments, auditInfo);
+
+    res.json({ message: 'Campaign queued successfully', campaign, bulkOperationId });
   } catch (error) {
     console.error('Send campaign error:', error);
     res.status(500).json({ error: 'Failed to queue campaign' });

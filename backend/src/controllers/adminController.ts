@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { User } from '../models/User';
 import { Admin } from '../models/Admin';
+import { AuditService } from '../services/AuditService';
+import { RequestWithId } from '../middleware/requestMiddleware';
 
 export const getPendingUsers = async (req: Request, res: Response) => {
   try {
@@ -17,16 +19,18 @@ export const getPendingUsers = async (req: Request, res: Response) => {
   }
 };
 
-export const approveUser = async (req: Request, res: Response) => {
+export const approveUser = async (req: RequestWithId, res: Response) => {
   try {
     const { id } = req.params;
     const { type } = req.query; // 'Admin' | 'User'
 
     let user;
+    let beforeUser;
+    
     if (type === 'Admin') {
-      // For Admins: use the access dates they requested during registration
       const admin = await Admin.findById(id);
       if (!admin) return res.status(404).json({ error: 'Admin not found' });
+      beforeUser = admin.toObject ? admin.toObject() : admin;
 
       if (!admin.pendingAccessStartDate || !admin.pendingAccessEndDate) {
         return res.status(400).json({ error: 'This admin did not submit access dates during registration.' });
@@ -44,7 +48,9 @@ export const approveUser = async (req: Request, res: Response) => {
         { new: true }
       ).select('-passwordHash');
     } else {
-      // For regular Users: grant immediate access
+      const regularUser = await User.findById(id);
+      beforeUser = regularUser?.toObject ? regularUser.toObject() : regularUser;
+
       user = await User.findByIdAndUpdate(
         id,
         {
@@ -59,6 +65,18 @@ export const approveUser = async (req: Request, res: Response) => {
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
+
+    await AuditService.log({
+      action: 'ACCOUNT_ENABLED',
+      collectionName: type === 'Admin' ? 'admins' : 'users',
+      documentId: user._id.toString(),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      before: beforeUser,
+      after: user,
+      description: `Approved and enabled access for ${type}: ${user.email}`
+    });
+
     res.json(user);
   } catch (error) {
     console.error('Error approving user:', error);
@@ -66,7 +84,7 @@ export const approveUser = async (req: Request, res: Response) => {
   }
 };
 
-export const rejectUser = async (req: Request, res: Response) => {
+export const rejectUser = async (req: RequestWithId, res: Response) => {
   try {
     const { id } = req.params;
     const { type } = req.query;
@@ -77,15 +95,31 @@ export const rejectUser = async (req: Request, res: Response) => {
     }
 
     let user;
+    let beforeUser;
+
     if (type === 'Admin') {
+      beforeUser = await Admin.findById(id);
       user = await Admin.findByIdAndUpdate(id, { status: 'Rejected', rejectionReason: String(reason).trim() }, { new: true }).select('-passwordHash');
     } else {
+      beforeUser = await User.findById(id);
       user = await User.findByIdAndUpdate(id, { status: 'Rejected' }, { new: true }).select('-passwordHash');
     }
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
+
+    await AuditService.log({
+      action: 'ACCOUNT_DISABLED',
+      collectionName: type === 'Admin' ? 'admins' : 'users',
+      documentId: user._id.toString(),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      before: beforeUser,
+      after: user,
+      description: `Rejected ${type} registration: ${user.email}`
+    });
+
     res.json(user);
   } catch (error) {
     console.error('Error rejecting user:', error);
@@ -95,7 +129,6 @@ export const rejectUser = async (req: Request, res: Response) => {
 
 export const getAccessRecords = async (req: Request, res: Response) => {
   try {
-    // Get all users who have ever been granted access (accessGrantedOn exists)
     const activeUsers = await User.find({ accessGrantedOn: { $exists: true } }).select('-passwordHash').lean();
     const activeAdmins = await Admin.find({ accessGrantedOn: { $exists: true }, role: { $ne: 'SuperAdmin' } }).select('-passwordHash').lean();
 
@@ -109,21 +142,37 @@ export const getAccessRecords = async (req: Request, res: Response) => {
   }
 };
 
-export const revokeAccess = async (req: Request, res: Response) => {
+export const revokeAccess = async (req: RequestWithId, res: Response) => {
   try {
     const { id } = req.params;
-    const { type } = req.query; // 'Admin' | 'User'
+    const { type } = req.query;
 
     let user;
+    let beforeUser;
+
     if (type === 'Admin') {
+      beforeUser = await Admin.findById(id);
       user = await Admin.findByIdAndUpdate(id, { isAccessCancelled: true }, { new: true }).select('-passwordHash');
     } else {
+      beforeUser = await User.findById(id);
       user = await User.findByIdAndUpdate(id, { isAccessCancelled: true }, { new: true }).select('-passwordHash');
     }
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
+
+    await AuditService.log({
+      action: 'ACCOUNT_DISABLED',
+      collectionName: type === 'Admin' ? 'admins' : 'users',
+      documentId: user._id.toString(),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      before: beforeUser,
+      after: user,
+      description: `Revoked access for ${type}: ${user.email}`
+    });
+
     res.json(user);
   } catch (error) {
     console.error('Error revoking access:', error);

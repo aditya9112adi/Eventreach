@@ -5,9 +5,11 @@ import { MessageLog } from '../models/MessageLog';
 import { whatsappService } from './WhatsAppService';
 import { getIO } from './socketService';
 
+import { AuditService } from './AuditService';
+
 export class QueueService {
   
-  async processCampaign(campaignId: string, recipientIds?: string[], messageText?: string, mediaAttachments?: any[]) {
+  async processCampaign(campaignId: string, recipientIds?: string[], messageText?: string, mediaAttachments?: any[], auditInfo?: any) {
     try {
       const campaign = await Campaign.findById(campaignId).populate('eventId');
       if (!campaign) throw new Error('Campaign not found');
@@ -16,7 +18,6 @@ export class QueueService {
       const eventName = event.eventName;
       const venue = event.eventVenue;
 
-      // 1. Fetch contacts for this event. If recipientIds is provided, filter by it.
       let query: any = { eventId: event._id, status: 'Valid' };
       if (recipientIds && Array.isArray(recipientIds) && recipientIds.length > 0) {
         query._id = { $in: recipientIds };
@@ -32,7 +33,6 @@ export class QueueService {
         return;
       }
 
-      // 2. Create MessageLogs in 'Pending' state
       const logsToInsert = contacts.map(c => ({
         campaignId,
         contactId: c._id,
@@ -42,16 +42,11 @@ export class QueueService {
       
       const insertedLogs = await MessageLog.insertMany(logsToInsert);
 
-      // Match contacts with their specific log ID for this run
       const contactsWithLogs = contacts.map((c, index) => ({
         contact: c,
         logId: insertedLogs[index]._id
       }));
 
-      // 3. Process Async in Batches
-      // Fire and forget (in a real production system, this would be pushed to Redis/BullMQ)
-      
-      // Fallback to history if not provided directly
       let activeMsgText = messageText !== undefined ? messageText : campaign.messageText;
       let activeAttachments = mediaAttachments !== undefined ? mediaAttachments : campaign.mediaAttachments;
       
@@ -61,7 +56,7 @@ export class QueueService {
         activeAttachments = lastHistory.mediaAttachments;
       }
       
-      this.processBatch(campaignId, contactsWithLogs, activeMsgText, activeAttachments, eventName, venue).catch(err => {
+      this.processBatch(campaignId, contactsWithLogs, activeMsgText, activeAttachments, eventName, venue, auditInfo).catch(err => {
         console.error('Async batch processing failed:', err);
       });
 
@@ -72,9 +67,11 @@ export class QueueService {
     }
   }
 
-  private async processBatch(campaignId: string, contactsWithLogs: any[], messageText: string, mediaAttachments: any[], eventName: string, venue: string) {
+  private async processBatch(campaignId: string, contactsWithLogs: any[], messageText: string, mediaAttachments: any[], eventName: string, venue: string, auditInfo?: any) {
     const BATCH_SIZE = 10;
     const DELAY_BETWEEN_BATCHES_MS = 2000;
+    let successfulRecords = 0;
+    let failedRecords = 0;
 
     for (let i = 0; i < contactsWithLogs.length; i += BATCH_SIZE) {
       const batch = contactsWithLogs.slice(i, i + BATCH_SIZE);
@@ -88,26 +85,16 @@ export class QueueService {
         personalizedMsg = personalizedMsg.replace(/{{venue}}/g, venue);
 
         try {
-          // Send via WA Service
           await whatsappService.sendMessage(contact.phoneNumber, personalizedMsg, mediaAttachments);
-          
-          // Update log using specific logId
-          await MessageLog.findByIdAndUpdate(
-            logId,
-            { status: 'Sent' }
-          );
-          
+          await MessageLog.findByIdAndUpdate(logId, { status: 'Sent' });
+          successfulRecords++;
           try {
             getIO().emit('message-log-updated', { logId, status: 'Sent', campaignId });
             getIO().emit('dashboard-updated');
           } catch (e) {}
         } catch (err: any) {
-          // Update log with failure using specific logId
-          await MessageLog.findByIdAndUpdate(
-            logId,
-            { status: 'Failed', errorReason: err.message }
-          );
-          
+          await MessageLog.findByIdAndUpdate(logId, { status: 'Failed', errorReason: err.message });
+          failedRecords++;
           try {
             getIO().emit('message-log-updated', { logId, status: 'Failed', campaignId, errorReason: err.message });
             getIO().emit('dashboard-updated');
@@ -115,17 +102,33 @@ export class QueueService {
         }
       });
 
-      // Wait for the batch to complete
       await Promise.allSettled(promises);
 
-      // Delay to respect rate limits
       if (i + BATCH_SIZE < contactsWithLogs.length) {
         await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_BATCHES_MS));
       }
     }
 
-    // Mark campaign as completed
     await Campaign.findByIdAndUpdate(campaignId, { status: 'Completed', messageText: '', mediaAttachments: [] });
+    
+    if (auditInfo) {
+      await AuditService.log({
+        action: 'BULK_MESSAGE_COMPLETED',
+        collectionName: 'messagelogs',
+        actor: auditInfo.actor,
+        request: auditInfo.request,
+        bulkOperationId: auditInfo.bulkOperationId,
+        bulk: {
+          isBulk: true,
+          operationType: 'MESSAGE_SEND',
+          totalRecords: contactsWithLogs.length,
+          successfulRecords,
+          failedRecords
+        },
+        description: `Campaign messaging completed. Sent: ${successfulRecords}, Failed: ${failedRecords}`
+      });
+    }
+    
     console.log(`Campaign ${campaignId} processing completed.`);
   }
 }
