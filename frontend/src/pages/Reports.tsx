@@ -82,7 +82,7 @@ const Reports = () => {
             <option value="all">All Events</option>
             {events.map((evt) => (
               <option key={evt._id} value={evt._id}>
-                {evt.name}
+                {evt.eventName}
               </option>
             ))}
           </select>
@@ -110,13 +110,13 @@ const Reports = () => {
                     {events.map((evt: any) => (
                       <tr key={evt._id} className="hover:bg-surfaceHover transition-colors group">
                         <td className="py-4 font-medium text-foreground">
-                          {evt.name}
+                          {evt.eventName}
                         </td>
                         <td className="py-4 text-foreground/60">
-                          {evt.date ? new Date(evt.date).toLocaleDateString() : 'N/A'}
+                          {evt.eventDate ? new Date(evt.eventDate).toLocaleDateString() : 'N/A'}
                         </td>
                         <td className="py-4">
-                          <Badge variant={eventStatusVariant(evt.status) as any}>{evt.status || 'Upcoming'}</Badge>
+                          <Badge variant={eventStatusVariant(evt.eventStatus) as any}>{evt.eventStatus || 'Upcoming'}</Badge>
                         </td>
                         <td className="py-4 text-right">
                           <button
