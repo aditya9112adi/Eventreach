@@ -17,7 +17,19 @@ export const sendApprovalEmail = async (newAdminName: string, newAdminEmail: str
   });
 
   // The link to the dashboard where the Super Admin can approve the request
-  const approvalLink = 'http://localhost:5173/admin/users';
+  const escapeHtml = (unsafe: string) => {
+    return unsafe
+         .replace(/&/g, "&amp;")
+         .replace(/</g, "&lt;")
+         .replace(/>/g, "&gt;")
+         .replace(/"/g, "&quot;")
+         .replace(/'/g, "&#039;");
+  };
+
+  const safeName = escapeHtml(newAdminName);
+  const safeEmail = escapeHtml(newAdminEmail);
+
+  const approvalLink = `${process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',')[0] : 'http://localhost:5173'}/admin/users`;
 
   const mailOptions = {
     from: `"EventReach System" <${EMAIL_USER}>`,
@@ -29,8 +41,8 @@ export const sendApprovalEmail = async (newAdminName: string, newAdminEmail: str
         <p>A new user has registered for an <strong>Admin</strong> account and is awaiting your approval.</p>
         
         <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <p><strong>Name:</strong> ${newAdminName}</p>
-          <p><strong>Email:</strong> ${newAdminEmail}</p>
+          <p><strong>Name:</strong> ${safeName}</p>
+          <p><strong>Email:</strong> ${safeEmail}</p>
         </div>
 
         <p>Please log in to the dashboard to approve or reject this request.</p>
