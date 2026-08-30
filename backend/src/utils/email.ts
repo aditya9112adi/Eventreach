@@ -29,7 +29,8 @@ export const sendApprovalEmail = async (newAdminName: string, newAdminEmail: str
   const safeName = escapeHtml(newAdminName);
   const safeEmail = escapeHtml(newAdminEmail);
 
-  const approvalLink = `${process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',')[0] : 'http://localhost:5173'}/admin/users`;
+  const baseUrl = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',')[0].replace(/\/$/, '') : 'http://localhost:5173';
+  const approvalLink = `${baseUrl}/admin/users`;
 
   const mailOptions = {
     from: `"EventReach System" <${EMAIL_USER}>`,

@@ -104,6 +104,13 @@ const EventList = () => {
     setCurrentPage(1);
   }, [searchTerm, filterType, filterStatus, sortField, sortDir, rowsPerPage]);
 
+  useEffect(() => {
+    const totalPages = Math.ceil(processedEvents.length / rowsPerPage);
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(totalPages);
+    }
+  }, [processedEvents.length, currentPage, rowsPerPage]);
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'Upcoming':  return <Badge variant="info">Upcoming</Badge>;

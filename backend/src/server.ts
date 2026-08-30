@@ -33,9 +33,9 @@ app.use(cors({
   credentials: true
 }));
 
+app.use('/api/', globalLimiter); // Apply global rate limiting before body parsing
 app.use(express.json());
 app.use(mongoSanitize()); // Prevent NoSQL injection
-app.use('/api/', globalLimiter); // Apply global rate limiting to all /api/ routes
 app.use(requestMiddleware);
 
 // Serve uploads statically

@@ -162,6 +162,13 @@ const ContactList = () => {
     setCurrentPage(1);
   }, [searchTerm, activeEventId, rowsPerPage]);
 
+  useEffect(() => {
+    const totalPages = Math.ceil(filteredContacts.length / rowsPerPage);
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(totalPages);
+    }
+  }, [filteredContacts.length, currentPage, rowsPerPage]);
+
   const getStatusIcon = (status: string, reason?: string) => {
     if (status === 'Valid') return <span title="Valid Number"><CheckCircle2 className="w-5 h-5 text-emerald-500" /></span>;
     if (status === 'Duplicate') return <span title={reason || 'Duplicate'}><AlertTriangle className="w-5 h-5 text-amber-500" /></span>;
