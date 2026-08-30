@@ -7,6 +7,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
+import { PaginationControls } from '../../components/ui/PaginationControls';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -328,46 +329,13 @@ const ContactList = () => {
         
         {/* Pagination Controls */}
         {!isLoading && filteredContacts.length > 0 && (
-          <div className="p-4 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-4 bg-surface/30">
-            <div className="flex items-center gap-2 text-sm text-foreground/70">
-              <span>Rows per page:</span>
-              <select
-                value={rowsPerPage}
-                onChange={(e) => setRowsPerPage(Number(e.target.value))}
-                className="bg-surface border border-border rounded px-2 py-1 text-foreground focus:outline-none focus:border-white/40"
-              >
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-                <option value={75}>75</option>
-                <option value={100}>100</option>
-              </select>
-            </div>
-            <div className="flex items-center gap-4 text-sm text-foreground/70">
-              <span>
-                {((currentPage - 1) * rowsPerPage) + 1}-{Math.min(currentPage * rowsPerPage, filteredContacts.length)} of {filteredContacts.length}
-              </span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className="p-1 rounded hover:bg-surfaceHover text-foreground disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-                <span className="px-3 py-1 font-medium text-sm border border-border rounded bg-surface/50">
-                  {currentPage}
-                </span>
-                <button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages || totalPages === 0}
-                  className="p-1 rounded hover:bg-surfaceHover text-foreground disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-                >
-                  <ChevronRight className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-          </div>
+          <PaginationControls
+            currentPage={currentPage}
+            rowsPerPage={rowsPerPage}
+            totalItems={filteredContacts.length}
+            onPageChange={setCurrentPage}
+            onRowsChange={setRowsPerPage}
+          />
         )}
       </div>
 
