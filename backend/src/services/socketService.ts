@@ -4,9 +4,10 @@ import { Server } from 'socket.io';
 let io: Server;
 
 export const initSocket = (server: HttpServer) => {
+  const allowedOrigins = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : ['http://localhost:5173', 'https://eventreach-frontend-zeta.vercel.app'];
   io = new Server(server, {
     cors: {
-      origin: '*', // For MVP. In prod, restrict to frontend URL
+      origin: allowedOrigins,
       methods: ['GET', 'POST']
     }
   });
