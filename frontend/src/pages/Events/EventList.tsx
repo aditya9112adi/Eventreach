@@ -6,6 +6,8 @@ import api from '../../services/api';
 import type { Event } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
+import { PaginationControls } from '../../components/ui/PaginationControls';
+import { getPaginatedData } from '../../utils/pagination';
 
 type SortField = 'eventName' | 'eventType' | 'eventDate' | 'eventVenue' | 'eventStatus' | 'organizerName' | 'organizerMobile';
 type SortDir = 'asc' | 'desc';
@@ -20,6 +22,9 @@ const EventList = () => {
 
   const [sortField, setSortField] = useState<SortField>('eventDate');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
 
   const fetchEvents = useCallback(async () => {
     try {
@@ -90,6 +95,14 @@ const EventList = () => {
 
     return filtered;
   }, [events, searchTerm, filterType, filterStatus, sortField, sortDir]);
+
+  const paginatedEvents = useMemo(() => {
+    return getPaginatedData(processedEvents, currentPage, rowsPerPage);
+  }, [processedEvents, currentPage, rowsPerPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterType, filterStatus, sortField, sortDir, rowsPerPage]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -189,7 +202,7 @@ const EventList = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {processedEvents.map((event, idx) => (
+                {paginatedEvents.map((event, idx) => (
                   <tr key={event._id} className={`hover:bg-surfaceHover transition-colors group animate-fade-up stagger-${(idx % 5) + 1}`}>
                     <td className="py-3 px-4 text-sm font-medium text-foreground">{event.organizerName || '—'}</td>
                     <td className="py-3 px-4 text-sm text-foreground/80">{event.organizerMobile || '—'}</td>
@@ -217,6 +230,13 @@ const EventList = () => {
                 ))}
               </tbody>
             </table>
+            <PaginationControls
+              currentPage={currentPage}
+              rowsPerPage={rowsPerPage}
+              totalItems={processedEvents.length}
+              onPageChange={setCurrentPage}
+              onRowsChange={setRowsPerPage}
+            />
           </div>
         )}
       </div>
