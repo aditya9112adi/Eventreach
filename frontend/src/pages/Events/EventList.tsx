@@ -187,8 +187,9 @@ const EventList = () => {
             {hasActiveFilters ? 'No events match your search or filters.' : 'No events found.'}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border uppercase tracking-wide text-xs">
                   <SortTh field="organizerName"   label="Event Organizer" />
@@ -230,14 +231,16 @@ const EventList = () => {
                 ))}
               </tbody>
             </table>
-            <PaginationControls
-              currentPage={currentPage}
-              rowsPerPage={rowsPerPage}
-              totalItems={processedEvents.length}
-              onPageChange={setCurrentPage}
-              onRowsChange={setRowsPerPage}
-            />
           </div>
+          
+          <PaginationControls
+            currentPage={currentPage}
+            rowsPerPage={rowsPerPage}
+            totalItems={processedEvents.length}
+            onPageChange={setCurrentPage}
+            onRowsChange={setRowsPerPage}
+          />
+        </>
         )}
       </div>
     </div>
