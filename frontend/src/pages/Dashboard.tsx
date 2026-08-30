@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -12,6 +13,7 @@ import {
 import api from '../services/api';
 import type { Event, Campaign, EventStatus } from '@eventreach/shared';
 import { EventSearch } from '../components/ui/EventSearch';
+import { Button } from '../components/ui/Button';
 
 interface DashboardStats {
   totalEvents: number;
@@ -201,8 +203,29 @@ const Dashboard = () => {
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <div className='h-full flex items-center justify-center text-foreground/40 font-medium'>
-                <p>No message activity yet. Send your first campaign!</p>
+              <div className='h-full relative overflow-hidden rounded-xl border border-border/30 bg-surface/10 flex items-center justify-center group'>
+                {/* Skeleton Background */}
+                <div className='absolute inset-0 flex items-end justify-around p-4 opacity-10 pointer-events-none'>
+                  <div className='w-8 h-[30%] bg-blue-500 rounded-t-sm'></div>
+                  <div className='w-8 h-[70%] bg-blue-500 rounded-t-sm'></div>
+                  <div className='w-8 h-[40%] bg-blue-500 rounded-t-sm'></div>
+                  <div className='w-8 h-[90%] bg-blue-500 rounded-t-sm'></div>
+                  <div className='w-8 h-[60%] bg-blue-500 rounded-t-sm'></div>
+                </div>
+                
+                {/* Glass Overlay Content */}
+                <div className='relative z-10 flex flex-col items-center text-center p-6 bg-surface/60 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl max-w-sm mx-4 transition-transform duration-300 group-hover:scale-[1.02]'>
+                  <div className='w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center mb-4 text-blue-400'>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                  </div>
+                  <h4 className='text-foreground font-medium mb-2'>No message activity yet</h4>
+                  <p className='text-sm text-foreground/60 mb-6'>Your messaging journey starts here. Send your first campaign to see delivery metrics.</p>
+                  <Link to="/events">
+                    <Button variant="primary" className="shadow-lg shadow-blue-500/20">
+                      Create Campaign
+                    </Button>
+                  </Link>
+                </div>
               </div>
             )}
           </div>
