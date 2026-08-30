@@ -243,11 +243,25 @@ const Dashboard = () => {
                   <Line type='monotone' dataKey='delivered' stroke='#22C55E' strokeWidth={3} dot={{ strokeWidth: 2, r: 4 }} activeDot={{ r: 6 }} name='Delivered' />
                 </LineChart>
               </ResponsiveContainer>
-            ) : (
-              <div className='h-full flex items-center justify-center text-foreground/40 font-medium'>
-                <p>Trend data will appear after campaigns are sent.</p>
-              </div>
-            )}
+              ) : (
+                <div className='h-full relative overflow-hidden rounded-xl border border-border/30 bg-surface/10 flex items-center justify-center group'>
+                  {/* Skeleton Background */}
+                  <div className='absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none'>
+                    <svg viewBox="0 0 100 50" className="w-full h-full preserve-3d" preserveAspectRatio="none">
+                      <path d="M0,40 Q25,35 50,20 T100,5" fill="none" stroke="#22C55E" strokeWidth="2" />
+                    </svg>
+                  </div>
+                  
+                  {/* Glass Overlay Content */}
+                  <div className='relative z-10 flex flex-col items-center text-center p-6 bg-surface/60 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl max-w-sm mx-4 transition-transform duration-300 group-hover:scale-[1.02]'>
+                    <div className='w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mb-4 text-green-400'>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+                    </div>
+                    <h4 className='text-foreground font-medium mb-2'>Track your success</h4>
+                    <p className='text-sm text-foreground/60 mb-6'>Trend data will populate right here once your campaigns go live and start delivering.</p>
+                  </div>
+                </div>
+              )}
           </div>
         </div>
       </div>
