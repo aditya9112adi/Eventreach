@@ -8,6 +8,7 @@ const JustAccess = () => {
   const [records, setRecords] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [userToRemove, setUserToRemove] = useState<{ id: string, type: string } | null>(null);
+  const [, setTick] = useState(0);
   const { showLoader, showSuccess, showError, hideLoader } = useLoader();
 
   const fetchAccessRecords = async () => {
@@ -23,6 +24,12 @@ const JustAccess = () => {
 
   useEffect(() => {
     fetchAccessRecords();
+  }, []);
+
+  // Re-render every 30s so status badges and remaining time update live
+  useEffect(() => {
+    const interval = setInterval(() => setTick(t => t + 1), 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleRevokeAccess = (id: string, type: string) => {
