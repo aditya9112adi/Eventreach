@@ -137,29 +137,37 @@ const UserApprovals = () => {
                         {user.role}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-xs text-foreground/70">
+                    <td className="px-6 py-4 text-xs text-foreground/70 min-w-[200px]">
                       {user.role === 'Admin' && user.pendingAccessStartDate ? (
-                        <div className="flex flex-col gap-0.5">
-                          <span><span className="font-medium text-foreground/50">From:</span> {fmt(user.pendingAccessStartDate)}</span>
-                          <span><span className="font-medium text-foreground/50">To:</span> {fmt(user.pendingAccessEndDate)}</span>
+                        <div className="flex flex-col gap-1.5 bg-background/50 p-2.5 rounded-md border border-white/5">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-bold text-foreground/50 uppercase tracking-wider text-[10px]">From</span> 
+                            <span className="font-medium whitespace-nowrap">{fmt(user.pendingAccessStartDate)}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-bold text-foreground/50 uppercase tracking-wider text-[10px]">To</span> 
+                            <span className="font-medium whitespace-nowrap">{fmt(user.pendingAccessEndDate)}</span>
+                          </div>
                         </div>
                       ) : (
                         <span className="text-foreground/40 italic">—</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-right space-x-2">
-                      <button
-                        onClick={() => openApproveModal(user)}
-                        className="inline-flex items-center px-3 py-1.5 bg-green-500/20 text-green-500 hover:bg-green-500/30 font-bold uppercase tracking-wide text-xs rounded transition-colors"
-                      >
-                        <Check className="w-4 h-4 mr-1" /> Approve
-                      </button>
-                      <button
-                        onClick={() => openRejectModal(user)}
-                        className="inline-flex items-center px-3 py-1.5 bg-red-500/20 text-red-500 hover:bg-red-500/30 font-bold uppercase tracking-wide text-xs rounded transition-colors"
-                      >
-                        <X className="w-4 h-4 mr-1" /> Reject
-                      </button>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-col sm:flex-row gap-2 justify-end">
+                        <button
+                          onClick={() => openApproveModal(user)}
+                          className="inline-flex items-center justify-center px-4 py-2 bg-green-500/10 text-green-500 hover:bg-green-500/20 font-bold uppercase tracking-wide text-[11px] rounded-md transition-all duration-200 border border-green-500/20 shadow-sm whitespace-nowrap"
+                        >
+                          <Check className="w-3.5 h-3.5 mr-1.5" /> Approve
+                        </button>
+                        <button
+                          onClick={() => openRejectModal(user)}
+                          className="inline-flex items-center justify-center px-4 py-2 bg-red-500/10 text-red-500 hover:bg-red-500/20 font-bold uppercase tracking-wide text-[11px] rounded-md transition-all duration-200 border border-red-500/20 shadow-sm whitespace-nowrap"
+                        >
+                          <X className="w-3.5 h-3.5 mr-1.5" /> Reject
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
