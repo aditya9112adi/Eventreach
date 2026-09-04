@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { useLocation, useNavigate, NavLink, Outlet } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../store/authStore';
+import { useSocket } from '../contexts/SocketContext';
 import api from '../services/api';
 import { 
   LayoutDashboard, 
@@ -26,6 +27,31 @@ const DashboardLayout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const location = useLocation();
+  const navigate = useNavigate();
+  const { socket } = useSocket();
+
+  useEffect(() => {
+    if (socket && user?.id) {
+      socket.emit('identify', user.id);
+    }
+  }, [socket, user?.id]);
+
+  useEffect(() => {
+    if (!socket) return;
+    
+    const handleAccessEvent = (data: { message: string }) => {
+      logout();
+      navigate('/login', { state: { message: data.message } });
+    };
+
+    socket.on('ACCESS_REMOVED', handleAccessEvent);
+    socket.on('ACCESS_EXPIRED', handleAccessEvent);
+
+    return () => {
+      socket.off('ACCESS_REMOVED', handleAccessEvent);
+      socket.off('ACCESS_EXPIRED', handleAccessEvent);
+    };
+  }, [socket, logout, navigate]);
 
   useEffect(() => {
     if (user?.role === 'SuperAdmin') {

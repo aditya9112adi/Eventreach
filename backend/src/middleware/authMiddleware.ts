@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { Admin } from '../models/Admin';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -9,7 +10,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-export const requireAuth = (
+export const requireAuth = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
@@ -32,6 +33,19 @@ export const requireAuth = (
       email: string;
       role: string;
     };
+
+    if (decoded.role === 'Admin') {
+      const admin = await Admin.findById(decoded.id);
+      if (!admin) {
+        return res.status(401).json({ error: 'Unauthorized: Admin not found' });
+      }
+      if (admin.isAccessCancelled) {
+        return res.status(401).json({ error: 'Unauthorized: Your access has been removed' });
+      }
+      if (admin.accessExpiryDate && new Date() > new Date(admin.accessExpiryDate)) {
+        return res.status(401).json({ error: 'Unauthorized: Your access has expired' });
+      }
+    }
 
     req.user = decoded;
     next();

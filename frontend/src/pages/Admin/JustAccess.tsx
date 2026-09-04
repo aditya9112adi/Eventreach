@@ -7,6 +7,7 @@ import { useLoader } from '../../components/ui/FullScreenLoader';
 const JustAccess = () => {
   const [records, setRecords] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [userToRemove, setUserToRemove] = useState<{ id: string, type: string } | null>(null);
   const { showLoader, showSuccess, showError, hideLoader } = useLoader();
 
   const fetchAccessRecords = async () => {
@@ -24,8 +25,14 @@ const JustAccess = () => {
     fetchAccessRecords();
   }, []);
 
-  const handleRevokeAccess = async (id: string, type: string) => {
-    if (!window.confirm('Are you sure you want to permanently revoke access for this user? They will immediately lose access to restricted features.')) return;
+  const handleRevokeAccess = (id: string, type: string) => {
+    setUserToRemove({ id, type });
+  };
+
+  const confirmRevokeAccess = async () => {
+    if (!userToRemove) return;
+    const { id, type } = userToRemove;
+    setUserToRemove(null);
     
     showLoader('Revoking access...');
     try {
@@ -194,6 +201,33 @@ const JustAccess = () => {
           </div>
         )}
       </div>
+
+      {userToRemove && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-surface border border-border p-6 rounded-xl shadow-2xl max-w-md w-full mx-4 animate-spring-up">
+            <h3 className="text-xl font-bold mb-3 text-foreground flex items-center">
+              <ShieldAlert className="w-5 h-5 mr-2 text-red-500" /> Remove Admin Access?
+            </h3>
+            <p className="text-foreground/70 mb-8 leading-relaxed">
+              Are you sure you want to permanently revoke access for this Admin? They will immediately be logged out and lose access to restricted features.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button 
+                onClick={() => setUserToRemove(null)} 
+                className="px-5 py-2.5 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-foreground font-medium transition-colors"
+              >
+                No, Cancel
+              </button>
+              <button 
+                onClick={confirmRevokeAccess} 
+                className="px-5 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 shadow-lg shadow-red-500/20 transition-colors flex items-center"
+              >
+                <Trash2 className="w-4 h-4 mr-2" /> Yes, Remove Access
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

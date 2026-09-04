@@ -3,6 +3,7 @@ import { User } from '../models/User';
 import { Admin } from '../models/Admin';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
+import { getIO } from '../services/socketService';
 
 export const getPendingUsers = async (req: Request, res: Response) => {
   try {
@@ -172,6 +173,12 @@ export const revokeAccess = async (req: RequestWithId, res: Response) => {
       after: user,
       description: `Revoked access for ${type}: ${user.email}`
     });
+
+    try {
+      getIO().to(id).emit('ACCESS_REMOVED', { message: 'Your access has been removed.' });
+    } catch (socketErr) {
+      console.error('Failed to emit ACCESS_REMOVED:', socketErr);
+    }
 
     res.json(user);
   } catch (error) {

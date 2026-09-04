@@ -60,7 +60,9 @@ app.get('/health', (req, res) => {
 // Start Server
 const startServer = async () => {
   await connectDB();
-  app.listen(PORT, () => {
+  const httpServer = createServer(app);
+  initSocket(httpServer);
+  httpServer.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
 };
