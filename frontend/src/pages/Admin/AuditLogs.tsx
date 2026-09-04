@@ -282,7 +282,7 @@ export const AuditLogs = () => {
 
       {/* Detail Modal */}
       {selectedLog && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
+        <div className="fixed top-0 left-0 w-screen h-screen bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
           <div className="bg-surface border border-border rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto animate-spring-up">
             <div className="p-6 border-b border-border flex justify-between items-center sticky top-0 bg-surface z-10">
               <h2 className="text-lg font-bold text-foreground uppercase tracking-wider">Audit Log Details</h2>
