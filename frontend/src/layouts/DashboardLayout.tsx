@@ -28,18 +28,21 @@ const DashboardLayout = () => {
   const [pendingCount, setPendingCount] = useState(0);
   const location = useLocation();
   const navigate = useNavigate();
-  const { socket } = useSocket();
+  const { socket, isConnected } = useSocket();
 
   useEffect(() => {
-    if (socket && user?.id) {
-      socket.emit('identify', user.id);
+    const currentId = user?.id || (user as any)?._id;
+    if (socket && isConnected && currentId) {
+      console.log('Emitting identify for user:', currentId);
+      socket.emit('identify', currentId);
     }
-  }, [socket, user?.id]);
+  }, [socket, isConnected, user]);
 
   useEffect(() => {
     if (!socket) return;
     
     const handleAccessEvent = (data: { message: string }) => {
+      console.log('Received access event:', data);
       logout();
       navigate('/login', { state: { message: data.message } });
     };

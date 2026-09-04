@@ -175,7 +175,9 @@ export const revokeAccess = async (req: RequestWithId, res: Response) => {
     });
 
     try {
+      console.log(`Attempting to emit ACCESS_REMOVED to room ${id}`);
       getIO().to(id).emit('ACCESS_REMOVED', { message: 'Your access has been removed.' });
+      console.log(`Successfully emitted ACCESS_REMOVED to room ${id}`);
     } catch (socketErr) {
       console.error('Failed to emit ACCESS_REMOVED:', socketErr);
     }
