@@ -43,7 +43,10 @@ export const register = async (req: RequestWithId, res: Response) => {
     const existingAdmin = await Admin.findOne({ email });
     const existingUser = await User.findOne({ email });
     
-    if (existingAdmin || existingUser) {
+    if (existingAdmin && existingAdmin.status !== 'Rejected') {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+    if (existingUser && existingUser.status !== 'Rejected') {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
@@ -51,34 +54,77 @@ export const register = async (req: RequestWithId, res: Response) => {
     const status = 'Pending';
     
     let createdUser;
+    const isRecreated = (existingAdmin && existingAdmin.status === 'Rejected') || 
+                        (existingUser && existingUser.status === 'Rejected');
 
     if (role === 'Admin') {
-      createdUser = await Admin.create({
-        name,
-        email,
-        passwordHash,
-        role: 'Admin',
-        status,
-        pendingAccessStartDate: new Date(accessStartDate!),
-        pendingAccessEndDate: new Date(accessEndDate!),
-      });
-      sendApprovalEmail(name, email);
+      if (existingUser && existingUser.status === 'Rejected') {
+        await User.deleteOne({ email });
+      }
+      
+      if (existingAdmin && existingAdmin.status === 'Rejected') {
+        createdUser = await Admin.findOneAndUpdate(
+          { email },
+          {
+            name,
+            passwordHash,
+            status: 'Pending',
+            pendingAccessStartDate: new Date(accessStartDate!),
+            pendingAccessEndDate: new Date(accessEndDate!),
+            $unset: { rejectionReason: 1 } 
+          },
+          { new: true }
+        );
+        sendApprovalEmail(name, email);
+      } else {
+        createdUser = await Admin.create({
+          name,
+          email,
+          passwordHash,
+          role: 'Admin',
+          status,
+          pendingAccessStartDate: new Date(accessStartDate!),
+          pendingAccessEndDate: new Date(accessEndDate!),
+        });
+        sendApprovalEmail(name, email);
+      }
     } else {
-      createdUser = await User.create({
-        name,
-        email,
-        passwordHash,
-        status,
-      });
+      if (existingAdmin && existingAdmin.status === 'Rejected') {
+        await Admin.deleteOne({ email });
+      }
+
+      if (existingUser && existingUser.status === 'Rejected') {
+        createdUser = await User.findOneAndUpdate(
+          { email },
+          {
+            name,
+            passwordHash,
+            status: 'Pending',
+            $unset: { rejectionReason: 1 }
+          },
+          { new: true }
+        );
+      } else {
+        createdUser = await User.create({
+          name,
+          email,
+          passwordHash,
+          status,
+        });
+      }
+    }
+
+    if (!createdUser) {
+      throw new Error('Failed to create or update user');
     }
 
     await AuditService.log({
-      action: role === 'Admin' ? 'ADMIN_CREATED' : 'USER_CREATED',
+      action: role === 'Admin' ? (isRecreated ? 'ADMIN_RECREATED' : 'ADMIN_CREATED') : (isRecreated ? 'USER_RECREATED' : 'USER_CREATED'),
       collectionName: role === 'Admin' ? 'admins' : 'users',
       documentId: createdUser._id.toString(),
       request: AuditService.getRequestInfo(req),
       after: createdUser,
-      description: `New ${role} registration pending approval`
+      description: isRecreated ? `${role} re-registered after previous rejection` : `New ${role} registration pending approval`
     });
 
     res.status(201).json({
