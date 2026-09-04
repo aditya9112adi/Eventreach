@@ -121,6 +121,7 @@ const Dashboard = () => {
   ];
 
   const isSuperAdmin = user?.role === 'SuperAdmin';
+  const isSuperAdminOrAdmin = user?.role === 'SuperAdmin' || user?.role === 'Admin';
 
   return (
     <div className='space-y-6'>
@@ -130,7 +131,7 @@ const Dashboard = () => {
         <div>
           <h2 className='text-3xl font-sans font-bold text-foreground animate-slide-in uppercase'>Dashboard Overview</h2>
           {/* Active filter indicator */}
-          {isSuperAdmin && (selectedEvent || statusFilter) && (
+          {isSuperAdminOrAdmin && (selectedEvent || statusFilter) && (
             <p className='text-xs text-foreground/50 mt-1 flex items-center gap-1'>
               Showing:
               {selectedEvent && <span className='text-accent font-semibold'>{selectedEvent.eventName}</span>}
@@ -139,7 +140,7 @@ const Dashboard = () => {
           )}
         </div>
 
-        {isSuperAdmin && (
+        {isSuperAdminOrAdmin && (
           <div className='flex flex-col sm:flex-row items-start sm:items-end gap-3 relative z-50'>
 
             {/* FILTER 1: Status Dropdown — independent, re-fetches stats */}
