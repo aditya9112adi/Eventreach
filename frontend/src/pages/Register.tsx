@@ -65,7 +65,19 @@ const Register = () => {
     try {
       setApiError(null);
       setSuccessMsg(null);
-      const response = await api.post('/auth/register', data);
+      
+      // Fix Timezone shift: datetime-local inputs return "YYYY-MM-DDTHH:mm" which is local time,
+      // but servers in UTC will parse it as UTC time. 
+      // We convert it to a fully qualified UTC ISO string using the browser's local timezone.
+      const payload = { ...data };
+      if (payload.accessStartDate) {
+        payload.accessStartDate = new Date(payload.accessStartDate).toISOString();
+      }
+      if (payload.accessEndDate) {
+        payload.accessEndDate = new Date(payload.accessEndDate).toISOString();
+      }
+
+      const response = await api.post('/auth/register', payload);
       setSuccessMsg(response.data.message);
       setTimeout(() => navigate('/login'), 3000);
     } catch (error: any) {
