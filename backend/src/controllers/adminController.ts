@@ -130,11 +130,23 @@ export const rejectUser = async (req: RequestWithId, res: Response) => {
 
 export const getAccessRecords = async (req: Request, res: Response) => {
   try {
-    const activeUsers = await User.find({ accessGrantedOn: { $exists: true } }).select('-passwordHash').lean();
-    const activeAdmins = await Admin.find({ accessGrantedOn: { $exists: true }, role: { $ne: 'SuperAdmin' } }).select('-passwordHash').lean();
+    // Fetch users who have been granted access OR have been rejected
+    const accessUsers = await User.find({
+      $or: [
+        { accessGrantedOn: { $exists: true } },
+        { status: 'Rejected' }
+      ]
+    }).select('-passwordHash').lean();
+    const accessAdmins = await Admin.find({
+      role: { $ne: 'SuperAdmin' },
+      $or: [
+        { accessGrantedOn: { $exists: true } },
+        { status: 'Rejected' }
+      ]
+    }).select('-passwordHash').lean();
 
-    const formattedUsers = activeUsers.map(u => ({ ...u, role: 'User', type: 'User' }));
-    const formattedAdmins = activeAdmins.map(a => ({ ...a, type: 'Admin' }));
+    const formattedUsers = accessUsers.map(u => ({ ...u, role: 'User', type: 'User' }));
+    const formattedAdmins = accessAdmins.map(a => ({ ...a, type: 'Admin' }));
 
     res.json([...formattedAdmins, ...formattedUsers].sort((a: any, b: any) => new Date(b.accessGrantedOn || b.createdAt).getTime() - new Date(a.accessGrantedOn || a.createdAt).getTime()));
   } catch (error) {
