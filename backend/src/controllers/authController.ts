@@ -43,10 +43,22 @@ export const register = async (req: RequestWithId, res: Response) => {
     const existingAdmin = await Admin.findOne({ email });
     const existingUser = await User.findOne({ email });
     
-    if (existingAdmin && existingAdmin.status !== 'Rejected') {
+    const now = new Date();
+    const isExistingAdminRecreatable = existingAdmin && (
+      existingAdmin.status === 'Rejected' || 
+      existingAdmin.isAccessCancelled === true || 
+      (existingAdmin.accessExpiryDate && now > new Date(existingAdmin.accessExpiryDate))
+    );
+    const isExistingUserRecreatable = existingUser && (
+      existingUser.status === 'Rejected' || 
+      existingUser.isAccessCancelled === true || 
+      (existingUser.accessExpiryDate && now > new Date(existingUser.accessExpiryDate))
+    );
+    
+    if (existingAdmin && !isExistingAdminRecreatable) {
       return res.status(400).json({ error: 'Email already registered' });
     }
-    if (existingUser && existingUser.status !== 'Rejected') {
+    if (existingUser && !isExistingUserRecreatable) {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
@@ -54,15 +66,14 @@ export const register = async (req: RequestWithId, res: Response) => {
     const status = 'Pending';
     
     let createdUser;
-    const isRecreated = (existingAdmin && existingAdmin.status === 'Rejected') || 
-                        (existingUser && existingUser.status === 'Rejected');
+    const isRecreated = isExistingAdminRecreatable || isExistingUserRecreatable;
 
     if (role === 'Admin') {
-      if (existingUser && existingUser.status === 'Rejected') {
+      if (isExistingUserRecreatable) {
         await User.deleteOne({ email });
       }
       
-      if (existingAdmin && existingAdmin.status === 'Rejected') {
+      if (isExistingAdminRecreatable) {
         createdUser = await Admin.findOneAndUpdate(
           { email },
           {
@@ -89,11 +100,11 @@ export const register = async (req: RequestWithId, res: Response) => {
         sendApprovalEmail(name, email);
       }
     } else {
-      if (existingAdmin && existingAdmin.status === 'Rejected') {
+      if (isExistingAdminRecreatable) {
         await Admin.deleteOne({ email });
       }
 
-      if (existingUser && existingUser.status === 'Rejected') {
+      if (isExistingUserRecreatable) {
         createdUser = await User.findOneAndUpdate(
           { email },
           {
