@@ -47,9 +47,8 @@ const DashboardLayout = () => {
     navItems.push({ name: 'User Approvals', to: '/admin/approvals', icon: Users });
     navItems.push({ name: 'Just Access', to: '/admin/just-access', icon: MessageSquare });
     navItems.push({ name: 'Audit Logs', to: '/admin/audit-logs', icon: Shield });
+    navItems.push({ name: 'Settings', to: '/settings', icon: Settings });
   }
-
-  navItems.push({ name: 'Settings', to: '/settings', icon: Settings });
 
   return (
     <div className="min-h-screen flex text-foreground">
