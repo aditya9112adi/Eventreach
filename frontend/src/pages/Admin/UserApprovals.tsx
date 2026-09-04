@@ -15,11 +15,13 @@ const fmt = (d?: string | Date) => {
 
 const UserApprovals = () => {
   const [users, setUsers] = useState<User[]>([]);
+  const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Approve modal
   const [approveModalOpen, setApproveModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [assignEventId, setAssignEventId] = useState<string>('');
 
   // Reject modal
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
@@ -31,8 +33,12 @@ const UserApprovals = () => {
 
   const fetchUsers = async () => {
     try {
-      const response = await api.get('/admin/users/pending');
-      setUsers(response.data);
+      const [usersRes, eventsRes] = await Promise.all([
+        api.get('/admin/users/pending'),
+        api.get('/events')
+      ]);
+      setUsers(usersRes.data);
+      setEvents(eventsRes.data);
     } catch (error) {
       console.error('Failed to fetch pending users:', error);
     } finally {
@@ -46,6 +52,7 @@ const UserApprovals = () => {
 
   const openApproveModal = (user: any) => {
     setSelectedUser(user);
+    setAssignEventId('');
     setApproveModalOpen(true);
   };
 
@@ -60,7 +67,9 @@ const UserApprovals = () => {
     if (!selectedUser) return;
     showLoader('Approving request...');
     try {
-      await api.put(`/admin/users/${selectedUser._id}/approve?type=${selectedUser.type}`);
+      await api.put(`/admin/users/${selectedUser._id}/approve?type=${selectedUser.type}`, {
+        assignedEventId: assignEventId || undefined
+      });
       setUsers(users.filter((u: any) => u._id !== selectedUser._id));
       setApproveModalOpen(false);
       setSelectedUser(null);
@@ -209,8 +218,29 @@ const UserApprovals = () => {
                       <p className="text-sm text-foreground/50 italic">No specific access period requested (User role).</p>
                     )}
                   </div>
+
+                  {selectedUser.type === 'User' && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold uppercase tracking-wider text-foreground/60 block">
+                        Assign Event (Optional)
+                      </label>
+                      <select
+                        value={assignEventId}
+                        onChange={(e) => setAssignEventId(e.target.value)}
+                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 cursor-pointer"
+                      >
+                        <option value="">No Event Assigned</option>
+                        {events.map((ev) => (
+                          <option key={ev._id} value={ev._id}>
+                            {ev.eventName} ({ev.eventType} - {ev.eventDate})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   <p className="text-xs text-foreground/50">
-                    Clicking <strong>Approve</strong> will grant access exactly as requested above.
+                    Clicking <strong>Approve</strong> will grant access immediately.
                   </p>
                 </div>
 

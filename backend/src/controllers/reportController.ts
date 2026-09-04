@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { MessageLog } from '../models/MessageLog';
 import { Campaign } from '../models/Campaign';
+import { isEventAuthorized } from '../services/eventAuthService';
 
 export const getCampaignStats = async (req: Request, res: Response) => {
   try {
@@ -9,6 +10,13 @@ export const getCampaignStats = async (req: Request, res: Response) => {
     const campaign = await Campaign.findById(campaignId).populate('eventId');
     if (!campaign) {
       return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const currentUser = (req as any).user;
+    const eventId = (campaign.eventId as any)?._id || campaign.eventId;
+    const authorized = await isEventAuthorized(currentUser, eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
     }
 
     const stats = await MessageLog.aggregate([
@@ -44,7 +52,7 @@ export const getCampaignStats = async (req: Request, res: Response) => {
     res.json({
       campaignId,
       campaignStatus: campaign.status,
-      eventName: (campaign.eventId as any).eventName,
+      eventName: (campaign.eventId as any)?.eventName,
       eventDetails: campaign.eventId,
       messageContent: latestMessage,
       total,
@@ -60,6 +68,18 @@ export const getCampaignStats = async (req: Request, res: Response) => {
 export const getCampaignLogs = async (req: Request, res: Response) => {
   try {
     const { campaignId } = req.params;
+
+    const campaign = await Campaign.findById(campaignId);
+    if (!campaign) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, campaign.eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 50;
     const statusFilter = req.query.status as string;
@@ -92,4 +112,3 @@ export const getCampaignLogs = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch campaign logs' });
   }
 };
-

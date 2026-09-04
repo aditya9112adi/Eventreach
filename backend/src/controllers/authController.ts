@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { User } from '../models/User';
 import { Admin } from '../models/Admin';
+import { Event } from '../models/Event';
 import { sendApprovalEmail } from '../utils/email';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
@@ -234,6 +235,12 @@ export const login = async (req: RequestWithId, res: Response) => {
       description: `User logged in successfully`
     });
 
+    let assignedEventName: string | undefined;
+    if (user.assignedEventId) {
+      const ev = await Event.findById(user.assignedEventId).select('eventName').lean();
+      if (ev) assignedEventName = (ev as any).eventName;
+    }
+
     res.json({
       user: {
         id: user._id,
@@ -247,6 +254,9 @@ export const login = async (req: RequestWithId, res: Response) => {
         accessDurationValue: user.accessDurationValue,
         accessDurationUnit: user.accessDurationUnit,
         isAccessCancelled: user.isAccessCancelled,
+        assignedEventId: user.assignedEventId ? user.assignedEventId.toString() : undefined,
+        assignedEventName,
+        adminId: user.adminId ? user.adminId.toString() : undefined,
         createdAt: user.createdAt,
       },
       token,

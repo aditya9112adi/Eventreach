@@ -10,6 +10,8 @@ export interface IUser extends Document {
   accessExpiryDate?: Date;
   accessDurationDays?: number;
   isAccessCancelled?: boolean;
+  assignedEventId?: Schema.Types.ObjectId | string;
+  adminId?: Schema.Types.ObjectId | string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -43,6 +45,8 @@ const UserSchema: Schema = new Schema(
     accessDurationValue: { type: Number },
     accessDurationUnit: { type: String, enum: ['minutes', 'hours', 'days'] },
     isAccessCancelled: { type: Boolean, default: false },
+    assignedEventId: { type: Schema.Types.ObjectId, ref: 'Event', index: true },
+    adminId: { type: Schema.Types.ObjectId, ref: 'Admin', index: true },
   },
   {
     timestamps: true,

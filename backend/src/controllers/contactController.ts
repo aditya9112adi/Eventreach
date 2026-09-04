@@ -6,6 +6,7 @@ import { extractFromExcel, extractFromPDF, RawContact } from '../utils/fileExtra
 import type { ExtractedContact } from '@eventreach/shared';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
+import { isEventAuthorized, getAuthorizedEventIds } from '../services/eventAuthService';
 import crypto from 'crypto';
 
 const createContactSchema = z.object({
@@ -24,6 +25,12 @@ export const addContact = async (req: RequestWithId, res: Response) => {
     }
 
     const { fullName, phoneNumber, countryCode, email, eventId } = parsed.data;
+
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
 
     let status = 'Valid';
     let validationReason = undefined;
@@ -66,7 +73,7 @@ export const addContact = async (req: RequestWithId, res: Response) => {
       actor: AuditService.getActorFromReq(req),
       request: AuditService.getRequestInfo(req),
       after: contact,
-      description: `Manually added contact ${fullName}`
+      description: `Created contact ${contact.fullName} (${contact.phoneNumber})`
     });
 
     res.status(201).json(contact);
@@ -79,6 +86,12 @@ export const addContact = async (req: RequestWithId, res: Response) => {
 export const getContactsByEvent = async (req: Request, res: Response) => {
   try {
     const { eventId } = req.params;
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
     const contacts = await Contact.find({ eventId }).sort({ createdAt: -1 }).lean();
     res.json(contacts);
   } catch (error) {
@@ -90,6 +103,12 @@ export const getContactsByEvent = async (req: Request, res: Response) => {
 export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
   try {
     const { eventId } = req.params;
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
     const file = req.file;
     const countryCode = req.body.countryCode || 'US';
 
@@ -133,10 +152,12 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
         status = 'Duplicate';
         validationReason = 'Already in event';
       }
-      
+
       if (status === 'Valid') {
-        const fileDuplicate = previewContacts.find(c => c.phoneNumber === normalizedPhone);
-        if (fileDuplicate) {
+        const isDuplicateInBatch = previewContacts.some(
+          c => c.phoneNumber === normalizedPhone && c.status === 'Valid'
+        );
+        if (isDuplicateInBatch) {
           status = 'Duplicate';
           validationReason = 'Duplicate in file';
         }
@@ -164,6 +185,12 @@ export const bulkImportContacts = async (req: RequestWithId, res: Response) => {
   const bulkOperationId = `BULK-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
   try {
     const { eventId } = req.params;
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
     const { contacts } = req.body as { contacts: ExtractedContact[] };
 
     if (!contacts || !Array.isArray(contacts) || contacts.length === 0) {
@@ -238,6 +265,12 @@ export const deleteContact = async (req: RequestWithId, res: Response) => {
     if (!contact) {
       return res.status(404).json({ error: 'Contact not found' });
     }
+
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, contact.eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
     
     await Contact.findByIdAndDelete(id);
 
@@ -266,6 +299,12 @@ export const updateContact = async (req: RequestWithId, res: Response) => {
     const beforeContact = await Contact.findById(id);
     if (!beforeContact) {
       return res.status(404).json({ error: 'Contact not found' });
+    }
+
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, beforeContact.eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
     }
 
     let status = 'Valid';
@@ -315,9 +354,18 @@ export const updateContact = async (req: RequestWithId, res: Response) => {
     res.status(500).json({ error: 'Failed to update contact' });
   }
 };
+
 export const getAllContacts = async (req: Request, res: Response) => {
   try {
-    const contacts = await Contact.find().sort({ createdAt: -1 }).lean();
+    const currentUser = (req as any).user;
+    const authorizedIds = await getAuthorizedEventIds(currentUser);
+
+    const query: any = {};
+    if (authorizedIds !== null) {
+      query.eventId = { $in: authorizedIds };
+    }
+
+    const contacts = await Contact.find(query).sort({ createdAt: -1 }).lean();
     res.json(contacts);
   } catch (error) {
     console.error('Get all contacts error:', error);

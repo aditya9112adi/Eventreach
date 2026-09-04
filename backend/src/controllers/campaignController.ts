@@ -3,6 +3,7 @@ import { Campaign } from '../models/Campaign';
 import { queueService } from '../services/QueueService';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
+import { isEventAuthorized, getAuthorizedEventIds } from '../services/eventAuthService';
 import crypto from 'crypto';
 
 export const uploadMedia = async (req: Request, res: Response) => {
@@ -35,6 +36,12 @@ export const uploadMedia = async (req: Request, res: Response) => {
 export const getCampaign = async (req: Request, res: Response) => {
   try {
     const { eventId } = req.params;
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
     let campaign = await Campaign.findOne({ eventId });
     
     // If no campaign exists, return an empty template rather than 404
@@ -57,6 +64,12 @@ export const getCampaign = async (req: Request, res: Response) => {
 export const saveCampaign = async (req: RequestWithId, res: Response) => {
   try {
     const { eventId } = req.params;
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
     const { messageText, mediaAttachments, status } = req.body;
 
     const beforeCampaign = await Campaign.findOne({ eventId });
@@ -92,6 +105,12 @@ export const saveCampaign = async (req: RequestWithId, res: Response) => {
 export const sendCampaign = async (req: RequestWithId, res: Response) => {
   try {
     const { eventId } = req.params;
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
     const { recipientIds } = req.body;
     const bulkOperationId = `BULK-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
     
@@ -143,7 +162,15 @@ export const sendCampaign = async (req: RequestWithId, res: Response) => {
 
 export const getAllCampaigns = async (req: Request, res: Response) => {
   try {
-    const campaigns = await Campaign.find()
+    const currentUser = (req as any).user;
+    const authorizedIds = await getAuthorizedEventIds(currentUser);
+
+    const query: any = {};
+    if (authorizedIds !== null) {
+      query.eventId = { $in: authorizedIds };
+    }
+
+    const campaigns = await Campaign.find(query)
       .populate('eventId', 'eventName')
       .sort({ updatedAt: -1 })
       .lean();
@@ -153,5 +180,3 @@ export const getAllCampaigns = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch campaigns' });
   }
 };
-
-

@@ -1,20 +1,20 @@
 import { Router } from 'express';
-import { getPendingUsers, approveUser, rejectUser, getAccessRecords, revokeAccess } from '../controllers/adminController';
+import { getPendingUsers, approveUser, rejectUser, getAccessRecords, revokeAccess, assignUserEvent } from '../controllers/adminController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { requireRole } from '../middleware/roleMiddleware';
 
 const router = Router();
 
-// Protect all admin routes: must be authenticated and have SuperAdmin role
 router.use(requireAuth);
-// @ts-ignore
-router.use(requireRole('SuperAdmin'));
 
-router.get('/users/pending', getPendingUsers);
-router.put('/users/:id/approve', approveUser);
-router.put('/users/:id/reject', rejectUser);
+// SuperAdmin only routes
+router.get('/users/pending', requireRole('SuperAdmin'), getPendingUsers);
+router.put('/users/:id/approve', requireRole('SuperAdmin'), approveUser);
+router.put('/users/:id/reject', requireRole('SuperAdmin'), rejectUser);
+router.put('/users/:id/revoke-access', requireRole('SuperAdmin'), revokeAccess);
 
-router.get('/users/access-records', getAccessRecords);
-router.put('/users/:id/revoke-access', revokeAccess);
+// SuperAdmin and Admin routes
+router.get('/users/access-records', requireRole(['SuperAdmin', 'Admin']), getAccessRecords);
+router.put('/users/:id/assign-event', requireRole(['SuperAdmin', 'Admin']), assignUserEvent);
 
 export default router;

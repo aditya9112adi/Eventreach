@@ -10,6 +10,9 @@ export interface User {
   accessDurationValue?: number;
   accessDurationUnit?: 'minutes' | 'hours' | 'days';
   isAccessCancelled?: boolean;
+  assignedEventId?: string;
+  assignedEventName?: string;
+  adminId?: string;
   createdAt: string;
 }
 
@@ -31,6 +34,10 @@ export interface Event {
   eventVenue: string;
   eventDescription?: string;
   eventStatus: EventStatus;
+  createdBy?: string;
+  adminId?: string;
+  assignedUserId?: string;
+  assignedUserIds?: string[];
   createdAt: string;
   updatedAt: string;
 }

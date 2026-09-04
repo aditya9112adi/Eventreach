@@ -20,10 +20,12 @@ import {
   Shield
 } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
+import { useToast } from '../components/ui/Toast';
 
 const DashboardLayout = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { showToast } = useToast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const location = useLocation();
@@ -47,14 +49,40 @@ const DashboardLayout = () => {
       navigate('/login', { state: { message: data.message } });
     };
 
+    const handleEventAssignment = (data: { assignedEventId: string | null; eventName: string | null }) => {
+      console.log('Received EVENT_ASSIGNMENT_CHANGED:', data);
+      updateUser({
+        assignedEventId: data.assignedEventId || undefined,
+        assignedEventName: data.eventName || undefined,
+      });
+
+      if (data.eventName) {
+        showToast('info', `Your assigned event has been updated to "${data.eventName}"`);
+      } else {
+        showToast('info', 'Your event assignment has been removed.');
+      }
+
+      // If currently on an event page that is not the newly assigned event, redirect
+      const eventPathMatch = location.pathname.match(/\/events\/([a-zA-Z0-9]+)/);
+      if (eventPathMatch && eventPathMatch[1] !== data.assignedEventId) {
+        if (data.assignedEventId) {
+          navigate(`/events/${data.assignedEventId}`);
+        } else {
+          navigate('/dashboard');
+        }
+      }
+    };
+
     socket.on('ACCESS_REMOVED', handleAccessEvent);
     socket.on('ACCESS_EXPIRED', handleAccessEvent);
+    socket.on('EVENT_ASSIGNMENT_CHANGED', handleEventAssignment);
 
     return () => {
       socket.off('ACCESS_REMOVED', handleAccessEvent);
       socket.off('ACCESS_EXPIRED', handleAccessEvent);
+      socket.off('EVENT_ASSIGNMENT_CHANGED', handleEventAssignment);
     };
-  }, [socket, logout, navigate]);
+  }, [socket, logout, navigate, updateUser, showToast, location.pathname]);
 
   useEffect(() => {
     if (user?.role === 'SuperAdmin') {

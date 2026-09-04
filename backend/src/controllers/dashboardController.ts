@@ -4,23 +4,54 @@ import { updateExpiredEvents } from './eventController';
 import { Contact } from '../models/Contact';
 import { Campaign } from '../models/Campaign';
 import { MessageLog } from '../models/MessageLog';
+import { getAuthorizedEventIds, isEventAuthorized } from '../services/eventAuthService';
 
 export const getDashboardStats = async (req: Request, res: Response) => {
   try {
     await updateExpiredEvents();
+
+    const currentUser = (req as any).user;
     const { eventId, status } = req.query;
+
+    // Check authorization if specific eventId is requested
+    if (eventId) {
+      const authorized = await isEventAuthorized(currentUser, eventId);
+      if (!authorized) {
+        return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+      }
+    }
+
+    const authorizedIds = await getAuthorizedEventIds(currentUser);
+
+    // If non-superadmin has 0 authorized events, return all zeroes
+    if (authorizedIds !== null && authorizedIds.length === 0) {
+      return res.json({
+        totalEvents: 0,
+        totalContacts: 0,
+        totalCampaigns: 0,
+        messagesSent: 0,
+        messagesDelivered: 0,
+        messagesFailed: 0,
+        messagesPending: 0,
+      });
+    }
 
     let eventQuery: any = {};
     let contactQuery: any = {};
     let campaignQuery: any = {};
     let messageMatchQuery: any = {};
 
-    // Filter by status (new dropdown filter)
+    // Apply role-based event scope if not SuperAdmin
+    if (authorizedIds !== null) {
+      eventQuery._id = { $in: authorizedIds };
+    }
+
+    // Filter by status
     if (status) {
       eventQuery.eventStatus = status;
     }
 
-    // Filter by specific event (old per-event filter, kept for compatibility)
+    // Filter by specific event
     if (eventId) {
       eventQuery._id = eventId;
       contactQuery.eventId = eventId;
@@ -32,8 +63,8 @@ export const getDashboardStats = async (req: Request, res: Response) => {
       messageMatchQuery = campaignIds.length > 0
         ? { campaignId: { $in: campaignIds } }
         : { campaignId: null };
-    } else if (status) {
-      // When filtering by status, count contacts/campaigns under matching events
+    } else {
+      // Find all matching events within authorized scope
       const matchingEvents = await Event.find(eventQuery).select('_id');
       const matchingEventIds = matchingEvents.map((e) => e._id);
 
@@ -82,7 +113,24 @@ export const getDashboardStats = async (req: Request, res: Response) => {
 export const getRecentCampaignActivity = async (req: Request, res: Response) => {
   try {
     await updateExpiredEvents();
+
+    const currentUser = (req as any).user;
     const { eventId, status } = req.query;
+
+    if (eventId) {
+      const authorized = await isEventAuthorized(currentUser, eventId);
+      if (!authorized) {
+        return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+      }
+    }
+
+    const authorizedIds = await getAuthorizedEventIds(currentUser);
+    if (authorizedIds !== null && authorizedIds.length === 0) {
+      return res.json({
+        chartData: [],
+        recentCampaigns: [],
+      });
+    }
 
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -96,11 +144,19 @@ export const getRecentCampaignActivity = async (req: Request, res: Response) => 
       const campaignIds = campaigns.map((c) => c._id);
       messageMatchQuery.campaignId = campaignIds.length > 0
         ? { $in: campaignIds } : null;
-    } else if (status) {
-      // Filter by event status
-      const matchingEvents = await Event.find({ eventStatus: status }).select('_id');
+    } else {
+      let eventQuery: any = {};
+      if (authorizedIds !== null) {
+        eventQuery._id = { $in: authorizedIds };
+      }
+      if (status) {
+        eventQuery.eventStatus = status;
+      }
+
+      const matchingEvents = await Event.find(eventQuery).select('_id');
       const matchingEventIds = matchingEvents.map((e) => e._id);
       campaignQuery = { eventId: { $in: matchingEventIds } };
+
       const campaigns = await Campaign.find(campaignQuery).select('_id');
       const campaignIds = campaigns.map((c) => c._id);
       messageMatchQuery.campaignId = campaignIds.length > 0
@@ -153,4 +209,3 @@ export const getRecentCampaignActivity = async (req: Request, res: Response) => 
     res.status(500).json({ error: 'Failed to fetch recent activity' });
   }
 };
-

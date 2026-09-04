@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSocket } from '../../contexts/SocketContext';
+import { useAuth } from '../../store/authStore';
 import { Link } from 'react-router-dom';
-import { Plus, Search, Calendar, MapPin, ChevronUp, ChevronDown, ChevronsUpDown, X } from 'lucide-react';
+import { Plus, Search, Calendar, MapPin, ChevronUp, ChevronDown, ChevronsUpDown, X, ShieldAlert } from 'lucide-react';
 import api from '../../services/api';
 import type { Event } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
@@ -14,6 +15,7 @@ type SortField = 'eventName' | 'eventType' | 'eventDate' | 'eventVenue' | 'event
 type SortDir = 'asc' | 'desc';
 
 const EventList = () => {
+  const { user } = useAuth();
   const [events, setEvents] = useState<Event[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -45,7 +47,15 @@ const EventList = () => {
     if (!socket) return;
     const handler = () => fetchEvents();
     socket.on('event-status-changed', handler);
-    return () => { socket.off('event-status-changed', handler); };
+    socket.on('EVENT_ASSIGNMENT_CHANGED', handler);
+    socket.on('events-updated', handler);
+    socket.on('dashboard-updated', handler);
+    return () => {
+      socket.off('event-status-changed', handler);
+      socket.off('EVENT_ASSIGNMENT_CHANGED', handler);
+      socket.off('events-updated', handler);
+      socket.off('dashboard-updated', handler);
+    };
   }, [socket, fetchEvents]);
 
   const eventTypes = useMemo(() => Array.from(new Set(events.map(e => e.eventType).filter(Boolean))).sort(), [events]);
@@ -136,10 +146,19 @@ const EventList = () => {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in">
-        <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Events</h2>
-        <Link to="/events/create">
-          <Button><Plus className="w-4 h-4 mr-2" />Create Event</Button>
-        </Link>
+        <div>
+          <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">
+            {user?.role === 'User' ? 'My Event' : 'Events'}
+          </h2>
+          <p className="text-foreground/50 text-sm mt-1">
+            {user?.role === 'User' ? 'View and access your assigned event' : 'Manage your upcoming, completed and cancelled events'}
+          </p>
+        </div>
+        {user?.role !== 'User' && (
+          <Link to="/events/create">
+            <Button><Plus className="w-4 h-4 mr-2" />Create Event</Button>
+          </Link>
+        )}
       </div>
 
       <div className="bg-surface rounded-xl border border-border overflow-hidden animate-fade-up stagger-1">
@@ -192,7 +211,17 @@ const EventList = () => {
           </div>
         ) : processedEvents.length === 0 ? (
           <div className="p-8 text-center text-foreground/50">
-            {hasActiveFilters ? 'No events match your search or filters.' : 'No events found.'}
+            {hasActiveFilters ? 'No events match your search or filters.' : (
+              user?.role === 'User' ? (
+                <div className="space-y-2 py-4">
+                  <ShieldAlert className="w-10 h-10 mx-auto text-foreground/30 mb-2" />
+                  <p className="font-semibold text-base text-foreground">No Event Assigned</p>
+                  <p className="text-sm text-foreground/60 max-w-sm mx-auto">
+                    You do not have any event assigned to your account yet. Please contact your administrator.
+                  </p>
+                </div>
+              ) : 'No events found.'
+            )}
           </div>
         ) : (
           <>

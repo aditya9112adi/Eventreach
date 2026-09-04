@@ -11,6 +11,10 @@ export interface IEvent extends Document {
   eventVenue: string;              // VARCHAR(50)
   eventDescription?: string;       // VARCHAR(256)
   eventStatus: EventStatus;
+  createdBy?: Schema.Types.ObjectId | string;
+  adminId?: Schema.Types.ObjectId | string;
+  assignedUserId?: Schema.Types.ObjectId | string;
+  assignedUserIds?: (Schema.Types.ObjectId | string)[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -31,10 +35,17 @@ const EventSchema: Schema = new Schema(
       enum: ['Upcoming', 'Completed', 'Cancelled'],
       default: 'Upcoming'
     },
+    createdBy:        { type: Schema.Types.ObjectId, ref: 'Admin', index: true },
+    adminId:          { type: Schema.Types.ObjectId, ref: 'Admin', index: true },
+    assignedUserId:   { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    assignedUserIds:  [{ type: Schema.Types.ObjectId, ref: 'User' }],
   },
   { timestamps: true }
 );
 
 EventSchema.index({ eventStatus: 1 });
+EventSchema.index({ adminId: 1 });
+EventSchema.index({ assignedUserId: 1 });
+EventSchema.index({ assignedUserIds: 1 });
 
 export const Event = mongoose.model<IEvent>('Event', EventSchema);

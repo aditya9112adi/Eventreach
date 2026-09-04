@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, ShieldAlert } from 'lucide-react';
 import api from '../../services/api';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -62,6 +62,7 @@ const EventEdit = () => {
   const { showToast } = useToast();
   const { showLoader, showSuccess, showError } = useLoader();
   const [isLoading, setIsLoading] = useState(true);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const { register, handleSubmit, watch, setValue, reset, formState: { errors, isSubmitting } } = useForm<EventForm>({
     resolver: zodResolver(eventSchema),
@@ -104,9 +105,13 @@ const EventEdit = () => {
           eventVenue:       response.data.eventVenue || '',
           eventDescription: response.data.eventDescription || '',
         });
-      } catch (err) {
-        showError('Failed to load event details');
-        navigate('/events');
+      } catch (err: any) {
+        if (err.response?.status === 403) {
+          setAccessDenied(true);
+        } else {
+          showError('Failed to load event details');
+          navigate('/events');
+        }
       } finally {
         setIsLoading(false);
       }
@@ -133,6 +138,23 @@ const EventEdit = () => {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
+      </div>
+    );
+  }
+
+  if (accessDenied) {
+    return (
+      <div className="max-w-md mx-auto my-16 p-8 text-center bg-surface border border-border rounded-xl shadow-2xl space-y-4 animate-scale-in">
+        <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <h2 className="text-2xl font-bold text-foreground">Access Denied</h2>
+        <p className="text-sm text-foreground/60 leading-relaxed">
+          You do not have access to edit this event.
+        </p>
+        <div className="pt-2">
+          <Button onClick={() => navigate('/events')}>Back to My Events</Button>
+        </div>
       </div>
     );
   }

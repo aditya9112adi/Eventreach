@@ -1,17 +1,22 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import type { User } from '@eventreach/shared';
+import type { User, Event } from '@eventreach/shared';
 import api from '../../services/api';
-import { ShieldAlert, Trash2, Clock, CalendarDays, Key, Download, Search, Filter } from 'lucide-react';
+import { ShieldAlert, Trash2, Clock, CalendarDays, Key, Download, Search, Filter, Edit3, Calendar } from 'lucide-react';
 import { useLoader } from '../../components/ui/FullScreenLoader';
+import { useAuth } from '../../store/authStore';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 const JustAccess = () => {
+  const { user: currentAuthUser } = useAuth();
   const [records, setRecords] = useState<User[]>([]);
+  const [allEvents, setAllEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [userToRemove, setUserToRemove] = useState<{ id: string, type: string } | null>(null);
+  const [assigningUser, setAssigningUser] = useState<any | null>(null);
+  const [selectedEventToAssign, setSelectedEventToAssign] = useState<string>('');
   const [, setTick] = useState(0);
-  const { showLoader, showSuccess, showError, hideLoader } = useLoader();
+  const { showLoader, showSuccess, showError } = useLoader();
 
   // Filters
   const [statusFilter, setStatusFilter] = useState('All');
@@ -20,8 +25,12 @@ const JustAccess = () => {
 
   const fetchAccessRecords = async () => {
     try {
-      const response = await api.get('/admin/users/access-records');
-      setRecords(response.data);
+      const [recordsRes, eventsRes] = await Promise.all([
+        api.get('/admin/users/access-records'),
+        api.get('/events'),
+      ]);
+      setRecords(recordsRes.data);
+      setAllEvents(eventsRes.data);
     } catch (error) {
       console.error('Failed to fetch access records:', error);
     } finally {
@@ -58,6 +67,38 @@ const JustAccess = () => {
     } catch (error) {
       console.error('Failed to revoke access', error);
       await showError('Failed to revoke access');
+    }
+  };
+
+  const openAssignModal = (userItem: any) => {
+    setAssigningUser(userItem);
+    setSelectedEventToAssign(userItem.assignedEventId || '');
+  };
+
+  const handleSaveAssignment = async () => {
+    if (!assigningUser) return;
+    showLoader('Updating event assignment...');
+    try {
+      const res = await api.put(`/admin/users/${assigningUser._id || assigningUser.id}/assign-event`, {
+        eventId: selectedEventToAssign || null
+      });
+
+      setRecords(records.map((r: any) => {
+        if ((r._id || r.id) === (assigningUser._id || assigningUser.id)) {
+          return {
+            ...r,
+            assignedEventId: res.data.assignedEventId,
+            assignedEventName: res.data.assignedEventName,
+          };
+        }
+        return r;
+      }));
+
+      setAssigningUser(null);
+      await showSuccess('Event assignment updated successfully');
+    } catch (err: any) {
+      console.error('Failed to assign event', err);
+      await showError(err.response?.data?.error || 'Failed to assign event');
     }
   };
 
@@ -114,7 +155,8 @@ const JustAccess = () => {
         const q = searchQuery.toLowerCase();
         const nameMatch = record.name?.toLowerCase().includes(q);
         const emailMatch = record.email?.toLowerCase().includes(q);
-        if (!nameMatch && !emailMatch) return false;
+        const eventMatch = record.assignedEventName?.toLowerCase().includes(q);
+        if (!nameMatch && !emailMatch && !eventMatch) return false;
       }
       return true;
     });
@@ -133,6 +175,7 @@ const JustAccess = () => {
       record.name || '',
       record.email || '',
       record.role || '',
+      record.role === 'User' ? (record.assignedEventName || 'None') : 'All in Scope',
       formatDate(record.accessGrantedOn || record.createdAt),
       formatDate(record.accessStartDate),
       formatDate(record.accessExpiryDate),
@@ -142,7 +185,7 @@ const JustAccess = () => {
 
     autoTable(doc, {
       startY: 36,
-      head: [['Name', 'Email', 'Role', 'Granted On', 'Start', 'End', 'Status', 'Remaining']],
+      head: [['Name', 'Email', 'Role', 'Assigned Event', 'Granted On', 'Start', 'End', 'Status', 'Remaining']],
       body: tableData,
       styles: { fontSize: 8 },
       headStyles: { fillColor: [41, 128, 185] },
@@ -181,7 +224,7 @@ const JustAccess = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">Just Access</h1>
-          <p className="text-foreground/60">Monitor and manage time-bound system access</p>
+          <p className="text-foreground/60">Monitor and manage time-bound system access and event assignments</p>
         </div>
         <div className="flex items-center gap-3">
           <button
@@ -204,7 +247,7 @@ const JustAccess = () => {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 bg-surface border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50"
+            className="px-3 py-2 bg-surface border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 cursor-pointer"
           >
             <option value="All">All Statuses</option>
             <option value="Active">Active</option>
@@ -221,7 +264,7 @@ const JustAccess = () => {
           <select
             value={roleFilter}
             onChange={(e) => setRoleFilter(e.target.value)}
-            className="px-3 py-2 bg-surface border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50"
+            className="px-3 py-2 bg-surface border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 cursor-pointer"
           >
             <option value="All">All Roles</option>
             <option value="Admin">Admin</option>
@@ -231,14 +274,14 @@ const JustAccess = () => {
 
         {/* Name Search */}
         <div className="flex flex-col flex-1 min-w-[200px]">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-foreground/50 mb-1">Search Name</label>
+          <label className="text-[10px] font-bold uppercase tracking-widest text-foreground/50 mb-1">Search</label>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/40" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by name or email..."
+              placeholder="Search by name, email, or event..."
               className="w-full pl-10 pr-3 py-2 bg-surface border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50"
             />
           </div>
@@ -263,6 +306,7 @@ const JustAccess = () => {
               <thead className="text-[10px] font-bold uppercase tracking-widest bg-white/5 border-b border-white/10 text-foreground/60">
                 <tr>
                   <th className="px-6 py-4">User</th>
+                  <th className="px-6 py-4">Assigned Event</th>
                   <th className="px-6 py-4">Granted On</th>
                   <th className="px-6 py-4">Access Period</th>
                   <th className="px-6 py-4 text-center">Duration</th>
@@ -274,6 +318,7 @@ const JustAccess = () => {
               <tbody className="divide-y divide-white/5">
                 {filteredRecords.map((record: any) => {
                   const status = getStatus(record);
+                  const isUserRole = record.role === 'User';
                   return (
                     <tr key={record._id} className="hover:bg-white/5 transition-colors">
                       <td className="px-6 py-4">
@@ -281,6 +326,29 @@ const JustAccess = () => {
                         <div className="text-xs text-foreground/60">{record.email}</div>
                         <div className="text-[10px] uppercase font-bold text-accent mt-1">{record.role}</div>
                       </td>
+
+                      {/* Assigned Event Column */}
+                      <td className="px-6 py-4">
+                        {isUserRole ? (
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs ${record.assignedEventName ? 'font-semibold text-accent' : 'text-foreground/40 italic'}`}>
+                              {record.assignedEventName || 'No Event Assigned'}
+                            </span>
+                            {(currentAuthUser?.role === 'SuperAdmin' || currentAuthUser?.role === 'Admin') && (
+                              <button
+                                onClick={() => openAssignModal(record)}
+                                className="p-1 hover:bg-white/10 rounded text-foreground/50 hover:text-foreground transition-colors"
+                                title="Change Assigned Event"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-foreground/40 italic">All in Scope</span>
+                        )}
+                      </td>
+
                       <td className="px-6 py-4 text-foreground/80 text-xs">
                         {formatDate(record.accessGrantedOn || record.createdAt)}
                       </td>
@@ -314,16 +382,26 @@ const JustAccess = () => {
                         <StatusBadge status={status} />
                       </td>
                       <td className="px-6 py-4 text-right">
-                        {status === 'Active' || status === 'Scheduled' ? (
-                          <button
-                            onClick={() => handleRevokeAccess(record._id, record.type)}
-                            className="inline-flex items-center px-3 py-1.5 bg-red-500/10 text-red-500 hover:bg-red-500/20 font-bold uppercase tracking-wide text-[10px] rounded transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Remove Access
-                          </button>
-                        ) : (
-                          <span className="text-xs text-foreground/40 italic">No actions available</span>
-                        )}
+                        <div className="flex items-center justify-end gap-2">
+                          {isUserRole && (
+                            <button
+                              onClick={() => openAssignModal(record)}
+                              className="inline-flex items-center px-2.5 py-1.5 bg-accent/10 text-accent hover:bg-accent/20 font-bold uppercase tracking-wide text-[10px] rounded transition-colors"
+                            >
+                              <Calendar className="w-3 h-3 mr-1" /> Assign Event
+                            </button>
+                          )}
+                          {status === 'Active' || status === 'Scheduled' ? (
+                            <button
+                              onClick={() => handleRevokeAccess(record._id, record.type)}
+                              className="inline-flex items-center px-3 py-1.5 bg-red-500/10 text-red-500 hover:bg-red-500/20 font-bold uppercase tracking-wide text-[10px] rounded transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Remove Access
+                            </button>
+                          ) : (
+                            !isUserRole && <span className="text-xs text-foreground/40 italic">No actions</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -334,14 +412,15 @@ const JustAccess = () => {
         )}
       </div>
 
+      {/* Remove Access Confirmation Modal */}
       {userToRemove && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
           <div className="bg-surface border border-border p-6 rounded-xl shadow-2xl max-w-md w-full mx-4 animate-spring-up">
             <h3 className="text-xl font-bold mb-3 text-foreground flex items-center">
-              <ShieldAlert className="w-5 h-5 mr-2 text-red-500" /> Remove Admin Access?
+              <ShieldAlert className="w-5 h-5 mr-2 text-red-500" /> Remove Access?
             </h3>
             <p className="text-foreground/70 mb-8 leading-relaxed">
-              Are you sure you want to permanently revoke access for this Admin? They will immediately be logged out and lose access to restricted features.
+              Are you sure you want to permanently revoke access for this account? They will immediately be logged out and lose access to restricted features.
             </p>
             <div className="flex gap-3 justify-end">
               <button 
@@ -355,6 +434,56 @@ const JustAccess = () => {
                 className="px-5 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 shadow-lg shadow-red-500/20 transition-colors flex items-center"
               >
                 <Trash2 className="w-4 h-4 mr-2" /> Yes, Remove Access
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assign Event Modal */}
+      {assigningUser && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-surface border border-border p-6 rounded-xl shadow-2xl max-w-md w-full mx-4 animate-spring-up">
+            <h3 className="text-xl font-bold mb-2 text-foreground flex items-center">
+              <Calendar className="w-5 h-5 mr-2 text-accent" /> Assign Event to User
+            </h3>
+            <p className="text-sm text-foreground/70 mb-5">
+              Select the event that <span className="font-bold text-accent">{assigningUser.name}</span> ({assigningUser.email}) should have access to.
+            </p>
+
+            <div className="space-y-4 mb-6">
+              <label className="text-xs font-bold uppercase tracking-wider text-foreground/60 block">
+                Select Event
+              </label>
+              <select
+                value={selectedEventToAssign}
+                onChange={(e) => setSelectedEventToAssign(e.target.value)}
+                className="w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 cursor-pointer"
+              >
+                <option value="">None (Unassigned)</option>
+                {allEvents.map((ev) => (
+                  <option key={ev._id} value={ev._id}>
+                    {ev.eventName} ({ev.eventType} - {ev.eventDate})
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-foreground/50">
+                The user will immediately gain real-time access to this event and lose access to any other event.
+              </p>
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button 
+                onClick={() => setAssigningUser(null)} 
+                className="px-5 py-2.5 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-foreground font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleSaveAssignment} 
+                className="px-5 py-2.5 rounded-lg bg-accent text-accent-foreground font-medium hover:opacity-90 shadow-lg shadow-accent/20 transition-all flex items-center"
+              >
+                Save Assignment
               </button>
             </div>
           </div>

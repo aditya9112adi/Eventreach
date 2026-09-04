@@ -2,9 +2,13 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { Event } from '../models/Event';
 import { Contact } from '../models/Contact';
+import { Campaign } from '../models/Campaign';
+import { MessageLog } from '../models/MessageLog';
+import { User } from '../models/User';
 import { getIO } from '../services/socketService';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
+import { getAuthorizedEventIds, isEventAuthorized } from '../services/eventAuthService';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -49,6 +53,7 @@ const eventBody = z.object({
   eventTime:        z.string().regex(/^\d{2}:\d{2}$/, 'Event Time must be HH:MM'),
   eventVenue:       z.string().min(1, 'Event Venue is required').max(50, 'Event Venue max 50 characters'),
   eventDescription: z.string().max(256, 'Event Description max 256 characters').optional(),
+  assignedUserId:   z.string().optional(),
 }).superRefine((data, ctx) => {
   const today = todayIST();
   if (data.eventDate < today) {
@@ -70,13 +75,55 @@ export const createEvent = async (req: RequestWithId, res: Response) => {
     const parsed = eventBody.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message });
 
-    const { organizerMobile, eventDate, eventTime, ...rest } = parsed.data;
+    const currentUser = (req as any).user;
+    const { organizerMobile, eventDate, eventTime, assignedUserId, ...rest } = parsed.data;
+
+    let adminId: string | undefined;
+    let finalAssignedUserId: string | undefined = assignedUserId;
+    const assignedUserIds: string[] = [];
+
+    if (currentUser?.role === 'Admin') {
+      adminId = currentUser.id;
+    } else if (currentUser?.role === 'User') {
+      finalAssignedUserId = currentUser.id;
+      const userDoc = await User.findById(currentUser.id).select('adminId').lean();
+      if (userDoc && (userDoc as any).adminId) {
+        adminId = (userDoc as any).adminId.toString();
+      }
+    }
+
+    if (finalAssignedUserId) {
+      assignedUserIds.push(finalAssignedUserId);
+    }
+
     const event = await Event.create({
       ...rest,
       organizerMobile: Number(organizerMobile),
       eventDate: new Date(eventDate + 'T00:00:00.000Z'),
       eventTime: timeToMinutes(eventTime),
+      createdBy: currentUser?.id,
+      creatorModel: currentUser?.role === 'User' ? 'User' : 'Admin',
+      adminId,
+      assignedUserId: finalAssignedUserId,
+      assignedUserIds,
     });
+
+    // If assigned to a user, sync User document
+    if (finalAssignedUserId) {
+      await User.findByIdAndUpdate(finalAssignedUserId, {
+        assignedEventId: event._id,
+        ...(adminId ? { adminId } : {}),
+      });
+
+      try {
+        getIO().to(finalAssignedUserId).emit('EVENT_ASSIGNMENT_CHANGED', {
+          assignedEventId: event._id.toString(),
+          eventName: event.eventName,
+        });
+      } catch (socketErr) {
+        console.error('Socket emit error on createEvent:', socketErr);
+      }
+    }
 
     await AuditService.log({
       action: 'EVENT_CREATED',
@@ -85,7 +132,7 @@ export const createEvent = async (req: RequestWithId, res: Response) => {
       actor: AuditService.getActorFromReq(req),
       request: AuditService.getRequestInfo(req),
       after: event,
-      description: `Created event: ${event.eventName}`
+      description: `Created event: ${event.eventName}`,
     });
 
     res.status(201).json(serialize(event));
@@ -135,7 +182,16 @@ export const updateExpiredEvents = async () => {
 export const getEvents = async (req: Request, res: Response) => {
   try {
     await updateExpiredEvents();
-    const events = await Event.find().sort({ createdAt: -1 }).lean();
+
+    const currentUser = (req as any).user;
+    const authorizedIds = await getAuthorizedEventIds(currentUser);
+
+    const query: any = {};
+    if (authorizedIds !== null) {
+      query._id = { $in: authorizedIds };
+    }
+
+    const events = await Event.find(query).sort({ createdAt: -1 }).lean();
     res.json(events.map(serialize));
   } catch (error) {
     console.error('Get events error:', error);
@@ -146,6 +202,13 @@ export const getEvents = async (req: Request, res: Response) => {
 export const getEventById = async (req: Request, res: Response) => {
   try {
     await updateExpiredEvents();
+
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, req.params.id);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
     const event = await Event.findById(req.params.id).lean();
     if (!event) return res.status(404).json({ error: 'Event not found' });
     const contactCount = await Contact.countDocuments({ eventId: event._id });
@@ -158,23 +221,53 @@ export const getEventById = async (req: Request, res: Response) => {
 
 export const updateEvent = async (req: RequestWithId, res: Response) => {
   try {
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, req.params.id);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
     const parsed = eventBody.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message });
 
     const beforeEvent = await Event.findById(req.params.id);
+    if (!beforeEvent) return res.status(404).json({ error: 'Event not found' });
 
-    const { organizerMobile, eventDate, eventTime, ...rest } = parsed.data;
+    const { organizerMobile, eventDate, eventTime, assignedUserId, ...rest } = parsed.data;
+
+    const updatePayload: any = {
+      ...rest,
+      organizerMobile: Number(organizerMobile),
+      eventDate: new Date(eventDate + 'T00:00:00.000Z'),
+      eventTime: timeToMinutes(eventTime),
+    };
+
+    if (assignedUserId !== undefined) {
+      updatePayload.assignedUserId = assignedUserId || null;
+      if (assignedUserId) {
+        updatePayload.$addToSet = { assignedUserIds: assignedUserId };
+      }
+    }
+
     const event = await Event.findByIdAndUpdate(
       req.params.id,
-      {
-        ...rest,
-        organizerMobile: Number(organizerMobile),
-        eventDate: new Date(eventDate + 'T00:00:00.000Z'),
-        eventTime: timeToMinutes(eventTime),
-      },
+      updatePayload,
       { new: true }
     );
     if (!event) return res.status(404).json({ error: 'Event not found' });
+
+    // Sync user's assignedEventId if assignment changed
+    if (assignedUserId && assignedUserId !== (beforeEvent as any).assignedUserId?.toString()) {
+      await User.findByIdAndUpdate(assignedUserId, { assignedEventId: event._id });
+      try {
+        getIO().to(assignedUserId).emit('EVENT_ASSIGNMENT_CHANGED', {
+          assignedEventId: event._id.toString(),
+          eventName: event.eventName,
+        });
+      } catch (socketErr) {
+        console.error('Socket emit error on updateEvent:', socketErr);
+      }
+    }
 
     await AuditService.log({
       action: 'EVENT_UPDATED',
@@ -191,5 +284,116 @@ export const updateEvent = async (req: RequestWithId, res: Response) => {
   } catch (error) {
     console.error('Update event error:', error);
     res.status(500).json({ error: 'Failed to update event' });
+  }
+};
+
+export const deleteEvent = async (req: RequestWithId, res: Response) => {
+  try {
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, req.params.id);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
+    const event = await Event.findById(req.params.id);
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+
+    // Unassign all users linked to this event
+    const affectedUsers = await User.find({ assignedEventId: event._id }).select('_id');
+    await User.updateMany({ assignedEventId: event._id }, { $unset: { assignedEventId: 1 } });
+
+    await Event.findByIdAndDelete(req.params.id);
+
+    // Notify affected users in real time
+    for (const user of affectedUsers) {
+      try {
+        getIO().to(user._id.toString()).emit('EVENT_ASSIGNMENT_CHANGED', {
+          assignedEventId: null,
+          eventName: null,
+        });
+      } catch (err) {
+        console.error('Socket emit error on deleteEvent:', err);
+      }
+    }
+
+    await AuditService.log({
+      action: 'EVENT_DELETED',
+      collectionName: 'events',
+      documentId: event._id.toString(),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      before: event,
+      description: `Deleted event: ${event.eventName}`,
+    });
+
+    res.json({ message: 'Event deleted successfully' });
+  } catch (error) {
+    console.error('Delete event error:', error);
+    res.status(500).json({ error: 'Failed to delete event' });
+  }
+};
+
+export const getEventUsers = async (req: Request, res: Response) => {
+  try {
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, req.params.id);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
+    const users = await User.find({
+      $or: [
+        { assignedEventId: req.params.id },
+      ],
+    })
+      .select('-passwordHash')
+      .lean();
+
+    res.json(users);
+  } catch (error) {
+    console.error('Get event users error:', error);
+    res.status(500).json({ error: 'Failed to fetch event users' });
+  }
+};
+
+export const getEventStatistics = async (req: Request, res: Response) => {
+  try {
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, req.params.id);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
+    const eventId = req.params.id;
+    const contactCount = await Contact.countDocuments({ eventId });
+    const campaigns = await Campaign.find({ eventId }).select('_id');
+    const campaignIds = campaigns.map((c) => c._id);
+
+    const messageMatchQuery = campaignIds.length > 0 ? { campaignId: { $in: campaignIds } } : { campaignId: null };
+
+    const messageStats = await MessageLog.aggregate([
+      { $match: messageMatchQuery },
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ]);
+
+    const msgBreakdown: Record<string, number> = {
+      Sent: 0, Delivered: 0, Failed: 0, Pending: 0
+    };
+    messageStats.forEach((s: any) => {
+      if (msgBreakdown[s._id] !== undefined) msgBreakdown[s._id] = s.count;
+    });
+
+    res.json({
+      eventId,
+      totalContacts: contactCount,
+      totalCampaigns: campaigns.length,
+      messagesSent: msgBreakdown.Sent,
+      messagesDelivered: msgBreakdown.Delivered,
+      messagesFailed: msgBreakdown.Failed,
+      messagesPending: msgBreakdown.Pending,
+    });
+  } catch (error) {
+    console.error('Get event statistics error:', error);
+    res.status(500).json({ error: 'Failed to fetch event statistics' });
   }
 };

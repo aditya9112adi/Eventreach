@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
+import { useSocket } from '../contexts/SocketContext';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip as RechartsTooltip, ResponsiveContainer,
@@ -53,34 +54,54 @@ const Dashboard = () => {
 
   const selectedEvent = events.find(e => e._id === selectedEventId) || null;
 
+  const { socket } = useSocket();
+
   // Fetch when status filter OR selected event changes
-  useEffect(() => {
-    const fetchAll = async () => {
-      setIsLoading(true);
-      try {
-        let query = '';
-        if (selectedEventId) {
-          query = '?eventId=' + selectedEventId;
-        } else if (statusFilter) {
-          query = '?status=' + statusFilter;
-        }
-        const [statsRes, activityRes, eventsRes] = await Promise.all([
-          api.get('/dashboard/stats' + query),
-          api.get('/dashboard/activity' + query),
-          api.get('/events'),
-        ]);
-        setStats(statsRes.data);
-        setChartData(activityRes.data.chartData || []);
-        setRecentCampaigns(activityRes.data.recentCampaigns || []);
-        setEvents(eventsRes.data);
-      } catch (error) {
-        console.error('Failed to fetch dashboard data', error);
-      } finally {
-        setIsLoading(false);
+  const fetchAll = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      let query = '';
+      if (selectedEventId) {
+        query = '?eventId=' + selectedEventId;
+      } else if (statusFilter) {
+        query = '?status=' + statusFilter;
       }
-    };
-    fetchAll();
+      const [statsRes, activityRes, eventsRes] = await Promise.all([
+        api.get('/dashboard/stats' + query),
+        api.get('/dashboard/activity' + query),
+        api.get('/events'),
+      ]);
+      setStats(statsRes.data);
+      setChartData(activityRes.data.chartData || []);
+      setRecentCampaigns(activityRes.data.recentCampaigns || []);
+      setEvents(eventsRes.data);
+    } catch (error) {
+      console.error('Failed to fetch dashboard data', error);
+    } finally {
+      setIsLoading(false);
+    }
   }, [statusFilter, selectedEventId]);
+
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
+  // Real-time socket listener to re-fetch on assignment or status changes
+  useEffect(() => {
+    if (!socket) return;
+    const handleUpdate = () => {
+      fetchAll();
+    };
+    socket.on('dashboard-updated', handleUpdate);
+    socket.on('EVENT_ASSIGNMENT_CHANGED', handleUpdate);
+    socket.on('event-status-changed', handleUpdate);
+
+    return () => {
+      socket.off('dashboard-updated', handleUpdate);
+      socket.off('EVENT_ASSIGNMENT_CHANGED', handleUpdate);
+      socket.off('event-status-changed', handleUpdate);
+    };
+  }, [socket, fetchAll]);
 
   if (isLoading) {
     return (
@@ -130,12 +151,18 @@ const Dashboard = () => {
       <div className='flex flex-col sm:flex-row sm:items-end justify-between gap-4'>
         <div>
           <h2 className='text-3xl font-sans font-bold text-foreground animate-slide-in uppercase'>Dashboard Overview</h2>
-          {/* Active filter indicator */}
+          {/* Active filter indicator for Admin/SuperAdmin */}
           {isSuperAdminOrAdmin && (selectedEvent || statusFilter) && (
             <p className='text-xs text-foreground/50 mt-1 flex items-center gap-1'>
               Showing:
               {selectedEvent && <span className='text-accent font-semibold'>{selectedEvent.eventName}</span>}
               {!selectedEvent && statusFilter && <span className='text-accent font-semibold'>{statusFilter} events</span>}
+            </p>
+          )}
+          {/* Assigned event indicator for regular User */}
+          {!isSuperAdminOrAdmin && (
+            <p className='text-xs text-foreground/50 mt-1 flex items-center gap-1'>
+              Assigned Event: <span className='text-accent font-semibold'>{events[0]?.eventName || user?.assignedEventName || 'No Event Assigned'}</span>
             </p>
           )}
         </div>

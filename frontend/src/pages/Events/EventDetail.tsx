@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Users, Calendar, MapPin, Edit3, Megaphone, UserCircle, Phone } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, MapPin, Edit3, Megaphone, UserCircle, Phone, ShieldAlert } from 'lucide-react';
 import api from '../../services/api';
 import type { Event, Campaign } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
@@ -12,6 +12,7 @@ const EventDetail = () => {
   const [event, setEvent] = useState<(Event & { contactCount: number }) | null>(null);
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   useEffect(() => {
     const fetchEvent = async () => {
@@ -27,8 +28,11 @@ const EventDetail = () => {
         } catch (e) {
           // Campaign might not exist yet, ignore
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to fetch event', error);
+        if (error.response?.status === 403) {
+          setAccessDenied(true);
+        }
       } finally {
         setIsLoading(false);
       }
@@ -43,6 +47,24 @@ const EventDetail = () => {
       </div>
     );
   }
+
+  if (accessDenied) {
+    return (
+      <div className="max-w-md mx-auto my-16 p-8 text-center bg-surface border border-border rounded-xl shadow-2xl space-y-4 animate-scale-in">
+        <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <h2 className="text-2xl font-bold text-foreground">Access Denied</h2>
+        <p className="text-sm text-foreground/60 leading-relaxed">
+          You do not have access to this event. You can only view events assigned to your account.
+        </p>
+        <div className="pt-2">
+          <Button onClick={() => navigate('/events')}>Back to My Events</Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!event) return <div className="p-8 text-center text-destructive">Event not found</div>;
 
   return (
