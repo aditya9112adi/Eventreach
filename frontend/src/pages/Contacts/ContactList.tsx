@@ -59,6 +59,7 @@ const ContactList = () => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(openAddModal);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [addError, setAddError] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const activeEvent = events.find(e => e._id === activeEventId) || null;
 
@@ -131,14 +132,20 @@ const ContactList = () => {
     }
   };
 
-  const handleDelete = async (contactId: string) => {
-    if (!window.confirm('Are you sure you want to delete this contact?')) return;
+  const handleDelete = (contactId: string) => {
+    setConfirmDeleteId(contactId);
+  };
+
+  const confirmDelete = async () => {
+    if (!confirmDeleteId) return;
     try {
-      await api.delete(`/contacts/${contactId}`);
-      setContacts(contacts.filter(c => c._id !== contactId));
+      await api.delete(`/contacts/${confirmDeleteId}`);
+      setContacts(contacts.filter(c => c._id !== confirmDeleteId));
       showToast('success', 'Contact deleted');
     } catch (err) {
       showToast('error', 'Failed to delete contact');
+    } finally {
+      setConfirmDeleteId(null);
     }
   };
 
@@ -436,6 +443,44 @@ const ContactList = () => {
               </form>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {confirmDeleteId && (
+        <div className="fixed top-0 left-0 w-screen h-screen bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: 12 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+            className="bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-sm p-7 flex flex-col items-center text-center"
+          >
+            {/* Icon */}
+            <div className="w-14 h-14 rounded-full bg-destructive/10 flex items-center justify-center mb-5">
+              <Trash2 className="w-6 h-6 text-destructive" />
+            </div>
+            <h3 className="text-lg font-bold text-foreground mb-2">Delete Contact?</h3>
+            <p className="text-sm text-foreground/60 mb-7">
+              This action cannot be undone. The contact will be permanently removed from this event.
+            </p>
+            <div className="flex gap-3 w-full">
+              <Button
+                variant="ghost"
+                className="flex-1"
+                onClick={() => setConfirmDeleteId(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                className="flex-1"
+                onClick={confirmDelete}
+              >
+                Delete
+              </Button>
+            </div>
+          </motion.div>
         </div>
       )}
     </div>
