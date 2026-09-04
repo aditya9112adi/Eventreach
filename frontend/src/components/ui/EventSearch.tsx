@@ -1,5 +1,6 @@
 
 import { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Search, ChevronDown, X } from 'lucide-react';
 import type { Event } from '@eventreach/shared';
 
@@ -67,57 +68,65 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
       </div>
 
       {/* Dropdown */}
-      {isOpen && (
-        <div className="absolute z-50 w-full mt-1 bg-surface border border-border rounded-md shadow-glass-lg overflow-hidden flex flex-col max-h-[320px]">
-          {/* Search input row */}
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-background/30">
-            <Search className="w-4 h-4 text-foreground/40 shrink-0" />
-            <input
-              type="text"
-              className="w-full bg-transparent border-none focus:outline-none text-sm text-foreground placeholder:text-foreground/40"
-              placeholder="Type to search events..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              autoFocus
-            />
-          </div>
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: -10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: -10 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+            className="absolute z-50 w-full mt-1 bg-surface border border-border rounded-md shadow-glass-lg overflow-hidden flex flex-col max-h-[320px] origin-top"
+          >
+            {/* Search input row */}
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-background/30">
+              <Search className="w-4 h-4 text-foreground/40 shrink-0" />
+              <input
+                type="text"
+                className="w-full bg-transparent border-none focus:outline-none text-sm text-foreground placeholder:text-foreground/40"
+                placeholder="Type to search events..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                autoFocus
+              />
+            </div>
 
-          {/* Options list */}
-          <div className="overflow-y-auto flex-1">
-            {allowClear && (
-              <div
-                className="px-4 py-2.5 text-sm text-foreground/50 cursor-pointer hover:bg-surfaceHover transition-colors border-b border-border/40"
-                onClick={() => { onChange(''); setIsOpen(false); setSearchTerm(''); }}
-              >
-                All Events / Clear Selection
-              </div>
-            )}
-
-            {filteredEvents.length === 0 ? (
-              <div className="px-4 py-6 text-sm text-center text-foreground/50 flex flex-col items-center gap-2">
-                <Search className="w-5 h-5 opacity-20" />
-                No events found
-              </div>
-            ) : (
-              filteredEvents.map(evt => (
+            {/* Options list */}
+            <div className="overflow-y-auto flex-1">
+              {allowClear && (
                 <div
-                  key={evt._id}
-                  className={`px-4 py-3 cursor-pointer hover:bg-surfaceHover transition-colors flex items-start justify-between gap-4 ${
-                    value === evt._id ? 'bg-accent/10' : ''
-                  }`}
-                  onClick={() => { onChange(evt._id); setIsOpen(false); setSearchTerm(''); }}
+                  className="px-4 py-2.5 text-sm text-foreground/50 cursor-pointer hover:bg-surfaceHover transition-colors border-b border-border/40"
+                  onClick={() => { onChange(''); setIsOpen(false); setSearchTerm(''); }}
                 >
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-foreground truncate">{evt.eventName}</p>
-                    <p className="text-xs text-foreground/50 mt-0.5 truncate">{evt.eventType}</p>
-                  </div>
-                  <span className="text-xs text-foreground/50 shrink-0 mt-0.5">{evt.eventDate}</span>
+                  All Events / Clear Selection
                 </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
+              )}
+
+              {filteredEvents.length === 0 ? (
+                <div className="px-4 py-6 text-sm text-center text-foreground/50 flex flex-col items-center gap-2">
+                  <Search className="w-5 h-5 opacity-20" />
+                  No events found
+                </div>
+              ) : (
+                filteredEvents.map(evt => (
+                  <div
+                    key={evt._id}
+                    className={`px-4 py-3 cursor-pointer hover:bg-surfaceHover transition-colors flex items-start justify-between gap-4 ${
+                      value === evt._id ? 'bg-accent/10' : ''
+                    }`}
+                    onClick={() => { onChange(evt._id); setIsOpen(false); setSearchTerm(''); }}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-foreground truncate">{evt.eventName}</p>
+                      <p className="text-xs text-foreground/50 mt-0.5 truncate">{evt.eventType}</p>
+                    </div>
+                    <span className="text-xs text-foreground/50 shrink-0 mt-0.5">{evt.eventDate}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

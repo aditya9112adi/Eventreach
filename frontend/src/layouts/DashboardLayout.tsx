@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { useAuth } from '../store/authStore';
 import api from '../services/api';
 import { 
@@ -76,29 +77,39 @@ const DashboardLayout = () => {
           </button>
         </div>
 
-        <nav className="p-4 space-y-1">
+        <nav className="p-4 space-y-1 relative">
           {navItems.map((item) => (
             <NavLink
               key={item.name}
               to={item.to}
               onClick={() => setSidebarOpen(false)}
               className={({ isActive }) => `
-                flex items-center px-4 py-3 text-sm font-bold tracking-wide uppercase transition-all duration-300
+                relative flex items-center px-4 py-3 text-sm font-bold tracking-wide uppercase transition-colors duration-300 rounded-md outline-none
                 ${isActive 
-                  ? 'bg-accent/10 text-accent' 
+                  ? 'text-accent' 
                   : 'text-foreground/50 hover:bg-white/5 hover:text-foreground'
                 }
               `}
             >
               {({ isActive }) => (
                 <>
-                  <item.icon className={`w-5 h-5 mr-3 flex-shrink-0 ${isActive ? 'text-accent' : 'text-foreground/40'}`} />
-                  {item.name}
-                  {item.name === 'User Approvals' && pendingCount > 0 && (
-                    <span className="ml-auto bg-accent text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                      {pendingCount}
-                    </span>
+                  {isActive && (
+                    <motion.div
+                      layoutId="sidebar-active-indicator"
+                      className="absolute inset-0 bg-accent/10 rounded-md z-0"
+                      initial={false}
+                      transition={{ type: "spring", stiffness: 350, damping: 30 }}
+                    />
                   )}
+                  <div className="relative z-10 flex items-center w-full">
+                    <item.icon className={`w-5 h-5 mr-3 flex-shrink-0 transition-colors duration-300 ${isActive ? 'text-accent' : 'text-foreground/40'}`} />
+                    {item.name}
+                    {item.name === 'User Approvals' && pendingCount > 0 && (
+                      <span className="ml-auto bg-accent text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                        {pendingCount}
+                      </span>
+                    )}
+                  </div>
                 </>
               )}
             </NavLink>
