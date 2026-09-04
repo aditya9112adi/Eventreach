@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useSocket } from '../../contexts/SocketContext';
 import { Link } from 'react-router-dom';
 import { Plus, Search, Calendar, MapPin, ChevronUp, ChevronDown, ChevronsUpDown, X } from 'lucide-react';
@@ -209,9 +210,21 @@ const EventList = () => {
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
-                {paginatedEvents.map((event, idx) => (
-                  <tr key={event._id} className={`hover:bg-surfaceHover transition-colors group animate-fade-up stagger-${(idx % 5) + 1}`}>
+              <motion.tbody
+                className="divide-y divide-border"
+                initial="hidden"
+                animate="visible"
+                variants={{ visible: { transition: { staggerChildren: 0.06 } } }}
+              >
+                {paginatedEvents.map((event) => (
+                  <motion.tr
+                    key={event._id}
+                    variants={{
+                      hidden: { opacity: 0, y: 12 },
+                      visible: { opacity: 1, y: 0, transition: { duration: 0.28, ease: 'easeOut' } },
+                    }}
+                    className="hover:bg-surfaceHover transition-colors group"
+                  >
                     <td className="py-3 px-4 text-sm font-medium text-foreground">{event.organizerName || '—'}</td>
                     <td className="py-3 px-4 text-sm text-foreground/80">{event.organizerMobile || '—'}</td>
                     <td className="py-3 px-4 font-medium text-foreground">{event.eventName}</td>
@@ -234,9 +247,9 @@ const EventList = () => {
                         <Button variant="secondary" className="text-xs py-1.5 px-3">View</Button>
                       </Link>
                     </td>
-                  </tr>
+                  </motion.tr>
                 ))}
-              </tbody>
+              </motion.tbody>
             </table>
           </div>
           

@@ -1,8 +1,10 @@
 import React, { Suspense, lazy } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
 import { useAuth } from './store/authStore';
 import DashboardLayout from './layouts/DashboardLayout';
 import { useLoader } from './components/ui/FullScreenLoader';
+import { PageWrapper } from './components/ui/PageWrapper';
 
 // Lazy loaded pages to reduce initial bundle size
 const Login = lazy(() => import('./pages/Login'));
@@ -43,44 +45,54 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
+// Separate component so useLocation works inside <Router>
+function AnimatedRoutes() {
+  const location = useLocation();
+
+  return (
+    <AnimatePresence mode="wait">
+      <Routes location={location} key={location.pathname}>
+        <Route path="/login" element={<PageWrapper><Login /></PageWrapper>} />
+        <Route path="/register" element={<PageWrapper><Register /></PageWrapper>} />
+
+        <Route
+          element={
+            <ProtectedRoute>
+              <DashboardLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route path="/dashboard" element={<PageWrapper><Dashboard /></PageWrapper>} />
+          <Route path="/events" element={<PageWrapper><EventList /></PageWrapper>} />
+          <Route path="/events/create" element={<PageWrapper><EventCreate /></PageWrapper>} />
+          <Route path="/events/:id" element={<PageWrapper><EventDetail /></PageWrapper>} />
+          <Route path="/events/:id/edit" element={<PageWrapper><EventEdit /></PageWrapper>} />
+          <Route path="/contacts" element={<PageWrapper><ContactList /></PageWrapper>} />
+          <Route path="/contacts/import" element={<PageWrapper><BulkImport /></PageWrapper>} />
+          <Route path="/campaigns" element={<PageWrapper><Composer /></PageWrapper>} />
+          <Route path="/campaigns/send-preview" element={<PageWrapper><SendPreview /></PageWrapper>} />
+          <Route path="/campaigns/:campaignId/report" element={<PageWrapper><CampaignReport /></PageWrapper>} />
+          <Route path="/reports" element={<PageWrapper><Reports /></PageWrapper>} />
+          <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
+          <Route path="/admin/approvals" element={<PageWrapper><UserApprovals /></PageWrapper>} />
+          <Route path="/admin/just-access" element={<PageWrapper><JustAccess /></PageWrapper>} />
+          <Route path="/admin/audit-logs" element={<PageWrapper><AuditLogs /></PageWrapper>} />
+        </Route>
+
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </AnimatePresence>
+  );
+}
+
 function App() {
   return (
     <Router>
       <Suspense fallback={<PageLoader />}>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          
-          <Route
-            element={
-              <ProtectedRoute>
-                <DashboardLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/events" element={<EventList />} />
-            <Route path="/events/create" element={<EventCreate />} />
-            <Route path="/events/:id" element={<EventDetail />} />
-            <Route path="/events/:id/edit" element={<EventEdit />} />
-            <Route path="/contacts" element={<ContactList />} />
-            <Route path="/contacts/import" element={<BulkImport />} />
-            <Route path="/campaigns" element={<Composer />} />
-            <Route path="/campaigns/send-preview" element={<SendPreview />} />
-            <Route path="/campaigns/:campaignId/report" element={<CampaignReport />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/admin/approvals" element={<UserApprovals />} />
-            <Route path="/admin/just-access" element={<JustAccess />} />
-            <Route path="/admin/audit-logs" element={<AuditLogs />} />
-          </Route>
-          
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
+        <AnimatedRoutes />
       </Suspense>
     </Router>
   );
 }
 
 export default App;
-

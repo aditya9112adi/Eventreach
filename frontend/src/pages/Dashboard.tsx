@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
 import {
@@ -172,9 +173,21 @@ const Dashboard = () => {
       </div>
 
       {/* Stat Cards */}
-      <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6'>
+      <motion.div
+        className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6'
+        initial="hidden"
+        animate="visible"
+        variants={{ visible: { transition: { staggerChildren: 0.08 } } }}
+      >
         {statCards.map((stat, idx) => (
-          <div key={idx} className={'glass-panel rounded-2xl p-6 flex items-center hover:-translate-y-1 hover:shadow-glass-lg hover:border-accent/30 transition-all duration-300 animate-spring-up stagger-' + ((idx % 5) + 1)}>
+          <motion.div
+            key={idx}
+            variants={{
+              hidden: { opacity: 0, y: 20 },
+              visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: 'easeOut' } },
+            }}
+            className='glass-panel rounded-2xl p-6 flex items-center hover:-translate-y-1 hover:shadow-glass-lg hover:border-accent/30 transition-all duration-300'
+          >
             <div className={'w-12 h-12 rounded-full flex items-center justify-center ' + stat.bg + ' ' + stat.color + ' mr-4 backdrop-blur-md'}>
               <stat.icon className='w-6 h-6' />
             </div>
@@ -182,9 +195,9 @@ const Dashboard = () => {
               <p className='text-sm font-medium text-foreground/60'>{stat.label}</p>
               <h3 className='text-2xl font-bold text-foreground mt-1'>{stat.value}</h3>
             </div>
-          </div>
+          </motion.div>
         ))}
-      </div>
+      </motion.div>
 
       {/* Charts */}
       <div className='grid grid-cols-1 lg:grid-cols-2 gap-6'>

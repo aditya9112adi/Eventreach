@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { motion } from 'framer-motion';
 import { useSearchParams, Link } from 'react-router-dom';
 import { Search, Plus, Phone, CheckCircle2, XCircle, AlertTriangle, Users, Trash2, Edit3, X, ChevronRight, ChevronLeft } from 'lucide-react';
 import api from '../../services/api';
@@ -285,9 +286,21 @@ const ContactList = () => {
                   <th className="py-3 px-4 w-24">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
-                {paginatedContacts.map((contact, idx) => (
-                  <tr key={contact._id} className={`hover:bg-surfaceHover transition-colors group animate-fade-up stagger-${(idx % 5) + 1}`}>
+              <motion.tbody
+                className="divide-y divide-border"
+                initial="hidden"
+                animate="visible"
+                variants={{ visible: { transition: { staggerChildren: 0.06 } } }}
+              >
+                {paginatedContacts.map((contact) => (
+                  <motion.tr
+                    key={contact._id}
+                    variants={{
+                      hidden: { opacity: 0, y: 12 },
+                      visible: { opacity: 1, y: 0, transition: { duration: 0.28, ease: 'easeOut' } },
+                    }}
+                    className="hover:bg-surfaceHover transition-colors group"
+                  >
                     <td className="py-3 px-4 text-center">
                       {getStatusIcon(contact.status, contact.validationReason)}
                     </td>
@@ -327,9 +340,9 @@ const ContactList = () => {
                         </button>
                       </div>
                     </td>
-                  </tr>
+                  </motion.tr>
                 ))}
-              </tbody>
+              </motion.tbody>
             </table>
           </div>
         )}
