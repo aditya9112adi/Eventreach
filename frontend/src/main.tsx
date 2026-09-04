@@ -6,16 +6,19 @@ import { AuthProvider } from './store/authStore.tsx'
 import { ToastProvider } from './components/ui/Toast.tsx'
 import { LoaderProvider } from './components/ui/FullScreenLoader.tsx'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
+import { SocketProvider } from './contexts/SocketContext.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
       <AuthProvider>
-        <ToastProvider>
-          <LoaderProvider>
-            <App />
-          </LoaderProvider>
-        </ToastProvider>
+        <SocketProvider>
+          <ToastProvider>
+            <LoaderProvider>
+              <App />
+            </LoaderProvider>
+          </ToastProvider>
+        </SocketProvider>
       </AuthProvider>
     </ErrorBoundary>
   </StrictMode>,
