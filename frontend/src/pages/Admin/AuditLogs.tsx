@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { motion } from 'framer-motion';
 import api from '../../services/api';
 import { Search, Eye, Shield, Activity, Server, FileText } from 'lucide-react';
@@ -281,7 +282,7 @@ export const AuditLogs = () => {
       </div>
 
       {/* Detail Modal */}
-      {selectedLog && (
+      {selectedLog && ReactDOM.createPortal(
         <div className="fixed top-0 left-0 w-screen h-screen bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
           <div className="bg-surface border border-border rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto animate-spring-up">
             <div className="p-6 border-b border-border flex justify-between items-center sticky top-0 bg-surface z-10">
@@ -374,7 +375,8 @@ export const AuditLogs = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

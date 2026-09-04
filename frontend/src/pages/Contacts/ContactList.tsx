@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import { motion } from 'framer-motion';
 import { useSearchParams, Link } from 'react-router-dom';
 import { Search, Plus, Phone, CheckCircle2, XCircle, AlertTriangle, Users, Trash2, Edit3, X, ChevronRight, ChevronLeft } from 'lucide-react';
@@ -367,8 +368,8 @@ const ContactList = () => {
       </div>
 
       {/* Add / Edit Contact Modal */}
-      {(isAddModalOpen || editingContact) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/40 backdrop-blur-md animate-fade-in">
+      {(isAddModalOpen || editingContact) && ReactDOM.createPortal(
+        <div className="fixed top-0 left-0 w-screen h-screen z-50 flex items-center justify-center p-4 bg-background/40 backdrop-blur-md animate-fade-in">
           <div className="glass-panel rounded-3xl w-full max-w-md overflow-hidden animate-spring-up shadow-glass-lg">
             <div className="p-6 border-b border-white/10 flex justify-between items-center">
               <h3 className="text-xl font-sans font-bold text-foreground uppercase tracking-wider">
@@ -443,11 +444,12 @@ const ContactList = () => {
               </form>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Delete Confirmation Modal */}
-      {confirmDeleteId && (
+      {confirmDeleteId && ReactDOM.createPortal(
         <div className="fixed top-0 left-0 w-screen h-screen bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
           <motion.div
             initial={{ opacity: 0, scale: 0.92, y: 12 }}
@@ -481,7 +483,8 @@ const ContactList = () => {
               </Button>
             </div>
           </motion.div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
