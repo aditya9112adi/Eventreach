@@ -155,6 +155,70 @@ export const register = async (req: RequestWithId, res: Response) => {
   }
 };
 
+/**
+ * Serialise an Admin/User document into the profile shape the frontend expects.
+ * Kept in one place so `login` and `me` can never drift apart.
+ */
+const buildAuthProfile = async (user: any, resolvedRole: string) => {
+  let assignedEventName: string | undefined;
+  if (user.assignedEventId) {
+    const ev = await Event.findById(user.assignedEventId).select('eventName').lean();
+    if (ev) assignedEventName = (ev as any).eventName;
+  }
+
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    role: resolvedRole,
+    status: user.status,
+    accessGrantedOn: user.accessGrantedOn,
+    accessStartDate: user.accessStartDate,
+    accessExpiryDate: user.accessExpiryDate,
+    accessDurationValue: user.accessDurationValue,
+    accessDurationUnit: user.accessDurationUnit,
+    isAccessCancelled: user.isAccessCancelled,
+    assignedEventId: user.assignedEventId ? user.assignedEventId.toString() : undefined,
+    assignedEventName,
+    adminId: user.adminId ? user.adminId.toString() : undefined,
+    createdAt: user.createdAt,
+  };
+};
+
+/**
+ * Returns the authoritative, freshly-read profile for the caller's token.
+ *
+ * The frontend previously restored its session purely from localStorage, which
+ * meant a tampered or stale cached profile drove role-based UI. This endpoint
+ * lets the client revalidate on load. `requireAuth` has already confirmed the
+ * account still exists and has not been revoked or expired.
+ */
+export const me = async (req: RequestWithId, res: Response) => {
+  try {
+    const current = (req as any).user;
+    if (!current?.id) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (current.role === 'User') {
+      const user = await User.findById(current.id).select('-passwordHash');
+      if (!user) {
+        return res.status(401).json({ error: 'Unauthorized: Account not found' });
+      }
+      return res.json({ user: await buildAuthProfile(user, 'User') });
+    }
+
+    const admin = await Admin.findById(current.id).select('-passwordHash');
+    if (!admin) {
+      return res.status(401).json({ error: 'Unauthorized: Account not found' });
+    }
+    return res.json({ user: await buildAuthProfile(admin, admin.role) });
+  } catch (error) {
+    console.error('Get current user error:', error);
+    res.status(500).json({ error: 'Failed to load current user' });
+  }
+};
+
 export const login = async (req: RequestWithId, res: Response) => {
   try {
     const parsed = loginSchema.safeParse(req.body);
@@ -235,30 +299,8 @@ export const login = async (req: RequestWithId, res: Response) => {
       description: `User logged in successfully`
     });
 
-    let assignedEventName: string | undefined;
-    if (user.assignedEventId) {
-      const ev = await Event.findById(user.assignedEventId).select('eventName').lean();
-      if (ev) assignedEventName = (ev as any).eventName;
-    }
-
     res.json({
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: resolvedRole,
-        status: user.status,
-        accessGrantedOn: user.accessGrantedOn,
-        accessStartDate: user.accessStartDate,
-        accessExpiryDate: user.accessExpiryDate,
-        accessDurationValue: user.accessDurationValue,
-        accessDurationUnit: user.accessDurationUnit,
-        isAccessCancelled: user.isAccessCancelled,
-        assignedEventId: user.assignedEventId ? user.assignedEventId.toString() : undefined,
-        assignedEventName,
-        adminId: user.adminId ? user.adminId.toString() : undefined,
-        createdAt: user.createdAt,
-      },
+      user: await buildAuthProfile(user, resolvedRole as string),
       token,
     });
   } catch (error) {

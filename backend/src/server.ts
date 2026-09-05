@@ -24,10 +24,12 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Render terminates TLS and proxies through a single reverse proxy.
-// Without this, every request appears to come from the proxy IP and all
-// rate limiters share one global bucket.
-app.set('trust proxy', 1);
+// Render fronts services with Cloudflare, so requests traverse two proxy hops
+// (Cloudflare edge -> Render router) before reaching the app. Without this,
+// every request appears to come from the proxy IP and all rate limiters share
+// one global bucket. Rate limiting additionally prefers the Cloudflare-supplied
+// CF-Connecting-IP header (see middleware/rateLimitMiddleware.ts).
+app.set('trust proxy', 2);
 
 // Middleware
 app.use(helmet());

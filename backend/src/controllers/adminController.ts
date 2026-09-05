@@ -155,26 +155,38 @@ export const rejectUser = async (req: RequestWithId, res: Response) => {
 
 export const getAccessRecords = async (req: Request, res: Response) => {
   try {
-    // Fetch users who have been granted access OR have been rejected, populating assignedEventId
-    const accessUsers = await User.find({
+    const currentUser = (req as any).user;
+    const isSuperAdmin = currentUser?.role === 'SuperAdmin';
+
+    // Access records contain personal data (names, emails, access windows) for the
+    // whole system. A Super Admin may see everything; an Admin must only ever see
+    // the Users they manage, and never other Admin accounts.
+    const userQuery: any = {
       $or: [
         { accessGrantedOn: { $exists: true } },
         { status: 'Rejected' }
       ]
-    })
+    };
+    if (!isSuperAdmin) {
+      userQuery.adminId = currentUser?.id;
+    }
+
+    const accessUsers = await User.find(userQuery)
       .populate('assignedEventId', 'eventName')
       .select('-passwordHash')
       .lean();
 
-    const accessAdmins = await Admin.find({
-      role: { $ne: 'SuperAdmin' },
-      $or: [
-        { accessGrantedOn: { $exists: true } },
-        { status: 'Rejected' }
-      ]
-    })
-      .select('-passwordHash')
-      .lean();
+    const accessAdmins = isSuperAdmin
+      ? await Admin.find({
+          role: { $ne: 'SuperAdmin' },
+          $or: [
+            { accessGrantedOn: { $exists: true } },
+            { status: 'Rejected' }
+          ]
+        })
+          .select('-passwordHash')
+          .lean()
+      : [];
 
     const formattedUsers = accessUsers.map((u: any) => ({
       ...u,
@@ -249,8 +261,14 @@ export const assignUserEvent = async (req: RequestWithId, res: Response) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // If Admin, verify the event is in the Admin's scope
+    // If Admin, verify both the target user and the event are in the Admin's scope.
     if (currentUser?.role === 'Admin') {
+      // An Admin may only manage their own Users, or claim a User that no Admin
+      // owns yet. Without this check any Admin could reassign — and take over —
+      // another Admin's Users.
+      if (targetUser.adminId && targetUser.adminId.toString() !== currentUser.id) {
+        return res.status(403).json({ error: 'You do not have permission to manage this user.' });
+      }
       if (eventId) {
         const authorized = await isEventAuthorized(currentUser, eventId);
         if (!authorized) {

@@ -5,6 +5,7 @@ import { useAuth } from './store/authStore';
 import DashboardLayout from './layouts/DashboardLayout';
 import { useLoader } from './components/ui/FullScreenLoader';
 import { PageWrapper } from './components/ui/PageWrapper';
+import { RoleRoute } from './components/RoleRoute';
 
 // Lazy loaded pages to reduce initial bundle size
 const Login = lazy(() => import('./pages/Login'));
@@ -73,10 +74,22 @@ function AnimatedRoutes() {
           <Route path="/campaigns/send-preview" element={<PageWrapper><SendPreview /></PageWrapper>} />
           <Route path="/campaigns/:campaignId/report" element={<PageWrapper><CampaignReport /></PageWrapper>} />
           <Route path="/reports" element={<PageWrapper><Reports /></PageWrapper>} />
-          <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
-          <Route path="/admin/approvals" element={<PageWrapper><UserApprovals /></PageWrapper>} />
-          <Route path="/admin/just-access" element={<PageWrapper><JustAccess /></PageWrapper>} />
-          <Route path="/admin/audit-logs" element={<PageWrapper><AuditLogs /></PageWrapper>} />
+          <Route
+            path="/settings"
+            element={<PageWrapper><RoleRoute allow={['SuperAdmin']}><Settings /></RoleRoute></PageWrapper>}
+          />
+          <Route
+            path="/admin/approvals"
+            element={<PageWrapper><RoleRoute allow={['SuperAdmin']}><UserApprovals /></RoleRoute></PageWrapper>}
+          />
+          <Route
+            path="/admin/just-access"
+            element={<PageWrapper><RoleRoute allow={['SuperAdmin', 'Admin']}><JustAccess /></RoleRoute></PageWrapper>}
+          />
+          <Route
+            path="/admin/audit-logs"
+            element={<PageWrapper><RoleRoute allow={['SuperAdmin']}><AuditLogs /></RoleRoute></PageWrapper>}
+          />
         </Route>
 
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

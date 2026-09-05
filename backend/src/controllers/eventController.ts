@@ -142,41 +142,74 @@ export const createEvent = async (req: RequestWithId, res: Response) => {
   }
 };
 
-export const updateExpiredEvents = async () => {
+// The expiry sweep used to run inline on every events/dashboard read, scanning
+// all open events and issuing a save + audit write + two socket broadcasts per
+// expired event. Concurrent requests raced each other and duplicated that work.
+// It is now de-duplicated (one sweep at a time), throttled, and batched.
+const EXPIRY_SWEEP_INTERVAL_MS = 30_000;
+let expirySweepInFlight: Promise<void> | null = null;
+let lastExpirySweepAt = 0;
+
+const runExpirySweep = async (): Promise<void> => {
   try {
     const events = await Event.find({ eventStatus: { $nin: ['Completed', 'Cancelled'] } });
     const now = new Date();
 
-    for (const event of events) {
+    const expired = events.filter((event) => {
       const dateStr = event.eventDate instanceof Date ? formatDate(event.eventDate) : String(event.eventDate);
       const timeStr = typeof event.eventTime === 'number' ? minutesToTime(event.eventTime) : String(event.eventTime);
-      const eventDateTime = new Date(`${dateStr}T${timeStr}:00+05:30`);
+      return new Date(`${dateStr}T${timeStr}:00+05:30`) < now;
+    });
 
-      if (eventDateTime < now) {
-        const beforeEvent = { ...event.toObject() };
-        event.eventStatus = 'Completed';
-        await event.save();
-        
-        await AuditService.log({
-          action: 'EVENT_COMPLETED',
-          collectionName: 'events',
-          documentId: event._id.toString(),
-          before: beforeEvent,
-          after: event,
-          description: `Event automatically marked as completed: ${event.eventName}`
-        });
+    if (expired.length === 0) return;
 
-        try {
-          getIO().emit('event-status-changed', { eventId: event._id, status: 'Completed' });
-          getIO().emit('dashboard-updated');
-        } catch (e) {
-          console.error('Socket emit error:', e);
-        }
+    // One round-trip instead of one save per document.
+    await Event.bulkWrite(
+      expired.map((event) => ({
+        updateOne: {
+          filter: { _id: event._id, eventStatus: { $nin: ['Completed', 'Cancelled'] } },
+          update: { $set: { eventStatus: 'Completed' } },
+        },
+      }))
+    );
+
+    for (const event of expired) {
+      await AuditService.log({
+        action: 'EVENT_COMPLETED',
+        collectionName: 'events',
+        documentId: event._id.toString(),
+        before: { ...event.toObject() },
+        after: { ...event.toObject(), eventStatus: 'Completed' },
+        description: `Event automatically marked as completed: ${event.eventName}`
+      });
+    }
+
+    try {
+      const socket = getIO();
+      for (const event of expired) {
+        socket.emit('event-status-changed', { eventId: event._id, status: 'Completed' });
       }
+      // A single dashboard refresh covers the whole batch.
+      socket.emit('dashboard-updated');
+    } catch (e) {
+      console.error('Socket emit error:', e);
     }
   } catch (err) {
     console.error('Error updating expired events:', err);
   }
+};
+
+export const updateExpiredEvents = async (force = false): Promise<void> => {
+  // Join an in-progress sweep rather than starting a second one.
+  if (expirySweepInFlight) return expirySweepInFlight;
+  if (!force && Date.now() - lastExpirySweepAt < EXPIRY_SWEEP_INTERVAL_MS) return;
+
+  expirySweepInFlight = runExpirySweep().finally(() => {
+    lastExpirySweepAt = Date.now();
+    expirySweepInFlight = null;
+  });
+
+  return expirySweepInFlight;
 };
 
 export const getEvents = async (req: Request, res: Response) => {

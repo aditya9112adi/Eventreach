@@ -197,17 +197,57 @@ export const bulkImportContacts = async (req: RequestWithId, res: Response) => {
       return res.status(400).json({ error: 'No contacts provided' });
     }
 
-    const validContacts = contacts.filter(c => c.status === 'Valid');
+    // The client sends back the preview rows it was given, including a `status`
+    // field. That status is untrusted input — a crafted request could mark
+    // malformed or duplicate numbers as "Valid". Everything is therefore
+    // re-validated here from scratch and the client's status is ignored.
+    const existingContacts = await Contact.find({ eventId }).select('phoneNumber').lean();
+    const seenNumbers = new Set<string>(existingContacts.map((c: any) => c.phoneNumber));
 
-    const documentsToInsert = validContacts.map(c => ({
-      fullName: c.fullName,
-      phoneNumber: c.phoneNumber,
-      countryCode: c.countryCode,
-      email: c.email || undefined,
-      eventId,
-      status: 'Valid',
-      source: 'Bulk Import',
-    }));
+    const documentsToInsert: any[] = [];
+
+    for (const candidate of contacts) {
+      const fullName = typeof candidate?.fullName === 'string' ? candidate.fullName.trim() : '';
+      const rawPhone = typeof candidate?.phoneNumber === 'string' ? candidate.phoneNumber.trim() : '';
+      const countryCode =
+        typeof candidate?.countryCode === 'string' && candidate.countryCode.trim()
+          ? candidate.countryCode.trim()
+          : 'US';
+      const email = typeof candidate?.email === 'string' ? candidate.email.trim() : '';
+
+      if (!fullName || fullName.length > 200 || !rawPhone) continue;
+
+      let normalizedPhone: string;
+      try {
+        const phoneNumberObj = parsePhoneNumberWithError(rawPhone, countryCode as any);
+        if (!phoneNumberObj.isValid()) continue;
+        normalizedPhone = phoneNumberObj.format('E.164');
+      } catch {
+        continue;
+      }
+
+      // Reject duplicates already stored for this event and repeats within the batch.
+      if (seenNumbers.has(normalizedPhone)) continue;
+      seenNumbers.add(normalizedPhone);
+
+      documentsToInsert.push({
+        fullName,
+        phoneNumber: normalizedPhone,
+        countryCode,
+        email: email || undefined,
+        eventId,
+        status: 'Valid',
+        source: 'Bulk Import',
+      });
+    }
+
+    if (documentsToInsert.length === 0) {
+      return res.status(400).json({
+        error: 'No valid contacts to import. All rows were invalid or already present.',
+      });
+    }
+
+    const validContacts = documentsToInsert;
 
     const result = await Contact.insertMany(documentsToInsert, { ordered: false });
 
