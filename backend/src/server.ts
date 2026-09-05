@@ -24,6 +24,11 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Render terminates TLS and proxies through a single reverse proxy.
+// Without this, every request appears to come from the proxy IP and all
+// rate limiters share one global bucket.
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(helmet());
 

@@ -4,19 +4,19 @@ export class WhatsAppService {
   private isMockMode: boolean;
   private token: string | undefined;
   private phoneId: string | undefined;
+  private apiVersion: string;
 
   constructor() {
     this.token = process.env.WHATSAPP_TOKEN;
     this.phoneId = process.env.WHATSAPP_PHONE_ID;
-    
+    this.apiVersion = process.env.WHATSAPP_API_VERSION || 'v22.0';
+
     // Fall back to Mock mode if credentials are not provided
     this.isMockMode = !this.token || !this.phoneId;
-    
-    if (this.isMockMode) {
-      console.log('WhatsAppService is running in MOCK mode.');
-    } else {
-      console.log('WhatsAppService is running in PRODUCTION mode.');
-    }
+
+    console.log(
+      `WhatsAppService: ${this.isMockMode ? 'MOCK' : 'PRODUCTION'} mode (api ${this.apiVersion})`
+    );
   }
 
   async sendMessage(to: string, messageText: string, mediaAttachments: any[]): Promise<any> {
@@ -25,8 +25,8 @@ export class WhatsAppService {
     }
 
     // Real API Implementation
-    // According to WhatsApp Cloud API docs:
-    // https://graph.facebook.com/v17.0/{{Phone-Number-ID}}/messages
+    // WhatsApp Cloud API: POST https://graph.facebook.com/<version>/<Phone-Number-ID>/messages
+    // where <version> is configurable via WHATSAPP_API_VERSION (default v22.0).
     try {
       const payload: any = {
         messaging_product: "whatsapp",
@@ -46,7 +46,7 @@ export class WhatsAppService {
       // unless we implement full template management.
       
       const response = await axios.post(
-        `https://graph.facebook.com/v17.0/${this.phoneId}/messages`,
+        `https://graph.facebook.com/${this.apiVersion}/${this.phoneId}/messages`,
         payload,
         {
           headers: {

@@ -25,3 +25,9 @@ services:
         sync: false
       - key: EMAIL_PASS
         sync: false
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_ID
+        sync: false
+      - key: WHATSAPP_API_VERSION
+        sync: false
