@@ -44,8 +44,6 @@ const EventSchema: Schema = new Schema(
 );
 
 EventSchema.index({ eventStatus: 1 });
-EventSchema.index({ adminId: 1 });
-EventSchema.index({ assignedUserId: 1 });
 EventSchema.index({ assignedUserIds: 1 });
 
 export const Event = mongoose.model<IEvent>('Event', EventSchema);
