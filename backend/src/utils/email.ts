@@ -1,10 +1,16 @@
 import nodemailer from 'nodemailer';
 
 export const sendApprovalEmail = async (newAdminName: string, newAdminEmail: string) => {
-  const { EMAIL_USER, EMAIL_PASS } = process.env;
+  const { EMAIL_USER, EMAIL_PASS, SUPERADMIN_EMAIL } = process.env;
 
   if (!EMAIL_USER || !EMAIL_PASS || EMAIL_PASS === 'your_app_password_here') {
     console.warn('EMAIL_USER or EMAIL_PASS is not configured properly in .env. Skipping email notification.');
+    return;
+  }
+
+  const superAdminEmail = SUPERADMIN_EMAIL?.trim();
+  if (!superAdminEmail) {
+    console.warn('SUPERADMIN_EMAIL is not configured. Skipping Super Admin approval notification.');
     return;
   }
 
@@ -34,7 +40,7 @@ export const sendApprovalEmail = async (newAdminName: string, newAdminEmail: str
 
   const mailOptions = {
     from: `"EventReach System" <${EMAIL_USER}>`,
-    to: 'redacted@users.noreply.invalid', // Hardcoded Super Admin email per your request
+    to: superAdminEmail,
     subject: 'New Admin Registration Pending Approval - EventReach',
     html: `
       <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
