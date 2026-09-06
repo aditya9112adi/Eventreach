@@ -6,11 +6,17 @@ import { useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
 import { User, Mail, Lock, EyeOff, Eye, Loader2, Sun, Moon, Briefcase, Calendar } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
+import { validatePassword, PASSWORD_REQUIREMENTS } from '@eventreach/shared';
 
 const registerSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
   email: z.string().email('Please enter a valid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  password: z.string().superRefine((value, ctx) => {
+    // Same policy the backend enforces, so the form cannot submit something the
+    // API will reject.
+    const problem = validatePassword(value);
+    if (problem) ctx.addIssue({ code: 'custom', message: problem });
+  }),
   role: z.enum(['Admin', 'User']),
   accessStartDate: z.string().optional(),
   accessEndDate: z.string().optional(),
@@ -218,6 +224,9 @@ const Register = () => {
                   </button>
                 </div>
                 {errors.password && <p className="mt-1.5 text-sm text-destructive font-medium">{errors.password.message}</p>}
+                <p className="mt-1.5 text-xs text-foreground/50">
+                  {PASSWORD_REQUIREMENTS.join(' · ')}
+                </p>
               </div>
 
               <div>

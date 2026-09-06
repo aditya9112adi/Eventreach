@@ -5,10 +5,25 @@ import { z } from 'zod';
 import { User } from '../models/User';
 import { Admin } from '../models/Admin';
 import { Event } from '../models/Event';
-import { sendApprovalEmail } from '../utils/email';
+import {
+  sendApprovalEmail,
+  sendPasswordResetEmail,
+  getFrontendBaseUrl,
+} from '../utils/email';
+import { PasswordResetToken } from '../models/PasswordResetToken';
+import { validatePassword } from '../utils/passwordPolicy';
+import {
+  generateResetToken,
+  hashResetToken,
+  resetTokenExpiry,
+  getResetTtlMinutes,
+} from '../utils/resetToken';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { emitPendingApprovalsChanged } from '../services/socketService';
+
+/** Matches the cost factor used everywhere else passwords are hashed. */
+const BCRYPT_ROUNDS = 10;
 
 const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -32,6 +47,13 @@ export const register = async (req: RequestWithId, res: Response) => {
     }
 
     const { name, email, password, role, accessStartDate, accessEndDate } = parsed.data;
+
+    // Strength is enforced by the shared policy so registration and password
+    // reset can never drift apart.
+    const passwordProblem = validatePassword(password);
+    if (passwordProblem) {
+      return res.status(400).json({ error: passwordProblem });
+    }
 
     if (role === 'Admin') {
       if (!accessStartDate || !accessEndDate) {
@@ -64,7 +86,7 @@ export const register = async (req: RequestWithId, res: Response) => {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const status = 'Pending';
     
     let createdUser;
@@ -262,16 +284,16 @@ export const login = async (req: RequestWithId, res: Response) => {
     }
 
     if (user.status === 'Pending') {
-      return res.status(403).json({ error: 'Your account is pending approval by the Super Admin.' });
+      return res.status(403).json({ error: 'Your registration is pending approval from the Super Admin.' });
     }
 
     if (user.status === 'Rejected') {
-      return res.status(403).json({ error: 'Your account registration was rejected.' });
+      return res.status(403).json({ error: 'Your registration request was rejected.' });
     }
 
     if (resolvedRole !== 'SuperAdmin' && user.accessGrantedOn) {
       if (user.isAccessCancelled) {
-        return res.status(403).json({ error: 'Your access has been revoked.' });
+        return res.status(403).json({ error: 'Your account has been suspended. Please contact the Super Admin.' });
       }
       const now = new Date();
       if (user.accessStartDate && now < new Date(user.accessStartDate)) {
@@ -311,5 +333,155 @@ export const login = async (req: RequestWithId, res: Response) => {
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Something went wrong' });
+  }
+};
+
+// ─── Password reset ───────────────────────────────────────────────────────────
+
+/** Identical response whether or not the address exists, to prevent enumeration. */
+const GENERIC_FORGOT_RESPONSE = {
+  message: 'If an account exists with this email address, a password reset link has been sent.',
+};
+
+/** Identical response for every failure mode, so probing reveals nothing. */
+const INVALID_RESET_TOKEN = 'This password reset link is invalid or has expired.';
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email('Please enter a valid email address'),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1, 'Reset token is required'),
+  password: z.string().min(1, 'Password is required'),
+});
+
+/**
+ * POST /api/auth/forgot-password
+ *
+ * Works for every role because Admin (SuperAdmin + Admin) and User are looked up
+ * with the same mechanism. The raw token is emailed and never stored or logged;
+ * only its SHA-256 hash is persisted.
+ */
+export const forgotPassword = async (req: RequestWithId, res: Response) => {
+  try {
+    const parsed = forgotPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      // A malformed address is a client-side format problem and reveals nothing
+      // about which accounts exist.
+      return res.status(400).json({ error: parsed.error.errors[0].message });
+    }
+
+    const email = parsed.data.email.trim().toLowerCase();
+
+    const admin = await Admin.findOne({ email });
+    const user = admin ? null : await User.findOne({ email });
+    const account: any = admin || user;
+
+    if (account) {
+      const accountModel = admin ? 'Admin' : 'User';
+
+      // Supersede any outstanding links so only the newest one works.
+      await PasswordResetToken.updateMany(
+        { accountId: account._id, usedAt: null },
+        { $set: { usedAt: new Date() } }
+      );
+
+      const rawToken = generateResetToken();
+      await PasswordResetToken.create({
+        tokenHash: hashResetToken(rawToken),
+        accountId: account._id,
+        accountModel,
+        expiresAt: resetTokenExpiry(),
+      });
+
+      const resetUrl = `${getFrontendBaseUrl()}/reset-password?token=${encodeURIComponent(rawToken)}`;
+      await sendPasswordResetEmail(account.name, account.email, resetUrl, getResetTtlMinutes());
+
+      await AuditService.log({
+        action: 'PASSWORD_RESET_REQUESTED',
+        collectionName: accountModel === 'Admin' ? 'admins' : 'users',
+        documentId: account._id.toString(),
+        request: AuditService.getRequestInfo(req),
+        description: `Password reset requested for ${account.email}`,
+      });
+    }
+
+    return res.json(GENERIC_FORGOT_RESPONSE);
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    // Generic failure — still does not disclose whether the account exists.
+    return res.status(500).json({ error: 'Unable to process the request right now. Please try again later.' });
+  }
+};
+
+/**
+ * POST /api/auth/reset-password
+ *
+ * The token is claimed atomically so it can only ever be redeemed once, even
+ * under concurrent requests. The account's role and status are untouched.
+ */
+export const resetPassword = async (req: RequestWithId, res: Response) => {
+  try {
+    const parsed = resetPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0].message });
+    }
+
+    const policyProblem = validatePassword(parsed.data.password);
+    if (policyProblem) {
+      return res.status(400).json({ error: policyProblem });
+    }
+
+    const tokenHash = hashResetToken(parsed.data.token);
+    const now = new Date();
+
+    // Atomically claim an unused, unexpired token. Returns the pre-update
+    // document, so a second concurrent attempt finds nothing to claim.
+    const claimed = await PasswordResetToken.findOneAndUpdate(
+      { tokenHash, usedAt: null, expiresAt: { $gt: now } },
+      { $set: { usedAt: now } },
+      { new: false }
+    );
+
+    if (!claimed) {
+      return res.status(400).json({ error: INVALID_RESET_TOKEN });
+    }
+
+    const Model: any = claimed.accountModel === 'Admin' ? Admin : User;
+    const account = await Model.findById(claimed.accountId);
+    if (!account) {
+      return res.status(400).json({ error: INVALID_RESET_TOKEN });
+    }
+
+    const passwordHash = await bcrypt.hash(parsed.data.password, BCRYPT_ROUNDS);
+
+    // Only password-related fields change — role, status and access windows are
+    // deliberately left alone.
+    await Model.updateOne(
+      { _id: account._id },
+      { $set: { passwordHash, passwordChangedAt: now } }
+    );
+
+    // Retire every other outstanding link for this account.
+    await PasswordResetToken.updateMany(
+      { accountId: account._id, usedAt: null },
+      { $set: { usedAt: now } }
+    );
+
+    await AuditService.log({
+      action: 'PASSWORD_RESET_COMPLETED',
+      collectionName: claimed.accountModel === 'Admin' ? 'admins' : 'users',
+      documentId: account._id.toString(),
+      request: AuditService.getRequestInfo(req),
+      description: `Password reset completed for ${account.email}`,
+    });
+
+    // Never echo the password or its hash.
+    return res.json({
+      message: 'Your password has been reset. You can now sign in with your new password.',
+    });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    return res.status(500).json({ error: 'Unable to reset the password right now. Please try again later.' });
   }
 };

@@ -31,3 +31,7 @@ services:
         sync: false
       - key: WHATSAPP_API_VERSION
         sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: PASSWORD_RESET_TOKEN_TTL_MINUTES
+        sync: false

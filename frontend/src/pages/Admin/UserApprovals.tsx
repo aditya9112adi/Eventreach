@@ -4,15 +4,11 @@ import type { User } from '@eventreach/shared';
 import api from '../../services/api';
 import { Check, X, Users, Calendar, AlertTriangle } from 'lucide-react';
 import { useLoader } from '../../components/ui/FullScreenLoader';
+import { formatDate, formatTime, formatDateTime } from '../../utils/datetime';
 import { useSocket } from '../../contexts/SocketContext';
 
-const fmt = (d?: string | Date) => {
-  if (!d) return 'N/A';
-  return new Date(d).toLocaleString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', hour12: true
-  });
-};
+// Shared formatters keep registration/approval timestamps consistent app-wide.
+const fmt = (d?: string | Date) => formatDateTime(d);
 
 const UserApprovals = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -150,6 +146,7 @@ const UserApprovals = () => {
                   <th className="px-6 py-4">Name</th>
                   <th className="px-6 py-4">Email</th>
                   <th className="px-6 py-4">Requested Role</th>
+                  <th className="px-6 py-4">Registered</th>
                   <th className="px-6 py-4">Requested Access Period</th>
                   <th className="px-6 py-4 text-right">Actions</th>
                 </tr>
@@ -163,6 +160,10 @@ const UserApprovals = () => {
                       <span className="px-2.5 py-1 text-xs font-bold uppercase tracking-wider bg-accent/20 text-accent rounded-sm">
                         {user.role}
                       </span>
+                    </td>
+                    <td className="px-6 py-4 text-xs whitespace-nowrap">
+                      <div className="font-medium text-foreground">{formatDate(user.createdAt)}</div>
+                      <div className="text-foreground/60 mt-0.5">{formatTime(user.createdAt)}</div>
                     </td>
                     <td className="px-6 py-4 text-xs text-foreground/70 min-w-[200px]">
                       {user.role === 'Admin' && user.pendingAccessStartDate ? (

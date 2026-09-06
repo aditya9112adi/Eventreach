@@ -6,6 +6,7 @@ import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { getIO, emitPendingApprovalsChanged } from '../services/socketService';
 import { isEventAuthorized } from '../services/eventAuthService';
+import { sendRegistrationDecisionEmail } from '../utils/email';
 
 export const getPendingUsers = async (req: Request, res: Response) => {
   try {
@@ -27,6 +28,12 @@ export const approveUser = async (req: RequestWithId, res: Response) => {
     const { id } = req.params;
     const { type } = req.query; // 'Admin' | 'User'
     const { assignedEventId } = req.body || {};
+    const currentUser = (req as any).user;
+
+    // Approval metadata is always server-generated; nothing here is taken from
+    // the request body.
+    const approvedAt = new Date();
+    const approvedBy = currentUser?.id;
 
     let user;
     let beforeUser;
@@ -44,10 +51,13 @@ export const approveUser = async (req: RequestWithId, res: Response) => {
         id,
         {
           status: 'Active',
-          accessGrantedOn: new Date(),
+          accessGrantedOn: approvedAt,
           accessStartDate: admin.pendingAccessStartDate,
           accessExpiryDate: admin.pendingAccessEndDate,
           isAccessCancelled: false,
+          approvedAt,
+          approvedBy,
+          $unset: { rejectedAt: 1, rejectedBy: 1, rejectionReason: 1 },
         },
         { new: true }
       ).select('-passwordHash');
@@ -57,8 +67,11 @@ export const approveUser = async (req: RequestWithId, res: Response) => {
 
       const updateData: any = {
         status: 'Active',
-        accessGrantedOn: new Date(),
+        accessGrantedOn: approvedAt,
         isAccessCancelled: false,
+        approvedAt,
+        approvedBy,
+        $unset: { rejectedAt: 1, rejectedBy: 1, rejectionReason: 1 },
       };
 
       if (assignedEventId) {
@@ -106,6 +119,10 @@ export const approveUser = async (req: RequestWithId, res: Response) => {
     // One fewer request is pending — update every Super Admin's badge live.
     void emitPendingApprovalsChanged();
 
+    // Let the applicant know they can now sign in. Fire-and-forget: a mail
+    // failure must not fail the approval.
+    void sendRegistrationDecisionEmail(user.name, user.email, 'approved');
+
     res.json(user);
   } catch (error) {
     console.error('Error approving user:', error);
@@ -118,20 +135,34 @@ export const rejectUser = async (req: RequestWithId, res: Response) => {
     const { id } = req.params;
     const { type } = req.query;
     const { reason } = req.body;
+    const currentUser = (req as any).user;
 
     if (!reason || !String(reason).trim()) {
       return res.status(400).json({ error: 'A rejection reason is required.' });
     }
 
+    const rejectionReason = String(reason).trim();
+    // Server-generated metadata; never accepted from the client.
+    const rejectedAt = new Date();
+    const rejectedBy = currentUser?.id;
+
     let user;
     let beforeUser;
 
+    const rejectionUpdate = {
+      status: 'Rejected',
+      rejectionReason,
+      rejectedAt,
+      rejectedBy,
+    };
+
     if (type === 'Admin') {
       beforeUser = await Admin.findById(id);
-      user = await Admin.findByIdAndUpdate(id, { status: 'Rejected', rejectionReason: String(reason).trim() }, { new: true }).select('-passwordHash');
+      user = await Admin.findByIdAndUpdate(id, rejectionUpdate, { new: true }).select('-passwordHash');
     } else {
+      // Users previously lost the reason entirely — it is now recorded too.
       beforeUser = await User.findById(id);
-      user = await User.findByIdAndUpdate(id, { status: 'Rejected' }, { new: true }).select('-passwordHash');
+      user = await User.findByIdAndUpdate(id, rejectionUpdate, { new: true }).select('-passwordHash');
     }
 
     if (!user) {
@@ -150,6 +181,8 @@ export const rejectUser = async (req: RequestWithId, res: Response) => {
     });
 
     void emitPendingApprovalsChanged();
+
+    void sendRegistrationDecisionEmail(user.name, user.email, 'rejected', rejectionReason);
 
     res.json(user);
   } catch (error) {
@@ -202,7 +235,17 @@ export const getAccessRecords = async (req: Request, res: Response) => {
     }));
     const formattedAdmins = accessAdmins.map(a => ({ ...a, type: 'Admin' }));
 
-    res.json([...formattedAdmins, ...formattedUsers].sort((a: any, b: any) => new Date(b.accessGrantedOn || b.createdAt).getTime() - new Date(a.accessGrantedOn || a.createdAt).getTime()));
+    let records = [...formattedAdmins, ...formattedUsers];
+
+    // Approval/rejection metadata is Super Admin information only.
+    if (!isSuperAdmin) {
+      records = records.map((r: any) => {
+        const { approvedAt, approvedBy, rejectedAt, rejectedBy, rejectionReason, ...rest } = r;
+        return rest;
+      });
+    }
+
+    res.json(records.sort((a: any, b: any) => new Date(b.accessGrantedOn || b.createdAt).getTime() - new Date(a.accessGrantedOn || a.createdAt).getTime()));
   } catch (error) {
     console.error('Error fetching access records:', error);
     res.status(500).json({ error: 'Failed to fetch access records' });

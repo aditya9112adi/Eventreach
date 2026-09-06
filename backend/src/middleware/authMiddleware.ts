@@ -40,6 +40,18 @@ const accountRejectionReason = (account: {
   return null;
 };
 
+/**
+ * A JWT stays valid until it expires, so a password reset must actively
+ * invalidate older sessions. Any token issued before the recorded password
+ * change is treated as revoked.
+ */
+const isTokenStale = (issuedAtSeconds: number | undefined, passwordChangedAt?: Date | null): boolean => {
+  if (!passwordChangedAt || !issuedAtSeconds) return false;
+  // JWT `iat` has second precision; allow 1s of slack so a token minted in the
+  // same second as the change is not spuriously rejected.
+  return issuedAtSeconds * 1000 + 1000 < new Date(passwordChangedAt).getTime();
+};
+
 export const requireAuth = async (
   req: AuthRequest,
   res: Response,
@@ -53,7 +65,7 @@ export const requireAuth = async (
 
   const token = authHeader.split(' ')[1];
 
-  let decoded: { id: string; email: string; role: string };
+  let decoded: { id: string; email: string; role: string; iat?: number };
   try {
     if (!process.env.JWT_SECRET) {
       // Configuration fault, not a client fault — surface it distinctly so it is
@@ -66,6 +78,7 @@ export const requireAuth = async (
       id: string;
       email: string;
       role: string;
+      iat?: number;
     };
   } catch (error) {
     return res.status(401).json({ error: 'Unauthorized: Invalid token' });
@@ -82,10 +95,13 @@ export const requireAuth = async (
 
     if (decoded.role === 'Admin' || decoded.role === 'SuperAdmin') {
       const admin = await Admin.findById(decoded.id).select(
-        'status isAccessCancelled accessStartDate accessExpiryDate role'
+        'status isAccessCancelled accessStartDate accessExpiryDate role passwordChangedAt'
       );
       if (!admin) {
         return res.status(401).json({ error: 'Unauthorized: Account not found' });
+      }
+      if (isTokenStale(decoded.iat, admin.passwordChangedAt)) {
+        return res.status(401).json({ error: 'Unauthorized: Session expired, please sign in again' });
       }
       effectiveRole = admin.role;
       // SuperAdmin access is not time-bound; only confirm the account still exists
@@ -98,10 +114,13 @@ export const requireAuth = async (
       }
     } else if (decoded.role === 'User') {
       const user = await User.findById(decoded.id).select(
-        'status isAccessCancelled accessStartDate accessExpiryDate'
+        'status isAccessCancelled accessStartDate accessExpiryDate passwordChangedAt'
       );
       if (!user) {
         return res.status(401).json({ error: 'Unauthorized: Account not found' });
+      }
+      if (isTokenStale(decoded.iat, user.passwordChangedAt)) {
+        return res.status(401).json({ error: 'Unauthorized: Session expired, please sign in again' });
       }
       effectiveRole = 'User';
       const reason = accountRejectionReason(user);

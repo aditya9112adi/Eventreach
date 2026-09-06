@@ -14,6 +14,13 @@ export interface IAdmin extends Document {
   pendingAccessStartDate?: Date;
   pendingAccessEndDate?: Date;
   rejectionReason?: string;
+  // Approval / rejection audit trail. All timestamps are generated server-side.
+  approvedAt?: Date;
+  approvedBy?: Schema.Types.ObjectId | string;
+  rejectedAt?: Date;
+  rejectedBy?: Schema.Types.ObjectId | string;
+  /** Set on every password change so tokens issued earlier stop being accepted. */
+  passwordChangedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -56,6 +63,11 @@ const AdminSchema: Schema = new Schema(
     pendingAccessStartDate: { type: Date },
     pendingAccessEndDate: { type: Date },
     rejectionReason: { type: String },
+    approvedAt: { type: Date },
+    approvedBy: { type: Schema.Types.ObjectId, ref: 'Admin' },
+    rejectedAt: { type: Date },
+    rejectedBy: { type: Schema.Types.ObjectId, ref: 'Admin' },
+    passwordChangedAt: { type: Date },
   },
   {
     timestamps: true,

@@ -92,3 +92,42 @@ export interface Campaign {
   createdAt: string;
   updatedAt: string;
 }
+
+// ─── Password policy ──────────────────────────────────────────────────────────
+// Single source of truth shared by the backend (registration + password reset)
+// and the frontend (client-side validation and the requirements checklist), so
+// the two can never disagree.
+
+export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MAX_LENGTH = 100;
+
+export const PASSWORD_REQUIREMENTS: string[] = [
+  `At least ${PASSWORD_MIN_LENGTH} characters`,
+  'At least one letter',
+  'At least one number',
+];
+
+/**
+ * Returns null when acceptable, otherwise a human-readable reason.
+ * Never echoes the supplied password.
+ */
+export const validatePassword = (password: unknown): string | null => {
+  if (typeof password !== 'string' || password.length === 0) {
+    return 'Password is required';
+  }
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    return `Password must be at least ${PASSWORD_MIN_LENGTH} characters`;
+  }
+  if (password.length > PASSWORD_MAX_LENGTH) {
+    return 'Password is too long';
+  }
+  if (!/[A-Za-z]/.test(password)) {
+    return 'Password must contain at least one letter';
+  }
+  if (!/[0-9]/.test(password)) {
+    return 'Password must contain at least one number';
+  }
+  return null;
+};
+
+export const isPasswordValid = (password: unknown): boolean => validatePassword(password) === null;

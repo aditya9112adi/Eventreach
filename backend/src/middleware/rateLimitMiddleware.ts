@@ -53,3 +53,14 @@ export const actionLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Password reset is a high-value target for abuse (account enumeration probing
+// and mail-bombing), so it gets a tighter budget than ordinary auth traffic.
+export const passwordResetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  keyGenerator: clientKey,
+  message: { error: 'Too many password reset attempts. Please try again in 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
