@@ -90,11 +90,18 @@ const reportConfiguration = async () => {
 
   const mail = await verifyEmailTransport();
   if (mail.ok) {
-    console.log('Email transport: OK (credentials accepted)');
+    console.log(`Email transport: OK (provider=${mail.provider})`);
   } else if (!mail.configured) {
     console.warn('Email transport: NOT CONFIGURED — password reset and approval emails will not be sent.');
   } else {
-    console.error(`Email transport: FAILED — ${mail.error}. Outgoing email will not be delivered.`);
+    console.error(
+      `Email transport: FAILED (provider=${mail.provider}) — ${mail.error}. Outgoing email will not be delivered.`
+    );
+    if (mail.provider === 'smtp' && process.env.NODE_ENV === 'production') {
+      console.error(
+        'Hosts such as Render block outbound SMTP (ports 25/465/587). Set RESEND_API_KEY to deliver over HTTPS instead.'
+      );
+    }
   }
 };
 

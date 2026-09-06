@@ -412,7 +412,7 @@ export const getSystemHealth = async (req: Request, res: Response) => {
         fromEnvironment: isFrontendUrlConfigured(),
       },
       email: {
-        senderConfigured: Boolean(process.env.EMAIL_USER),
+        provider: mail.provider,
         credentialsConfigured: mail.configured,
         credentialsAccepted: mail.ok,
         error: mail.ok ? undefined : mail.error,

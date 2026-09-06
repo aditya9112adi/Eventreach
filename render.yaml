@@ -35,3 +35,7 @@ services:
         sync: false
       - key: PASSWORD_RESET_TOKEN_TTL_MINUTES
         sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false

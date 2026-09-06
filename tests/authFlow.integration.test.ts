@@ -18,10 +18,11 @@ const TEST_DB = `mongodb://127.0.0.1:27017/eventreach_test_${Date.now()}`;
 process.env.MONGODB_URI = TEST_DB;
 process.env.JWT_SECRET = 'integration-test-only-secret';
 process.env.FRONTEND_URL = 'http://localhost:5173';
-// EMAIL_USER / EMAIL_PASS are intentionally unset: the mailer logs a warning and
-// returns, so no mail is sent during tests.
+// No email provider is configured for tests: the mailer logs a warning and
+// returns, so nothing is ever actually sent.
 delete process.env.EMAIL_USER;
 delete process.env.EMAIL_PASS;
+delete process.env.RESEND_API_KEY;
 
 const express = require('express');
 const mongoose = require('mongoose');

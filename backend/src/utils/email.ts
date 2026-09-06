@@ -6,11 +6,32 @@ export { getFrontendBaseUrl };
 /**
  * Shared email helpers.
  *
- * All credentials come from the environment (EMAIL_USER / EMAIL_PASS) and are
- * never logged. If mail is not configured the helpers log a warning and return
- * without throwing, so a missing mail setup can never break the request that
- * triggered the notification.
+ * Two delivery providers are supported:
+ *
+ *  - RESEND_API_KEY -> Resend's HTTPS API. Required in production on Render,
+ *    which blocks outbound SMTP (ports 25/465/587). Gmail SMTP from Render fails
+ *    with ENETUNREACH on IPv6 and a connection timeout on IPv4.
+ *  - EMAIL_USER / EMAIL_PASS -> Gmail SMTP. Convenient for local development.
+ *
+ * Resend wins when both are set. All credentials come from the environment and
+ * are never logged. If nothing is configured the helpers warn and return without
+ * throwing, so a missing mail setup can never break the request that triggered
+ * the notification.
  */
+
+type Provider = 'resend' | 'smtp' | 'none';
+
+const activeProvider = (): Provider => {
+  if (process.env.RESEND_API_KEY) return 'resend';
+  const { EMAIL_USER, EMAIL_PASS } = process.env;
+  if (EMAIL_USER && EMAIL_PASS && EMAIL_PASS !== 'your_app_password_here') return 'smtp';
+  return 'none';
+};
+
+/** Sender address. Resend requires a verified domain, or its shared test sender. */
+const fromAddress = (): string =>
+  process.env.EMAIL_FROM?.trim() ||
+  (process.env.EMAIL_USER ? `EventReach <${process.env.EMAIL_USER}>` : 'EventReach <onboarding@resend.dev>');
 
 const escapeHtml = (unsafe: string) =>
   unsafe
@@ -52,12 +73,36 @@ const getTransporter = () => {
 export const verifyEmailTransport = async (): Promise<{
   configured: boolean;
   ok: boolean;
+  provider: Provider;
   error?: string;
 }> => {
-  const transporter = getTransporter();
-  if (!transporter) {
-    return { configured: false, ok: false, error: 'EMAIL_USER / EMAIL_PASS not configured' };
+  const provider = activeProvider();
+
+  if (provider === 'none') {
+    return {
+      configured: false,
+      ok: false,
+      provider,
+      error: 'No provider configured (set RESEND_API_KEY, or EMAIL_USER/EMAIL_PASS)',
+    };
   }
+
+  if (provider === 'resend') {
+    try {
+      // Cheap authenticated read — validates the key without sending anything.
+      const r = await fetch('https://api.resend.com/domains', {
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      return r.ok
+        ? { configured: true, ok: true, provider }
+        : { configured: true, ok: false, provider, error: `Resend rejected the API key (HTTP ${r.status})` };
+    } catch (error: any) {
+      return { configured: true, ok: false, provider, error: String(error?.message || error).slice(0, 200) };
+    }
+  }
+
+  const transporter = getTransporter()!;
   try {
     // Hard cap: transporter timeouts cover the socket, but never let an admin
     // request block on a wedged network path.
@@ -67,9 +112,9 @@ export const verifyEmailTransport = async (): Promise<{
         setTimeout(() => reject(new Error('SMTP verification timed out after 15s')), 15_000)
       ),
     ]);
-    return { configured: true, ok: true };
+    return { configured: true, ok: true, provider };
   } catch (error: any) {
-    return { configured: true, ok: false, error: String(error?.message || error).slice(0, 200) };
+    return { configured: true, ok: false, provider, error: String(error?.message || error).slice(0, 200) };
   }
 };
 
@@ -85,18 +130,47 @@ const button = (href: string, label: string) => `
   </a>
 `;
 
+/** Deliver over Resend's HTTPS API. Throws on a non-2xx so send() can log it. */
+const sendViaResend = async (to: string, subject: string, html: string) => {
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ from: fromAddress(), to: [to], subject, html }),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Resend responded ${response.status}: ${detail.slice(0, 200)}`);
+  }
+};
+
 const send = async (mailOptions: nodemailer.SendMailOptions, context: string) => {
-  const transporter = getTransporter();
-  if (!transporter) {
-    console.warn(`EMAIL_USER or EMAIL_PASS is not configured properly. Skipping ${context}.`);
+  const provider = activeProvider();
+
+  if (provider === 'none') {
+    console.warn(`No email provider configured (set RESEND_API_KEY, or EMAIL_USER/EMAIL_PASS). Skipping ${context}.`);
     return;
   }
+
   try {
-    await transporter.sendMail(mailOptions);
-    console.log(`Email sent: ${context}`);
-  } catch (error) {
-    // Never surface mail transport errors to the caller.
-    console.error(`Failed to send email (${context}):`, error);
+    if (provider === 'resend') {
+      await sendViaResend(
+        String(mailOptions.to),
+        String(mailOptions.subject ?? ''),
+        String(mailOptions.html ?? '')
+      );
+    } else {
+      await getTransporter()!.sendMail({ ...mailOptions, from: fromAddress() });
+    }
+    console.log(`Email sent via ${provider}: ${context}`);
+  } catch (error: any) {
+    // Never surface mail transport errors to the caller — that would leak
+    // whether an account exists.
+    console.error(`Failed to send email via ${provider} (${context}):`, error?.message || error);
   }
 };
 
@@ -104,7 +178,7 @@ const send = async (mailOptions: nodemailer.SendMailOptions, context: string) =>
  * Notify the Super Admin that a new Admin registration is awaiting approval.
  */
 export const sendApprovalEmail = async (newAdminName: string, newAdminEmail: string) => {
-  const { EMAIL_USER, SUPERADMIN_EMAIL } = process.env;
+  const { SUPERADMIN_EMAIL } = process.env;
 
   const superAdminEmail = SUPERADMIN_EMAIL?.trim();
   if (!superAdminEmail) {
@@ -118,7 +192,6 @@ export const sendApprovalEmail = async (newAdminName: string, newAdminEmail: str
 
   await send(
     {
-      from: `"EventReach System" <${EMAIL_USER}>`,
       to: superAdminEmail,
       subject: 'New Admin Registration Pending Approval - EventReach',
       html: shell(`
@@ -146,12 +219,10 @@ export const sendPasswordResetEmail = async (
   resetUrl: string,
   expiresInMinutes: number
 ) => {
-  const { EMAIL_USER } = process.env;
   const safeName = escapeHtml(name || 'there');
 
   await send(
     {
-      from: `"EventReach" <${EMAIL_USER}>`,
       to: email,
       subject: 'Reset your EventReach password',
       html: shell(`
@@ -187,7 +258,6 @@ export const sendRegistrationDecisionEmail = async (
   decision: 'approved' | 'rejected',
   reason?: string
 ) => {
-  const { EMAIL_USER } = process.env;
   const safeName = escapeHtml(name || 'there');
   const loginUrl = `${getFrontendBaseUrl()}/login`;
 
@@ -215,7 +285,6 @@ export const sendRegistrationDecisionEmail = async (
 
   await send(
     {
-      from: `"EventReach" <${EMAIL_USER}>`,
       to: email,
       subject:
         decision === 'approved'
