@@ -348,7 +348,8 @@ describe('Forgot password', () => {
   test('the endpoint is rate limited', async () => {
     const sharedIp = '198.51.100.42';
     let sawLimit = false;
-    for (let i = 0; i < 8; i++) {
+    // Must exceed passwordResetLimiter's cap (10 per 15 min) to observe a 429.
+    for (let i = 0; i < 16; i++) {
       const res = await call('POST', '/api/auth/forgot-password', {
         body: { email: `probe${i}@example.com` },
         ip: sharedIp,

@@ -54,11 +54,15 @@ export const actionLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Password reset is a high-value target for abuse (account enumeration probing
-// and mail-bombing), so it gets a tighter budget than ordinary auth traffic.
+// Password reset is a target for abuse (enumeration probing, mail-bombing) so it
+// gets its own budget. Kept per-IP, but not so tight that ordinary use trips it:
+// a mistyped address still consumes a slot, and office/household NAT and mobile
+// carriers put many legitimate users behind one address. Abuse stays bounded
+// because each new request supersedes the previous token, so only the most
+// recent link is ever valid.
 export const passwordResetLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5,
+  max: 10,
   keyGenerator: clientKey,
   message: { error: 'Too many password reset attempts. Please try again in 15 minutes.' },
   standardHeaders: true,
