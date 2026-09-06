@@ -3,194 +3,141 @@
 @tailwind utilities;
 
 @layer base {
-  /**
-   * Design tokens.
-   *
-   * Every colour in the app resolves through these variables, so the whole
-   * product can be re-themed from this one block. Values are space-separated
-   * RGB triplets so Tailwind can apply opacity via `<alpha-value>`.
-   */
-  :root, .dark {
-    /* SmartStack Dark Mode — exact match */
-    --color-background: 0 0 0;            /* #000000 */
-    --color-surface: 10 10 10;            /* #0A0A0A */
-    --color-surface-hover: 17 17 17;      /* #111111 */
-    --color-card: 10 10 10;               /* Used by new UI */
-
-    --color-primary: 0 210 148;           /* #00D294 Vibrant Emerald */
-    --color-primary-hover: 0 180 125;     /* Darker Emerald */
-    --color-primary-foreground: 255 255 255;
-    
-    --color-accent: 0 210 148;
-    --color-accent-foreground: 255 255 255;
-
-    --color-foreground: 255 255 255;      /* #FFFFFF */
-    --color-muted: 136 136 136;           /* #888888 */
-
-    --color-border: 34 34 34;             /* #222222 */
-    --color-input: 34 34 34;              /* Used by new UI */
-    --color-ring: 0 210 148;              /* Vibrant Emerald */
-
-    --color-destructive: 127 29 29;
+  :root {
+    color-scheme: light;
+    /* SmartStack Light Mode — white-on-black inverted for light */
+    --color-background: 255 255 255;
+    --color-surface: 248 250 252;
+    --color-surface-hover: 241 245 249;
+    --color-accent: 0 210 148;          /* #00D294 Vibrant Emerald */
+    --color-foreground: 15 23 43;
+    --color-muted: 98 116 142;
+    --color-border: 148 163 184;
+    --color-destructive: 239 68 68;
     --color-success: 16 185 129;
-    --color-warning: 217 119 6;
     --color-info: 84 162 255;
-
-    --shadow-rgb: 0 0 0;
   }
 
-  * {
-    border-color: rgb(var(--color-border));
+  .dark {
+    color-scheme: dark;
+    /* SmartStack Dark Mode — exact match */
+    --color-background: 0 0 0;         /* #000000 */
+    --color-surface: 10 10 10;         /* #0A0A0A */
+    --color-surface-hover: 17 17 17;   /* #111111 */
+    --color-accent: 0 210 148;          /* #00D294 Vibrant Emerald */
+    --color-foreground: 255 255 255;   /* #FFFFFF */
+    --color-muted: 136 136 136;        /* #888888 */
+    --color-border: 34 34 34;          /* #222222 */
+    --color-destructive: 127 29 29;
+    --color-success: 16 185 129;
+    --color-info: 84 162 255;
   }
 
   body {
     background-color: rgb(var(--color-background));
     color: rgb(var(--color-foreground));
-    @apply antialiased font-sans text-base;
-    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
-  }
-
-  /* Digits line up in tables and stat cards. */
-  table, .tabular-nums {
-    font-variant-numeric: tabular-nums;
-  }
-
-  h1, h2, h3, h4, h5, h6 {
-    @apply font-semibold text-foreground;
-    text-wrap: balance;
+    @apply antialiased font-sans;
   }
 
   ::selection {
-    background-color: rgb(var(--color-primary) / 0.22);
+    background-color: rgb(var(--color-accent) / 0.3);
+    color: white;
   }
-
-  /* A visible, restrained scrollbar. Hiding it entirely removed the only cue
-     for how much content is left. */
+  
+  /* Scrollbar — hidden for clean agency look */
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-  }
-  ::-webkit-scrollbar-track {
     background: transparent;
-  }
-  ::-webkit-scrollbar-thumb {
-    background-color: rgb(var(--color-muted) / 0.32);
-    border-radius: 9999px;
-    border: 2px solid transparent;
-    background-clip: content-box;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(var(--color-muted) / 0.5);
-  }
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: rgb(var(--color-muted) / 0.32) transparent;
+    width: 0;
   }
 
-  /* One consistent, visible keyboard focus treatment. */
-  :focus-visible {
-    outline: 2px solid rgb(var(--color-ring));
-    outline-offset: 2px;
-    border-radius: 0.25rem;
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-sans font-bold tracking-tighter;
   }
 }
 
 @layer components {
-  /* Retained name — many pages use it — but now a quiet, structured card. */
   .glass-panel {
-    @apply bg-surface border border-border shadow-sm;
+    @apply bg-surface border border-border shadow-xl shadow-black/5 transition-all duration-500;
+  }
+  
+  .dark .glass-panel {
+    @apply bg-surface border border-border shadow-xl shadow-white/[0.03] transition-all duration-500;
   }
 
-  .card {
-    @apply bg-card border border-border rounded-xl shadow-sm;
-  }
-
-  /* Interactive card: a small, cheap lift. Transform/opacity only. */
-  .card-interactive {
-    @apply card transition-[transform,box-shadow] duration-control ease-out-expo;
-  }
-  .card-interactive:hover {
-    @apply shadow-md -translate-y-0.5;
-  }
-
-  .skeleton {
-    @apply rounded-md bg-surfaceHover;
-    background-image: linear-gradient(
-      90deg,
-      rgb(var(--color-surface-hover)) 0%,
-      rgb(var(--color-muted) / 0.14) 50%,
-      rgb(var(--color-surface-hover)) 100%
-    );
-    background-size: 200% 100%;
-    @apply animate-shimmer;
-  }
-
-  /* Small uppercase label used for table headers and field captions. */
-  .label-caption {
-    @apply text-caption font-semibold uppercase tracking-wider text-muted;
+  .glass-button {
+    @apply relative overflow-hidden transition-all duration-300 active:scale-[0.98] bg-accent text-white hover:bg-accent/90;
   }
 }
 
 @layer utilities {
-  .stagger-1 { animation-delay: 40ms; }
-  .stagger-2 { animation-delay: 80ms; }
-  .stagger-3 { animation-delay: 120ms; }
-  .stagger-4 { animation-delay: 160ms; }
-  .stagger-5 { animation-delay: 200ms; }
-
-  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .stagger-1 { animation-delay: 50ms; }
+  .stagger-2 { animation-delay: 100ms; }
+  .stagger-3 { animation-delay: 150ms; }
+  .stagger-4 { animation-delay: 200ms; }
+  .stagger-5 { animation-delay: 250ms; }
+  
+  /* Hide scrollbar for clean minimal look */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
 }
 
-/* Entrance animations — short, transform/opacity only. */
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes spring-up {
-  0% { opacity: 0; transform: translateY(8px); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-@keyframes scale-in {
-  0% { opacity: 0; transform: scale(0.97); }
-  100% { opacity: 1; transform: scale(1); }
-}
 @keyframes slide-in {
-  from { opacity: 0; transform: translateX(8px); }
-  to { opacity: 1; transform: translateX(0); }
+  from {
+    transform: translateX(12px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
-.animate-fade-in   { animation: fade-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-.animate-spring-up { animation: spring-up 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-.animate-scale-in  { animation: scale-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-.animate-slide-in  { animation: slide-in 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-
-@keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-.animate-spin-slow { animation: spin-slow 40s linear infinite; }
-
-/**
- * Respect reduced-motion. Decorative motion is removed entirely; anything
- * mid-animation is snapped to its final state so nothing is left invisible.
- */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-  .animate-fade-in,
-  .animate-spring-up,
-  .animate-scale-in,
-  .animate-slide-in,
-  .animate-fade-up {
-    opacity: 1 !important;
-    transform: none !important;
-  }
-  .animate-spin-slow { animation: none !important; }
+@keyframes fade-in {
+  from { opacity: 0; transform: scale(0.99); }
+  to { opacity: 1; transform: scale(1); }
 }
+
+@keyframes spring-up {
+  0% { opacity: 0; transform: translateY(12px) scale(0.99); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-spring-up {
+  animation: spring-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } .animate-spin-slow { animation: spin-slow 30s linear infinite; } @keyframes spin-3d {
+  0% { transform: perspective(1000px) rotateY(-15deg) rotateX(5deg) translateY(0px); }
+  50% { transform: perspective(1000px) rotateY(15deg) rotateX(-5deg) translateY(-15px); }
+  100% { transform: perspective(1000px) rotateY(-15deg) rotateX(5deg) translateY(0px); }
+}
+
+@keyframes float-3d {
+  0% { transform: translateY(0px) rotateX(0deg); }
+  50% { transform: translateY(-15px) rotateX(4deg); }
+  100% { transform: translateY(0px) rotateX(0deg); }
+}
+
+.animate-spin-3d {
+  animation: spin-3d 8s ease-in-out infinite;
+  transform-style: preserve-3d;
+}
+
+.animate-float-3d {
+  animation: float-3d 8s ease-in-out infinite;
+  transform-style: preserve-3d;
+}
+

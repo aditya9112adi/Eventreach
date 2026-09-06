@@ -4,14 +4,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
-import { AlertCircle, Calendar, CheckCircle2, Lock, Mail, Moon, Sun, User } from 'lucide-react';
+import { User, Mail, Lock, EyeOff, Eye, Loader2, Sun, Moon, Briefcase, Calendar } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
 import { validatePassword, PASSWORD_REQUIREMENTS } from '@eventreach/shared';
-import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
-import { PasswordInput } from '../components/ui/PasswordInput';
-import { Select } from '../components/ui/Select';
-import { meetsRequirement } from '../utils/passwordRequirements';
 
 const registerSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
@@ -49,6 +44,7 @@ type RegisterFormValues = z.infer<typeof registerSchema>;
 const Register = () => {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
+  const [showPassword, setShowPassword] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -63,7 +59,6 @@ const Register = () => {
   });
 
   const selectedRole = watch('role');
-  const passwordValue = watch('password') || '';
 
   // Compute current local datetime in the format required by datetime-local min attribute
   const getNowMin = () => {
@@ -76,9 +71,9 @@ const Register = () => {
     try {
       setApiError(null);
       setSuccessMsg(null);
-
+      
       // Fix Timezone shift: datetime-local inputs return "YYYY-MM-DDTHH:mm" which is local time,
-      // but servers in UTC will parse it as UTC time.
+      // but servers in UTC will parse it as UTC time. 
       // We convert it to a fully qualified UTC ISO string using the browser's local timezone.
       const payload = { ...data };
       if (payload.accessStartDate) {
@@ -92,235 +87,228 @@ const Register = () => {
       setSuccessMsg(response.data.message);
       setTimeout(() => navigate('/login'), 3000);
     } catch (error: any) {
-      setApiError(error.response?.data?.error || 'Something went wrong. Please try again.');
+      setApiError(
+        error.response?.data?.error || 'Something went wrong. Please try again.'
+      );
     }
   };
 
-  const dateFieldClass = (invalid?: boolean) =>
-    [
-      'h-9 w-full rounded-md border bg-surface px-3 text-sm text-foreground',
-      'transition-[border-color,box-shadow] duration-control ease-out-expo',
-      'focus:outline-none focus:ring-2',
-      invalid
-        ? 'border-destructive focus:border-destructive focus:ring-destructive/25'
-        : 'border-input hover:border-muted/60 focus:border-primary focus:ring-primary/25',
-    ].join(' ');
-
   return (
-    <div className="flex min-h-screen bg-background">
-      <button
-        type="button"
-        onClick={toggleTheme}
-        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-        className="absolute right-4 top-4 z-50 rounded-md border border-border bg-surface p-2 text-muted shadow-xs transition-colors duration-micro hover:text-foreground"
-      >
-        {theme === 'dark' ? (
-          <Sun className="h-4.5 w-4.5" aria-hidden="true" />
-        ) : (
-          <Moon className="h-4.5 w-4.5" aria-hidden="true" />
-        )}
-      </button>
-
-      {/* Brand panel — desktop only. */}
-      <div className="relative hidden w-1/2 flex-col justify-between overflow-hidden border-r border-border bg-surface p-12 lg:flex">
-        <div
-          className="pointer-events-none absolute inset-0 opacity-[0.07]"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle at 1px 1px, rgb(var(--color-foreground)) 1px, transparent 0)',
-            backgroundSize: '24px 24px',
-          }}
-          aria-hidden="true"
-        />
-
-        <img
-          src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
-          alt="Events By Occasion"
-          className="relative h-10 w-auto object-contain object-left mix-blend-multiply dark:mix-blend-normal"
-        />
-
-        <div className="relative max-w-md">
-          <h2 className="text-display font-semibold tracking-tight text-foreground">
-            Request access to the workspace.
-          </h2>
-          <p className="mt-4 text-md text-muted">
-            New accounts are reviewed by a Super Admin before they go live. You'll be able to sign in
-            as soon as your request is approved.
-          </p>
-        </div>
-
-        <p className="relative text-xs text-muted">
-          © {new Date().getFullYear()} Events By Occasion
-        </p>
+    <div className="min-h-screen bg-background flex">
+      {/* Theme Toggle */}
+      <div className="absolute top-4 right-4 z-50">
+        <button
+          onClick={toggleTheme}
+          className="p-2 rounded-md text-foreground/60 hover:text-foreground hover:bg-foreground/5 transition-colors bg-background/50 backdrop-blur-sm border border-border/50"
+          title="Toggle Theme"
+        >
+          {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+        </button>
       </div>
 
-      {/* Form panel */}
-      <div className="flex flex-1 flex-col justify-center px-4 py-12 sm:px-6 lg:px-16 xl:px-24">
-        <div className="mx-auto w-full max-w-sm">
-          <img
+      {/* Left Column - 3D Rotating Logo (Desktop Only) */}
+      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden items-center justify-center">
+        
+        <div className="relative z-10 perspective-1000">
+          <img 
             src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
-            alt="Events By Occasion"
-            className="mx-auto mb-8 h-10 w-auto object-contain mix-blend-multiply dark:mix-blend-normal lg:hidden"
+            alt="Events By Occasion Logo" 
+            className="w-64 h-auto object-contain dark:drop-shadow-2xl mix-blend-multiply dark:mix-blend-normal animate-spin-slow" 
           />
+        </div>
+      </div>
 
-          <div className="mb-7">
-            <h1 className="text-h1 font-semibold tracking-tight text-foreground">Create account</h1>
-            <p className="mt-1.5 text-sm text-muted">
-              Register to join Events By Occasion.
+      {/* Right Column - Form */}
+      <div className="flex-1 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-20 xl:px-24">
+        <div className="mx-auto w-full max-w-sm lg:max-w-md">
+          {/* Mobile Logo (Visible only on small screens) */}
+          <div className="flex justify-center mb-8 lg:hidden">
+            <div className="perspective-1000">
+              <img 
+                src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
+                alt="Events By Occasion Logo" 
+                className="w-32 h-auto object-contain dark:drop-shadow-xl mix-blend-multiply dark:mix-blend-normal animate-spin-slow" 
+              />
+            </div>
+          </div>
+          
+          <div className="text-center lg:text-left mb-8 animate-fade-in">
+            <h2 className="text-3xl font-extrabold text-foreground tracking-tight">
+              Create Account
+            </h2>
+            <p className="mt-2 text-sm text-foreground/60">
+              Register to join Events By Occasion
             </p>
           </div>
 
-          {apiError && (
-            <div
-              role="alert"
-              className="mb-5 flex items-start gap-2.5 rounded-lg border border-destructive/25 bg-destructive/10 px-3.5 py-3 text-sm font-medium text-destructive"
-            >
-              <AlertCircle className="mt-px h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>{apiError}</span>
-            </div>
-          )}
-
-          {successMsg && (
-            <div
-              role="status"
-              className="mb-5 flex items-start gap-2.5 rounded-lg border border-success/25 bg-success/10 px-3.5 py-3 text-sm font-medium text-success"
-            >
-              <CheckCircle2 className="mt-px h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>{successMsg}</span>
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
-            <Input
-              label="Full name"
-              type="text"
-              autoComplete="name"
-              placeholder="John Doe"
-              icon={<User className="h-4 w-4" />}
-              error={errors.name?.message}
-              {...register('name')}
-            />
-
-            <Input
-              label="Email address"
-              type="email"
-              autoComplete="email"
-              placeholder="name@company.com"
-              icon={<Mail className="h-4 w-4" />}
-              error={errors.email?.message}
-              {...register('email')}
-            />
-
-            <div>
-              <PasswordInput
-                label="Password"
-                autoComplete="new-password"
-                placeholder="••••••••"
-                icon={<Lock className="h-4 w-4" />}
-                error={errors.password?.message}
-                {...register('password')}
-              />
-              {/* Live checklist: the same rules the API enforces, so the user can
-                  see what is still missing instead of guessing after a rejection. */}
-              <ul className="mt-2 space-y-1">
-                {PASSWORD_REQUIREMENTS.map((requirement) => {
-                  const met = meetsRequirement(requirement, passwordValue);
-                  return (
-                    <li
-                      key={requirement}
-                      className={`flex items-center gap-1.5 text-xs ${
-                        met ? 'text-success' : 'text-muted'
-                      }`}
-                    >
-                      <CheckCircle2
-                        className={`h-3.5 w-3.5 shrink-0 ${met ? '' : 'opacity-40'}`}
-                        aria-hidden="true"
-                      />
-                      {requirement}
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-
-            <Select label="Role" error={undefined} {...register('role')}>
-              <option value="User">User</option>
-              <option value="Admin">Admin</option>
-            </Select>
-
-            {/* Access Date Fields — shown only when Admin is selected */}
-            {selectedRole === 'Admin' && (
-              <div className="animate-fade-in space-y-4 rounded-xl border border-primary/20 bg-primary/5 p-4">
-                <div>
-                  <p className="flex items-center gap-2 text-sm font-semibold text-primary">
-                    <Calendar className="h-4 w-4" aria-hidden="true" /> Access period request
-                  </p>
-                  <p className="mt-1 text-xs text-muted">
-                    Specify the period during which you require access. The Super Admin will approve
-                    this request as-is.
-                  </p>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="accessStartDate"
-                    className="mb-1.5 block text-sm font-medium text-foreground"
-                  >
-                    Access start date &amp; time <span className="text-destructive">*</span>
-                  </label>
-                  <input
-                    id="accessStartDate"
-                    type="datetime-local"
-                    min={getNowMin()}
-                    aria-invalid={errors.accessStartDate ? true : undefined}
-                    className={dateFieldClass(Boolean(errors.accessStartDate))}
-                    {...register('accessStartDate')}
-                  />
-                  {errors.accessStartDate && (
-                    <p role="alert" className="mt-1.5 text-xs font-medium text-destructive">
-                      {errors.accessStartDate.message}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="accessEndDate"
-                    className="mb-1.5 block text-sm font-medium text-foreground"
-                  >
-                    Access end date &amp; time <span className="text-destructive">*</span>
-                  </label>
-                  <input
-                    id="accessEndDate"
-                    type="datetime-local"
-                    min={getNowMin()}
-                    aria-invalid={errors.accessEndDate ? true : undefined}
-                    className={dateFieldClass(Boolean(errors.accessEndDate))}
-                    {...register('accessEndDate')}
-                  />
-                  {errors.accessEndDate && (
-                    <p role="alert" className="mt-1.5 text-xs font-medium text-destructive">
-                      {errors.accessEndDate.message}
-                    </p>
-                  )}
-                </div>
+          <div className="bg-card py-8 px-4 shadow-xl shadow-black/5 sm:rounded-2xl sm:px-10 border border-border/50 animate-spring-up">
+            {apiError && (
+              <div className="bg-destructive/10 border border-destructive/20 text-destructive p-3 rounded-lg mb-6 text-sm text-center font-medium">
+                {apiError}
               </div>
             )}
 
-            <Button type="submit" size="lg" block isLoading={isSubmitting} className="!mt-6">
-              {isSubmitting ? 'Creating account…' : 'Create account'}
-            </Button>
-          </form>
+            {successMsg && (
+              <div className="bg-accent/10 border border-accent/20 text-accent p-3 rounded-lg mb-6 text-sm text-center font-medium">
+                {successMsg}
+              </div>
+            )}
 
-          <p className="mt-6 text-center text-sm text-muted">
-            Already have an account?{' '}
-            <Link
-              to="/login"
-              className="font-medium text-primary transition-colors duration-micro hover:text-primary-hover"
-            >
-              Sign in
-            </Link>
-          </p>
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1.5">
+                  Full Name
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <User className="h-5 w-5 text-foreground/40" />
+                  </div>
+                  <input
+                    type="text"
+                    {...register('name')}
+                    className={`block w-full pl-10 pr-3 py-2.5 border ${
+                      errors.name ? 'border-destructive' : 'border-input'
+                    } rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm`}
+                    placeholder="John Doe"
+                  />
+                </div>
+                {errors.name && <p className="mt-1.5 text-sm text-destructive font-medium">{errors.name.message}</p>}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1.5">
+                  Email Address
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Mail className="h-5 w-5 text-foreground/40" />
+                  </div>
+                  <input
+                    type="email"
+                    {...register('email')}
+                    className={`block w-full pl-10 pr-3 py-2.5 border ${
+                      errors.email ? 'border-destructive' : 'border-input'
+                    } rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm`}
+                    placeholder="name@company.com"
+                  />
+                </div>
+                {errors.email && <p className="mt-1.5 text-sm text-destructive font-medium">{errors.email.message}</p>}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1.5">
+                  Password
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Lock className="h-5 w-5 text-foreground/40" />
+                  </div>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    {...register('password')}
+                    className={`block w-full pl-10 pr-10 py-2.5 border ${
+                      errors.password ? 'border-destructive' : 'border-input'
+                    } rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm`}
+                    placeholder="••••••••"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center transition-colors"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-5 w-5 text-foreground/40 hover:text-foreground" />
+                    ) : (
+                      <Eye className="h-5 w-5 text-foreground/40 hover:text-foreground" />
+                    )}
+                  </button>
+                </div>
+                {errors.password && <p className="mt-1.5 text-sm text-destructive font-medium">{errors.password.message}</p>}
+                <p className="mt-1.5 text-xs text-foreground/50">
+                  {PASSWORD_REQUIREMENTS.join(' · ')}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1.5">
+                  Role
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Briefcase className="h-5 w-5 text-foreground/40" />
+                  </div>
+                  <select
+                    {...register('role')}
+                    className="block w-full pl-10 pr-3 py-2.5 border border-input rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm appearance-none cursor-pointer"
+                  >
+                    <option value="User">User</option>
+                    <option value="Admin">Admin</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Access Date Fields — shown only when Admin is selected */}
+              {selectedRole === 'Admin' && (
+                <div className="rounded-xl border border-accent/20 bg-accent/5 p-4 space-y-4 animate-fade-in">
+                  <p className="text-xs font-bold uppercase tracking-wider text-accent flex items-center gap-2">
+                    <Calendar className="w-4 h-4" /> Access Period Request
+                  </p>
+                  <p className="text-xs text-foreground/60">
+                    Specify the period during which you require access. The Super Admin will approve this request as-is.
+                  </p>
+
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1.5">
+                      Access Start Date & Time <span className="text-destructive">*</span>
+                    </label>
+                    <input
+                      type="datetime-local"
+                      min={getNowMin()}
+                      {...register('accessStartDate')}
+                      className={`block w-full px-3 py-2.5 border ${
+                        errors.accessStartDate ? 'border-destructive' : 'border-input'
+                      } rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm`}
+                    />
+                    {errors.accessStartDate && <p className="mt-1.5 text-sm text-destructive font-medium">{errors.accessStartDate.message}</p>}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1.5">
+                      Access End Date & Time <span className="text-destructive">*</span>
+                    </label>
+                    <input
+                      type="datetime-local"
+                      min={getNowMin()}
+                      {...register('accessEndDate')}
+                      className={`block w-full px-3 py-2.5 border ${
+                        errors.accessEndDate ? 'border-destructive' : 'border-input'
+                      } rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm`}
+                    />
+                    {errors.accessEndDate && <p className="mt-1.5 text-sm text-destructive font-medium">{errors.accessEndDate.message}</p>}
+                  </div>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-accent hover:bg-accent/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed transition-all transform active:scale-[0.98] mt-2"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  'Register'
+                )}
+              </button>
+
+              <div className="text-center mt-6 text-sm">
+                <span className="text-foreground/60">Already have an account? </span>
+                <Link to="/login" className="font-bold text-accent hover:text-accent/80 transition-colors">
+                  Sign in
+                </Link>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
     </div>
