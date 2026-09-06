@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 
 import { Admin } from '../models/Admin';
 import { User } from '../models/User';
+import { getAllowedOrigins } from '../config/appUrls';
 
 let io: Server;
 
@@ -74,7 +75,7 @@ const scheduleExpiryNotice = async (userId: string) => {
 };
 
 export const initSocket = (server: HttpServer) => {
-  const allowedOrigins = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : ['http://localhost:5173', 'https://eventreach-frontend-zeta.vercel.app'];
+  const allowedOrigins = getAllowedOrigins();
   io = new Server(server, {
     cors: {
       origin: allowedOrigins,

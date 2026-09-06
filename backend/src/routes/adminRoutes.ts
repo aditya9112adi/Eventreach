@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getPendingUsers, approveUser, rejectUser, getAccessRecords, revokeAccess, assignUserEvent } from '../controllers/adminController';
+import { getPendingUsers, approveUser, rejectUser, getAccessRecords, revokeAccess, assignUserEvent, getSystemHealth } from '../controllers/adminController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { requireRole } from '../middleware/roleMiddleware';
 
@@ -12,6 +12,9 @@ router.get('/users/pending', requireRole('SuperAdmin'), getPendingUsers);
 router.put('/users/:id/approve', requireRole('SuperAdmin'), approveUser);
 router.put('/users/:id/reject', requireRole('SuperAdmin'), rejectUser);
 router.put('/users/:id/revoke-access', requireRole('SuperAdmin'), revokeAccess);
+
+// Deployment configuration diagnostic (booleans only, never secret values).
+router.get('/system-health', requireRole('SuperAdmin'), getSystemHealth);
 
 // SuperAdmin and Admin routes
 router.get('/users/access-records', requireRole(['SuperAdmin', 'Admin']), getAccessRecords);

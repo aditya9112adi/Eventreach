@@ -1,4 +1,7 @@
 import nodemailer from 'nodemailer';
+import { getFrontendBaseUrl } from '../config/appUrls';
+
+export { getFrontendBaseUrl };
 
 /**
  * Shared email helpers.
@@ -17,12 +20,6 @@ const escapeHtml = (unsafe: string) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 
-/** First entry of FRONTEND_URL (it may be a comma-separated CORS list). */
-export const getFrontendBaseUrl = (): string =>
-  process.env.FRONTEND_URL
-    ? process.env.FRONTEND_URL.split(',')[0].trim().replace(/\/$/, '')
-    : 'http://localhost:5173';
-
 const getTransporter = () => {
   const { EMAIL_USER, EMAIL_PASS } = process.env;
 
@@ -34,6 +31,31 @@ const getTransporter = () => {
     service: 'gmail',
     auth: { user: EMAIL_USER, pass: EMAIL_PASS },
   });
+};
+
+/**
+ * Check the mail credentials without sending anything.
+ *
+ * A dead App Password used to be invisible: `send()` swallows transport errors
+ * so the API still answers "reset link sent". This surfaces the problem in the
+ * server log at boot instead of when a user tries to reset their password.
+ * Never logs or returns the credentials themselves.
+ */
+export const verifyEmailTransport = async (): Promise<{
+  configured: boolean;
+  ok: boolean;
+  error?: string;
+}> => {
+  const transporter = getTransporter();
+  if (!transporter) {
+    return { configured: false, ok: false, error: 'EMAIL_USER / EMAIL_PASS not configured' };
+  }
+  try {
+    await transporter.verify();
+    return { configured: true, ok: true };
+  } catch (error: any) {
+    return { configured: true, ok: false, error: String(error?.message || error).slice(0, 200) };
+  }
 };
 
 const shell = (inner: string) => `

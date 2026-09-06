@@ -6,7 +6,9 @@ import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { getIO, emitPendingApprovalsChanged } from '../services/socketService';
 import { isEventAuthorized } from '../services/eventAuthService';
-import { sendRegistrationDecisionEmail } from '../utils/email';
+import { sendRegistrationDecisionEmail, verifyEmailTransport } from '../utils/email';
+import { getFrontendBaseUrl, isFrontendUrlConfigured } from '../config/appUrls';
+import { getResetTtlMinutes } from '../utils/resetToken';
 
 export const getPendingUsers = async (req: Request, res: Response) => {
   try {
@@ -386,5 +388,49 @@ export const assignUserEvent = async (req: RequestWithId, res: Response) => {
   } catch (error) {
     console.error('Error assigning user event:', error);
     res.status(500).json({ error: 'Failed to assign event to user' });
+  }
+};
+
+/**
+ * Super Admin diagnostic for deployment configuration.
+ *
+ * Integrations degrade silently by design — a dead mail password still returns
+ * "reset link sent" so account existence is not leaked — which makes a
+ * misconfigured deployment hard to spot. This reports whether each dependency is
+ * usable.
+ *
+ * Reports booleans and the (public) frontend URL only. No secret value is ever
+ * returned; the mail `error` is the provider's rejection message, not a credential.
+ */
+export const getSystemHealth = async (req: Request, res: Response) => {
+  try {
+    const mail = await verifyEmailTransport();
+
+    res.json({
+      frontendUrl: {
+        value: getFrontendBaseUrl(),
+        fromEnvironment: isFrontendUrlConfigured(),
+      },
+      email: {
+        senderConfigured: Boolean(process.env.EMAIL_USER),
+        credentialsConfigured: mail.configured,
+        credentialsAccepted: mail.ok,
+        error: mail.ok ? undefined : mail.error,
+        superAdminRecipientConfigured: Boolean(process.env.SUPERADMIN_EMAIL),
+      },
+      passwordReset: {
+        tokenTtlMinutes: getResetTtlMinutes(),
+      },
+      whatsapp: {
+        mode: process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_ID ? 'production' : 'mock',
+        apiVersion: process.env.WHATSAPP_API_VERSION || 'v22.0',
+      },
+      auth: {
+        jwtSecretConfigured: Boolean(process.env.JWT_SECRET),
+      },
+    });
+  } catch (error) {
+    console.error('System health error:', error);
+    res.status(500).json({ error: 'Failed to read system health' });
   }
 };

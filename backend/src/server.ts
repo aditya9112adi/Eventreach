@@ -18,6 +18,8 @@ import adminRoutes from './routes/adminRoutes';
 import auditRoutes from './routes/auditRoutes';
 import { requestMiddleware } from './middleware/requestMiddleware';
 import { globalLimiter } from './middleware/rateLimitMiddleware';
+import { getAllowedOrigins, getFrontendBaseUrl, isFrontendUrlConfigured } from './config/appUrls';
+import { verifyEmailTransport } from './utils/email';
 
 dotenv.config();
 
@@ -34,7 +36,7 @@ app.set('trust proxy', 2);
 // Middleware
 app.use(helmet());
 
-const allowedOrigins = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : ['http://localhost:5173', 'https://eventreach-frontend-zeta.vercel.app'];
+const allowedOrigins = getAllowedOrigins();
 app.use(cors({
   origin: allowedOrigins,
   credentials: true
@@ -65,8 +67,33 @@ app.get('/health', (req, res) => {
 });
 
 // Start Server
+/**
+ * Report configuration that silently degrades at runtime, so a misconfigured
+ * deployment is obvious in the logs rather than discovered by a user.
+ */
+const reportConfiguration = async () => {
+  if (isFrontendUrlConfigured()) {
+    console.log(`Frontend URL: ${getFrontendBaseUrl()} (from FRONTEND_URL)`);
+  } else {
+    console.warn(
+      `FRONTEND_URL is not set — falling back to ${getFrontendBaseUrl()}. ` +
+        'Set it so email links always point at the right frontend.'
+    );
+  }
+
+  const mail = await verifyEmailTransport();
+  if (mail.ok) {
+    console.log('Email transport: OK (credentials accepted)');
+  } else if (!mail.configured) {
+    console.warn('Email transport: NOT CONFIGURED — password reset and approval emails will not be sent.');
+  } else {
+    console.error(`Email transport: FAILED — ${mail.error}. Outgoing email will not be delivered.`);
+  }
+};
+
 const startServer = async () => {
   await connectDB();
+  await reportConfiguration();
   const httpServer = createServer(app);
   initSocket(httpServer);
   httpServer.listen(PORT, () => {
