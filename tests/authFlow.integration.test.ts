@@ -475,3 +475,252 @@ describe('Change password (signed in)', () => {
     );
   });
 });
+
+describe('Super Admin administrative password reset', () => {
+  const resetPath = (id: string, type: 'Admin' | 'User') =>
+    `/api/admin/users/${id}/reset-password?type=${type}`;
+
+  test('there is no unauthenticated public reset or forgot endpoint', async () => {
+    // The recovery design is deliberately Super Admin mediated. A public
+    // "email + new password" endpoint would be a one-request account takeover.
+    for (const path of ['/api/auth/reset-password', '/api/auth/forgot-password']) {
+      const res = await call('POST', path, {
+        body: { email: 'victim@example.com', newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+      });
+      assert.equal(res.status, 404, `${path} must not exist`);
+    }
+  });
+
+  test('requires authentication', async () => {
+    const target = await seedAccount('User', 'unauth-target@example.com');
+    const res = await call('PUT', resetPath(String(target._id), 'User'), {
+      body: { newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    });
+    assert.equal(res.status, 401);
+  });
+
+  test('a User cannot reset anyone', async () => {
+    await seedAccount('User', 'plain-user@example.com');
+    const target = await seedAccount('User', 'victim-a@example.com');
+    const token = (await loginAs('plain-user@example.com', GOOD_PASSWORD)).body.token;
+
+    const res = await call('PUT', resetPath(String(target._id), 'User'), {
+      token,
+      body: { newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    });
+    assert.equal(res.status, 403);
+
+    // The victim's password is untouched.
+    assert.equal((await loginAs('victim-a@example.com', GOOD_PASSWORD)).status, 200);
+    assert.equal((await loginAs('victim-a@example.com', NEW_PASSWORD)).status, 401);
+  });
+
+  test('an Admin cannot reset anyone', async () => {
+    await seedAccount('Admin', 'an-admin@example.com');
+    const target = await seedAccount('User', 'victim-b@example.com');
+    const token = (await loginAs('an-admin@example.com', GOOD_PASSWORD)).body.token;
+
+    const res = await call('PUT', resetPath(String(target._id), 'User'), {
+      token,
+      body: { newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    });
+    assert.equal(res.status, 403);
+    assert.equal((await loginAs('victim-b@example.com', GOOD_PASSWORD)).status, 200);
+  });
+
+  test('a Super Admin cannot reset another Super Admin', async () => {
+    await seedAccount('SuperAdmin', 'sa-one@example.com');
+    const peer = await seedAccount('SuperAdmin', 'sa-two@example.com');
+    const token = (await loginAs('sa-one@example.com', GOOD_PASSWORD)).body.token;
+
+    const res = await call('PUT', resetPath(String(peer._id), 'Admin'), {
+      token,
+      body: { newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    });
+    assert.equal(res.status, 403);
+    assert.equal((await loginAs('sa-two@example.com', GOOD_PASSWORD)).status, 200);
+  });
+
+  test('rejects a confirmation mismatch and a weak password', async () => {
+    await seedAccount('SuperAdmin', 'sa-valid@example.com');
+    const target = await seedAccount('User', 'target-valid@example.com');
+    const token = (await loginAs('sa-valid@example.com', GOOD_PASSWORD)).body.token;
+
+    const mismatch = await call('PUT', resetPath(String(target._id), 'User'), {
+      token,
+      body: { newPassword: NEW_PASSWORD, confirmPassword: 'SomethingElse123' },
+    });
+    assert.equal(mismatch.status, 400);
+    assert.match(mismatch.body.error, /do not match/i);
+
+    const weak = await call('PUT', resetPath(String(target._id), 'User'), {
+      token,
+      body: { newPassword: 'short', confirmPassword: 'short' },
+    });
+    assert.equal(weak.status, 400);
+    assert.match(weak.body.error, /at least 8 characters/i);
+
+    // Neither attempt changed anything.
+    assert.equal((await loginAs('target-valid@example.com', GOOD_PASSWORD)).status, 200);
+  });
+
+  test('resets a User securely, preserving role and status', async () => {
+    await seedAccount('SuperAdmin', 'sa-reset-u@example.com');
+    const target = await seedAccount('User', 'reset-me@example.com');
+    const before = await User.findById(target._id);
+    const token = (await loginAs('sa-reset-u@example.com', GOOD_PASSWORD)).body.token;
+
+    const res = await call('PUT', resetPath(String(target._id), 'User'), {
+      token,
+      body: { newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    });
+    assert.equal(res.status, 200);
+
+    const serialised = JSON.stringify(res.body);
+    assert.ok(!serialised.includes(NEW_PASSWORD), 'must not echo the password');
+    assert.ok(!/passwordHash/i.test(serialised), 'must not leak the hash');
+
+    const after = await User.findById(target._id);
+    assert.notEqual(after.passwordHash, NEW_PASSWORD, 'must not be plaintext');
+    assert.ok(after.passwordHash.startsWith('$2'), 'must be a bcrypt hash');
+    assert.ok(await bcrypt.compare(NEW_PASSWORD, after.passwordHash));
+
+    // Nothing else moved.
+    assert.equal(after.status, before.status, 'status unchanged');
+    assert.equal(String(after.email), String(before.email), 'email unchanged');
+    assert.equal(String(after.name), String(before.name), 'name unchanged');
+    assert.equal(
+      String(after.assignedEventId ?? ''),
+      String(before.assignedEventId ?? ''),
+      'event ownership unchanged'
+    );
+
+    // Old password dead, new password works.
+    assert.equal((await loginAs('reset-me@example.com', GOOD_PASSWORD)).status, 401);
+    const relogin = await loginAs('reset-me@example.com', NEW_PASSWORD);
+    assert.equal(relogin.status, 200);
+    assert.equal(relogin.body.user.role, 'User', 'role preserved');
+  });
+
+  test('resets an Admin and preserves the Admin role', async () => {
+    await seedAccount('SuperAdmin', 'sa-reset-a@example.com');
+    const target = await seedAccount('Admin', 'admin-reset@example.com');
+    const token = (await loginAs('sa-reset-a@example.com', GOOD_PASSWORD)).body.token;
+
+    const res = await call('PUT', resetPath(String(target._id), 'Admin'), {
+      token,
+      body: { newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    });
+    assert.equal(res.status, 200);
+
+    const after = await Admin.findById(target._id);
+    assert.equal(after.role, 'Admin', 'role must be unchanged');
+    assert.equal(after.status, 'Active', 'status must be unchanged');
+
+    const relogin = await loginAs('admin-reset@example.com', NEW_PASSWORD);
+    assert.equal(relogin.status, 200);
+    assert.equal(relogin.body.user.role, 'Admin');
+  });
+
+  test('revokes the existing sessions of the target account', async () => {
+    await seedAccount('SuperAdmin', 'sa-revoke@example.com');
+    const target = await seedAccount('User', 'revoke-target@example.com');
+    const victimToken = (await loginAs('revoke-target@example.com', GOOD_PASSWORD)).body.token;
+    assert.notEqual((await call('GET', '/api/events', { token: victimToken })).status, 401);
+
+    // passwordChangedAt has second precision, so land it after the token's iat.
+    await new Promise((r) => setTimeout(r, 2100));
+
+    const saToken = (await loginAs('sa-revoke@example.com', GOOD_PASSWORD)).body.token;
+    const res = await call('PUT', resetPath(String(target._id), 'User'), {
+      token: saToken,
+      body: { newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    });
+    assert.equal(res.status, 200);
+
+    assert.equal(
+      (await call('GET', '/api/events', { token: victimToken })).status,
+      401,
+      'the old session of the target must be revoked'
+    );
+  });
+
+  test('rejects an unknown account and a missing type', async () => {
+    await seedAccount('SuperAdmin', 'sa-404@example.com');
+    const token = (await loginAs('sa-404@example.com', GOOD_PASSWORD)).body.token;
+    const orphan = '507f1f77bcf86cd799439011';
+
+    assert.equal(
+      (await call('PUT', resetPath(orphan, 'User'), {
+        token,
+        body: { newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+      })).status,
+      404
+    );
+
+    assert.equal(
+      (await call('PUT', `/api/admin/users/${orphan}/reset-password`, {
+        token,
+        body: { newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+      })).status,
+      400
+    );
+  });
+
+  test('is rate limited', async () => {
+    await seedAccount('SuperAdmin', 'sa-rate@example.com');
+    const target = await seedAccount('User', 'rate-target@example.com');
+    const token = (await loginAs('sa-rate@example.com', GOOD_PASSWORD)).body.token;
+    const ip = '198.51.100.77';
+
+    let limited = false;
+    for (let i = 0; i < 16; i++) {
+      const res = await call('PUT', resetPath(String(target._id), 'User'), {
+        token,
+        ip,
+        body: { newPassword: `RotatePass${i}23`, confirmPassword: `RotatePass${i}23` },
+      });
+      if (res.status === 429) {
+        limited = true;
+        break;
+      }
+    }
+    assert.ok(limited, 'the reset endpoint must be rate limited');
+  });
+});
+
+describe('Change password accepts the confirmPassword field', () => {
+  test('rejects a mismatched confirmation', async () => {
+    await seedAccount('User', 'confirm-mismatch@example.com');
+    const token = (await loginAs('confirm-mismatch@example.com', GOOD_PASSWORD)).body.token;
+
+    const res = await call('POST', '/api/auth/change-password', {
+      token,
+      body: {
+        currentPassword: GOOD_PASSWORD,
+        newPassword: NEW_PASSWORD,
+        confirmPassword: 'DifferentPass123',
+      },
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /do not match/i);
+
+    assert.equal((await loginAs('confirm-mismatch@example.com', GOOD_PASSWORD)).status, 200);
+  });
+
+  test('accepts a matching confirmation', async () => {
+    await seedAccount('User', 'confirm-ok@example.com');
+    const token = (await loginAs('confirm-ok@example.com', GOOD_PASSWORD)).body.token;
+
+    const res = await call('POST', '/api/auth/change-password', {
+      token,
+      body: {
+        currentPassword: GOOD_PASSWORD,
+        newPassword: NEW_PASSWORD,
+        confirmPassword: NEW_PASSWORD,
+      },
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await loginAs('confirm-ok@example.com', NEW_PASSWORD)).status, 200);
+  });
+});

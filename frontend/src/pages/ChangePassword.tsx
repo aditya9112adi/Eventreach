@@ -6,11 +6,8 @@ import { Lock, Eye, EyeOff, Loader2, CheckCircle2, KeyRound } from 'lucide-react
 import api from '../services/api';
 import { useAuth } from '../store/authStore';
 import { useToast } from '../components/ui/Toast';
-import {
-  PASSWORD_REQUIREMENTS,
-  PASSWORD_MIN_LENGTH,
-  validatePassword,
-} from '@eventreach/shared';
+import { PASSWORD_REQUIREMENTS, validatePassword } from '@eventreach/shared';
+import { meetsRequirement } from '../utils/passwordRequirements';
 
 const schema = z
   .object({
@@ -56,12 +53,9 @@ const ChangePassword = () => {
 
   const newPasswordValue = watch('newPassword') || '';
 
-  const meets = (requirement: string): boolean => {
-    if (requirement.includes('characters')) return newPasswordValue.length >= PASSWORD_MIN_LENGTH;
-    if (requirement.includes('letter')) return /[A-Za-z]/.test(newPasswordValue);
-    if (requirement.includes('number')) return /[0-9]/.test(newPasswordValue);
-    return false;
-  };
+  // Shared with the Super Admin reset dialog so both agree on what is valid.
+  const meets = (requirement: string): boolean =>
+    meetsRequirement(requirement, newPasswordValue);
 
   const onSubmit = async (data: FormValues) => {
     try {
@@ -69,6 +63,8 @@ const ChangePassword = () => {
       const response = await api.post('/auth/change-password', {
         currentPassword: data.currentPassword,
         newPassword: data.newPassword,
+        // The backend re-checks the confirmation rather than trusting the form.
+        confirmPassword: data.confirmPassword,
       });
 
       // Changing the password revokes every token issued earlier, including the

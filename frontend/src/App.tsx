@@ -23,6 +23,7 @@ const Reports = lazy(() => import('./pages/Reports'));
 const Settings = lazy(() => import('./pages/Settings'));
 const ChangePassword = lazy(() => import('./pages/ChangePassword'));
 const Register = lazy(() => import('./pages/Register'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const UserApprovals = lazy(() => import('./pages/Admin/UserApprovals'));
 const JustAccess = lazy(() => import('./pages/Admin/JustAccess'));
 const AuditLogs = lazy(() => import('./pages/Admin/AuditLogs'));
@@ -56,6 +57,7 @@ function AnimatedRoutes() {
       <Routes location={location} key={location.pathname}>
         <Route path="/login" element={<PageWrapper><Login /></PageWrapper>} />
         <Route path="/register" element={<PageWrapper><Register /></PageWrapper>} />
+        <Route path="/forgot-password" element={<PageWrapper><ForgotPassword /></PageWrapper>} />
 
         <Route
           element={

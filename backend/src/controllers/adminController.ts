@@ -1,4 +1,7 @@
 import { Request, Response } from 'express';
+import bcrypt from 'bcrypt';
+import { z } from 'zod';
+import { validatePassword } from '@eventreach/shared';
 import { User } from '../models/User';
 import { Admin } from '../models/Admin';
 import { Event } from '../models/Event';
@@ -429,5 +432,114 @@ export const getSystemHealth = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('System health error:', error);
     res.status(500).json({ error: 'Failed to read system health' });
+  }
+};
+
+// Matches authController.ts and seed.ts — every hash in the system uses the
+// same cost so a rotated password is no weaker than the original.
+const BCRYPT_ROUNDS = 10;
+
+const adminResetPasswordSchema = z
+  .object({
+    newPassword: z.string().min(1, 'New password is required'),
+    confirmPassword: z.string().min(1, 'Please confirm the new password'),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: 'Passwords do not match',
+    path: ['confirmPassword'],
+  });
+
+/**
+ * PUT /api/admin/users/:id/reset-password?type=Admin|User
+ *
+ * Administrative password reset, Super Admin only.
+ *
+ * This is the account-recovery path for a locked-out Admin or User. The product
+ * deliberately has no email delivery, and an account carries no other verifiable
+ * factor (no phone, no MFA, no security questions), so identity is vouched for
+ * out-of-band by a Super Admin rather than by an unauthenticated form. That is
+ * why there is no public "email + new password" endpoint: email is the login id
+ * and is visible across the admin screens, so such an endpoint would be a
+ * one-request takeover of any account.
+ *
+ * The acting Super Admin is taken from the verified JWT via requireAuth /
+ * requireRole; nothing about the caller is read from the request body.
+ */
+export const adminResetUserPassword = async (req: RequestWithId, res: Response) => {
+  try {
+    const parsed = adminResetPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0].message });
+    }
+
+    const { newPassword } = parsed.data;
+
+    // Same policy as registration and self-service change, from the shared module.
+    const policyProblem = validatePassword(newPassword);
+    if (policyProblem) {
+      return res.status(400).json({ error: policyProblem });
+    }
+
+    const { id } = req.params;
+    const { type } = req.query as { type?: string };
+    if (type !== 'Admin' && type !== 'User') {
+      return res.status(400).json({ error: 'A valid account type is required.' });
+    }
+
+    const Model: any = type === 'Admin' ? Admin : User;
+    const account = await Model.findById(id);
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found.' });
+    }
+
+    // A Super Admin may recover Admin and User accounts, but never another
+    // Super Admin: that would be a lateral takeover of a peer administrator.
+    // A Super Admin rotates their own password through change-password, or
+    // offline via the reset-superadmin-password script.
+    if (type === 'Admin' && account.role === 'SuperAdmin') {
+      await AuditService.log({
+        action: 'PASSWORD_RESET_DENIED',
+        collectionName: 'admins',
+        documentId: account._id.toString(),
+        actor: AuditService.getActorFromReq(req),
+        request: AuditService.getRequestInfo(req),
+        success: false,
+        description: `Refused administrative password reset targeting Super Admin ${account.email}`,
+      });
+      return res
+        .status(403)
+        .json({ error: 'A Super Admin account cannot be reset from here.' });
+    }
+
+    const changedAt = new Date();
+    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+
+    // Only the password fields move. Role, status, access window, event
+    // ownership, approval metadata and profile details are all left alone.
+    await Model.updateOne(
+      { _id: account._id },
+      { $set: { passwordHash, passwordChangedAt: changedAt } }
+    );
+
+    await AuditService.log({
+      action: 'PASSWORD_RESET_BY_ADMIN',
+      collectionName: type === 'Admin' ? 'admins' : 'users',
+      documentId: account._id.toString(),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      description: `Super Admin reset the password for ${type}: ${account.email}`,
+    });
+
+    // passwordChangedAt is in the past relative to any token already issued to
+    // this account, so every existing session for them is revoked.
+    return res.json({
+      message: 'Password has been reset. The account must sign in with the new password.',
+      email: account.email,
+    });
+  } catch (error) {
+    console.error('Admin password reset error:', error);
+    return res
+      .status(500)
+      .json({ error: 'Unable to reset the password right now. Please try again later.' });
   }
 };

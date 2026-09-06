@@ -115,8 +115,6 @@ const DashboardLayout = () => {
     { name: 'Guests', to: '/contacts', icon: Users },
     { name: 'Campaigns', to: '/campaigns', icon: Megaphone },
     { name: 'Reports', to: '/reports', icon: PieChart },
-    // Available to every signed-in role.
-    { name: 'Change Password', to: '/change-password', icon: KeyRound },
   ];
 
   if (user?.role === 'SuperAdmin') {
@@ -198,6 +196,23 @@ const DashboardLayout = () => {
                 {user?.email}
               </p>
             </div>
+            {/* Change Password lives here rather than in the nav list: every
+                role needs it, but it is an account action, not a destination. */}
+            <NavLink
+              to="/change-password"
+              onClick={() => setSidebarOpen(false)}
+              className={({ isActive }) =>
+                `ml-2 p-2 rounded-md transition-colors ${
+                  isActive
+                    ? 'text-accent bg-accent/10'
+                    : 'text-foreground/50 hover:text-foreground hover:bg-foreground/5'
+                }`
+              }
+              title="Change Password"
+              aria-label="Change Password"
+            >
+              <KeyRound className="w-5 h-5" />
+            </NavLink>
             <button
               onClick={toggleTheme}
               className="ml-2 p-2 text-foreground/50 hover:text-foreground hover:bg-foreground/5 rounded-md transition-colors"

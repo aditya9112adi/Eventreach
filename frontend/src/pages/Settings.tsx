@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Save, Shield, Globe, Building2, Key, CheckCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { Button } from '../components/ui/Button';
 
@@ -191,6 +192,48 @@ const Settings = () => {
                 </p>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Security — account password management for the signed-in Super Admin. */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <div className="flex items-center mb-4">
+          <div className="w-10 h-10 rounded-full bg-emerald-50 flex items-center justify-center mr-3">
+            <Shield className="w-5 h-5 text-emerald-600" />
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900">Security</h3>
+            <p className="text-sm text-slate-500">Manage your own sign-in credentials</p>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div>
+              <p className="text-sm font-medium text-slate-700">Change Password</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Requires your current password. All other signed-in sessions are signed out.
+              </p>
+            </div>
+            <Link
+              to="/change-password"
+              className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-700"
+            >
+              <Key className="w-4 h-4" /> Change Password
+            </Link>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-medium text-slate-700">Resetting someone else's password</p>
+            <p className="text-xs text-slate-500 mt-1">
+              A locked-out Admin or User is recovered from{' '}
+              <Link to="/admin/just-access" className="font-semibold text-slate-700 underline">
+                Just Access
+              </Link>
+              . This application does not send password emails, so verify who you are speaking to
+              before resetting an account. Another Super Admin cannot be reset here.
+            </p>
           </div>
         </div>
       </div>

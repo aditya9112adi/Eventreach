@@ -1,12 +1,14 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import type { User, Event } from '@eventreach/shared';
 import api from '../../services/api';
-import { ShieldAlert, Trash2, Clock, CalendarDays, Key, Download, Search, Filter, Edit3, Calendar } from 'lucide-react';
+import { ShieldAlert, Trash2, Clock, CalendarDays, Key, Download, Search, Filter, Edit3, Calendar, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import { useLoader } from '../../components/ui/FullScreenLoader';
 import { useAuth } from '../../store/authStore';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getAccessStatus } from '../../utils/accessStatus';
+import { PASSWORD_REQUIREMENTS, validatePassword } from '@eventreach/shared';
+import { meetsRequirement } from '../../utils/passwordRequirements';
 
 const JustAccess = () => {
   const { user: currentAuthUser } = useAuth();
@@ -18,6 +20,16 @@ const JustAccess = () => {
   const [selectedEventToAssign, setSelectedEventToAssign] = useState<string>('');
   const [, setTick] = useState(0);
   const { showLoader, showSuccess, showError } = useLoader();
+
+  // Administrative password reset (Super Admin only).
+  const [resetTarget, setResetTarget] = useState<any | null>(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetConfirm, setResetConfirm] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+
+  // The backend enforces this too; the flag only decides whether to draw it.
+  const isSuperAdmin = currentAuthUser?.role === 'SuperAdmin';
 
   // Filters
   const [statusFilter, setStatusFilter] = useState('All');
@@ -51,6 +63,45 @@ const JustAccess = () => {
 
   const handleRevokeAccess = (id: string, type: string) => {
     setUserToRemove({ id, type });
+  };
+
+  const openResetModal = (record: any) => {
+    setResetTarget(record);
+    setResetPassword('');
+    setResetConfirm('');
+    setShowResetPassword(false);
+    setResetError(null);
+  };
+
+  const confirmResetPassword = async () => {
+    if (!resetTarget) return;
+
+    // Mirror the server's checks so the obvious mistakes are caught before a
+    // round trip. The backend re-validates all of this regardless.
+    const policyProblem = validatePassword(resetPassword);
+    if (policyProblem) {
+      setResetError(policyProblem);
+      return;
+    }
+    if (resetPassword !== resetConfirm) {
+      setResetError('Passwords do not match.');
+      return;
+    }
+
+    const target = resetTarget;
+    setResetTarget(null);
+    showLoader('Resetting password...');
+    try {
+      await api.put(
+        `/admin/users/${target._id}/reset-password?type=${target.type}`,
+        { newPassword: resetPassword, confirmPassword: resetConfirm }
+      );
+      setResetPassword('');
+      setResetConfirm('');
+      await showSuccess(`Password reset for ${target.email}`);
+    } catch (err: any) {
+      await showError(err.response?.data?.error || 'Failed to reset password');
+    }
   };
 
   const confirmRevokeAccess = async () => {
@@ -386,6 +437,16 @@ const JustAccess = () => {
                               <Calendar className="w-3 h-3 mr-1" /> Assign Event
                             </button>
                           )}
+                          {/* Account recovery: only a Super Admin may reset
+                              another account, and never another Super Admin. */}
+                          {isSuperAdmin && (record as any).role !== 'SuperAdmin' && (
+                            <button
+                              onClick={() => openResetModal(record)}
+                              className="inline-flex items-center px-2.5 py-1.5 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 font-bold uppercase tracking-wide text-[10px] rounded transition-colors"
+                            >
+                              <Key className="w-3 h-3 mr-1" /> Reset Password
+                            </button>
+                          )}
                           {status === 'Active' || status === 'Scheduled' ? (
                             <button
                               onClick={() => handleRevokeAccess(record._id, record.type)}
@@ -394,7 +455,7 @@ const JustAccess = () => {
                               <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Remove Access
                             </button>
                           ) : (
-                            !isUserRole && <span className="text-xs text-foreground/40 italic">No actions</span>
+                            !isUserRole && !isSuperAdmin && <span className="text-xs text-foreground/40 italic">No actions</span>
                           )}
                         </div>
                       </td>
@@ -406,6 +467,116 @@ const JustAccess = () => {
           </div>
         )}
       </div>
+
+      {/* Administrative Password Reset Modal (Super Admin only) */}
+      {resetTarget && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-surface border border-border p-6 rounded-xl shadow-2xl max-w-md w-full mx-4 animate-spring-up">
+            <h3 className="text-xl font-bold mb-3 text-foreground flex items-center">
+              <Key className="w-5 h-5 mr-2 text-amber-500" /> Reset Password?
+            </h3>
+            <p className="text-foreground/70 mb-6 leading-relaxed text-sm">
+              Set a new password for{' '}
+              <span className="font-bold text-foreground">{resetTarget.email}</span>. They will be
+              signed out of every device and must use the new password to sign in. Share it with
+              them over a trusted channel.
+            </p>
+
+            {resetError && (
+              <div className="bg-destructive/10 border border-destructive/20 text-destructive p-3 rounded-lg mb-4 text-sm font-medium">
+                {resetError}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1.5">
+                  New Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showResetPassword ? 'text' : 'password'}
+                    value={resetPassword}
+                    autoComplete="new-password"
+                    onChange={(e) => {
+                      setResetPassword(e.target.value);
+                      setResetError(null);
+                    }}
+                    placeholder="••••••••"
+                    className="block w-full pl-3 pr-10 py-2.5 border border-input rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPassword(!showResetPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                    aria-label={showResetPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showResetPassword ? (
+                      <EyeOff className="h-4 w-4 text-foreground/40 hover:text-foreground" />
+                    ) : (
+                      <Eye className="h-4 w-4 text-foreground/40 hover:text-foreground" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1.5">
+                  Confirm Password
+                </label>
+                <input
+                  type={showResetPassword ? 'text' : 'password'}
+                  value={resetConfirm}
+                  autoComplete="new-password"
+                  onChange={(e) => {
+                    setResetConfirm(e.target.value);
+                    setResetError(null);
+                  }}
+                  placeholder="••••••••"
+                  className="block w-full px-3 py-2.5 border border-input rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm"
+                />
+              </div>
+
+              <div className="rounded-lg border border-border bg-background/50 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-2">
+                  Password requirements
+                </p>
+                <ul className="space-y-1">
+                  {PASSWORD_REQUIREMENTS.map((requirement) => {
+                    const ok = meetsRequirement(requirement, resetPassword);
+                    return (
+                      <li key={requirement} className="flex items-center text-xs">
+                        <CheckCircle2
+                          className={`w-3 h-3 mr-2 shrink-0 ${ok ? 'text-accent' : 'text-foreground/25'}`}
+                        />
+                        <span className={ok ? 'text-foreground' : 'text-foreground/50'}>
+                          {requirement}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </div>
+
+            <div className="flex gap-3 justify-end mt-8">
+              <button
+                onClick={() => setResetTarget(null)}
+                className="px-5 py-2.5 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-foreground font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmResetPassword}
+                disabled={!resetPassword || !resetConfirm}
+                className="px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold transition-colors flex items-center"
+              >
+                <Key className="w-4 h-4 mr-2" /> Reset Password
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Remove Access Confirmation Modal */}
       {userToRemove && (
