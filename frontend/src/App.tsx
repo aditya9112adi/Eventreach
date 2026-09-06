@@ -27,6 +27,7 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const UserApprovals = lazy(() => import('./pages/Admin/UserApprovals'));
 const JustAccess = lazy(() => import('./pages/Admin/JustAccess'));
 const AuditLogs = lazy(() => import('./pages/Admin/AuditLogs'));
+const PasswordResets = lazy(() => import('./pages/Admin/PasswordResets'));
 
 const PageLoader = () => (
   <div className="flex items-center justify-center h-[60vh]">
@@ -89,6 +90,10 @@ function AnimatedRoutes() {
           <Route
             path="/admin/just-access"
             element={<PageWrapper><RoleRoute allow={['SuperAdmin', 'Admin']}><JustAccess /></RoleRoute></PageWrapper>}
+          />
+          <Route
+            path="/admin/password-resets"
+            element={<PageWrapper><RoleRoute allow={['SuperAdmin']}><PasswordResets /></RoleRoute></PageWrapper>}
           />
           <Route
             path="/admin/audit-logs"

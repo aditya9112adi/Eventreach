@@ -32,7 +32,7 @@ const ForgotPassword = () => {
       // address exists, so we simply show what it tells us.
       setSentMessage(
         response.data?.message ||
-          'If an account exists with this email address, a password reset link has been sent.'
+          'If an account exists with this email address, your reset request has been sent to the Super Admin.'
       );
     } catch (error: any) {
       setApiError(error.response?.data?.error || 'Something went wrong. Please try again.');
@@ -80,7 +80,7 @@ const ForgotPassword = () => {
               Forgot Password
             </h2>
             <p className="mt-2 text-sm text-foreground/60">
-              Enter your registered email and we'll send you a reset link
+              Enter your registered email to request a reset from the Super Admin
             </p>
           </div>
 
@@ -92,7 +92,8 @@ const ForgotPassword = () => {
                 </div>
                 <p className="text-sm text-foreground/80 leading-relaxed">{sentMessage}</p>
                 <p className="text-xs text-foreground/50">
-                  The link expires shortly and can only be used once. Remember to check your spam folder.
+                  The Super Admin will review your request and share a one-time reset link with you.
+                  The link expires shortly and can only be used once.
                 </p>
                 <Link
                   to="/login"
@@ -138,7 +139,7 @@ const ForgotPassword = () => {
                     disabled={isSubmitting}
                     className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-accent hover:bg-accent/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed transition-all transform active:scale-[0.98]"
                   >
-                    {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Send Reset Link'}
+                    {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Request Password Reset'}
                   </button>
 
                   <div className="text-center mt-6 text-sm">

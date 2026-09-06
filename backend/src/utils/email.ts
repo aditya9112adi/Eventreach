@@ -210,46 +210,6 @@ export const sendApprovalEmail = async (newAdminName: string, newAdminEmail: str
 };
 
 /**
- * Password reset link. The raw token appears only in this email — it is never
- * persisted or logged.
- */
-export const sendPasswordResetEmail = async (
-  name: string,
-  email: string,
-  resetUrl: string,
-  expiresInMinutes: number
-) => {
-  const safeName = escapeHtml(name || 'there');
-
-  await send(
-    {
-      to: email,
-      subject: 'Reset your EventReach password',
-      html: shell(`
-        <h2>Reset your password</h2>
-        <p>Hi ${safeName},</p>
-        <p>We received a request to reset the password for your EventReach account.</p>
-        ${button(resetUrl, 'Reset Password')}
-        <p style="margin-top: 20px; font-size: 13px; color: #666;">
-          This link expires in <strong>${expiresInMinutes} minutes</strong> and can only be used once.
-        </p>
-        <p style="font-size: 13px; color: #666;">
-          If the button does not work, copy and paste this link into your browser:<br />
-          <span style="word-break: break-all;">${resetUrl}</span>
-        </p>
-        <div style="background-color: #fff4f4; border-left: 4px solid #ef4444; padding: 12px; margin-top: 20px;">
-          <p style="margin: 0; font-size: 13px; color: #991b1b;">
-            <strong>Didn't request this?</strong> You can safely ignore this email — your password will not change.
-            If you keep receiving these, please contact your Super Admin.
-          </p>
-        </div>
-      `),
-    },
-    'password reset link'
-  );
-};
-
-/**
  * Tell an applicant whether their registration was approved or rejected.
  */
 export const sendRegistrationDecisionEmail = async (

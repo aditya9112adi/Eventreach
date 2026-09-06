@@ -5,22 +5,17 @@ import { z } from 'zod';
 import { User } from '../models/User';
 import { Admin } from '../models/Admin';
 import { Event } from '../models/Event';
-import {
-  sendApprovalEmail,
-  sendPasswordResetEmail,
-  getFrontendBaseUrl,
-} from '../utils/email';
+import { sendApprovalEmail } from '../utils/email';
 import { PasswordResetToken } from '../models/PasswordResetToken';
+import { PasswordResetRequest } from '../models/PasswordResetRequest';
 import { validatePassword } from '../utils/passwordPolicy';
-import {
-  generateResetToken,
-  hashResetToken,
-  resetTokenExpiry,
-  getResetTtlMinutes,
-} from '../utils/resetToken';
+import { hashResetToken } from '../utils/resetToken';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
-import { emitPendingApprovalsChanged } from '../services/socketService';
+import {
+  emitPendingApprovalsChanged,
+  emitPasswordResetRequestsChanged,
+} from '../services/socketService';
 
 /** Matches the cost factor used everywhere else passwords are hashed. */
 const BCRYPT_ROUNDS = 10;
@@ -340,7 +335,9 @@ export const login = async (req: RequestWithId, res: Response) => {
 
 /** Identical response whether or not the address exists, to prevent enumeration. */
 const GENERIC_FORGOT_RESPONSE = {
-  message: 'If an account exists with this email address, a password reset link has been sent.',
+  message:
+    'If an account exists with this email address, your reset request has been sent to the Super Admin. ' +
+    'They will share a reset link with you.',
 };
 
 /** Identical response for every failure mode, so probing reveals nothing. */
@@ -358,9 +355,12 @@ const resetPasswordSchema = z.object({
 /**
  * POST /api/auth/forgot-password
  *
- * Works for every role because Admin (SuperAdmin + Admin) and User are looked up
- * with the same mechanism. The raw token is emailed and never stored or logged;
- * only its SHA-256 hash is persisted.
+ * Queues a reset request for the Super Admin rather than emailing a link. No
+ * secret is generated here: a human authorises the reset and issues the one-time
+ * link (see adminController.issuePasswordResetLink). Letting anyone self-serve a
+ * reset from an email address alone would be an account-takeover hole.
+ *
+ * Works for every role — SuperAdmin, Admin and User are all looked up the same way.
  */
 export const forgotPassword = async (req: RequestWithId, res: Response) => {
   try {
@@ -380,22 +380,21 @@ export const forgotPassword = async (req: RequestWithId, res: Response) => {
     if (account) {
       const accountModel = admin ? 'Admin' : 'User';
 
-      // Supersede any outstanding links so only the newest one works.
-      await PasswordResetToken.updateMany(
-        { accountId: account._id, usedAt: null },
-        { $set: { usedAt: new Date() } }
+      // Collapse older pending requests so the queue shows one row per person.
+      await PasswordResetRequest.updateMany(
+        { accountId: account._id, status: 'Pending' },
+        { $set: { status: 'Dismissed', handledAt: new Date() } }
       );
 
-      const rawToken = generateResetToken();
-      await PasswordResetToken.create({
-        tokenHash: hashResetToken(rawToken),
+      await PasswordResetRequest.create({
         accountId: account._id,
         accountModel,
-        expiresAt: resetTokenExpiry(),
+        name: account.name,
+        email: account.email,
+        role: admin ? admin.role : 'User',
+        status: 'Pending',
+        requestedAt: new Date(),
       });
-
-      const resetUrl = `${getFrontendBaseUrl()}/reset-password?token=${encodeURIComponent(rawToken)}`;
-      await sendPasswordResetEmail(account.name, account.email, resetUrl, getResetTtlMinutes());
 
       await AuditService.log({
         action: 'PASSWORD_RESET_REQUESTED',
@@ -404,6 +403,8 @@ export const forgotPassword = async (req: RequestWithId, res: Response) => {
         request: AuditService.getRequestInfo(req),
         description: `Password reset requested for ${account.email}`,
       });
+
+      void emitPasswordResetRequestsChanged();
     }
 
     return res.json(GENERIC_FORGOT_RESPONSE);

@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import { Admin } from '../models/Admin';
 import { User } from '../models/User';
 import { getAllowedOrigins } from '../config/appUrls';
+import { PasswordResetRequest } from '../models/PasswordResetRequest';
 
 let io: Server;
 
@@ -36,6 +37,19 @@ export const emitPendingApprovalsChanged = async () => {
   } catch (error) {
     // Never let a notification failure break the request that triggered it.
     console.error('Failed to emit PENDING_APPROVALS_CHANGED:', error);
+  }
+};
+
+/**
+ * Push the number of password reset requests awaiting the Super Admin, so the
+ * sidebar badge stays live without a refresh.
+ */
+export const emitPasswordResetRequestsChanged = async () => {
+  try {
+    const pending = await PasswordResetRequest.countDocuments({ status: 'Pending' });
+    getIO().to(SUPERADMIN_ROOM).emit('PASSWORD_RESET_REQUESTS_CHANGED', { pendingCount: pending });
+  } catch (error) {
+    console.error('Failed to emit PASSWORD_RESET_REQUESTS_CHANGED:', error);
   }
 };
 
@@ -157,6 +171,7 @@ export const initSocket = (server: HttpServer) => {
       // live pending-approvals count.
       socket.join(SUPERADMIN_ROOM);
       void emitPendingApprovalsChanged();
+      void emitPasswordResetRequestsChanged();
     }
 
     if (user.role === 'Admin') {
