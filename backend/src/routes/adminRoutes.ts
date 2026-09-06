@@ -7,9 +7,6 @@ import {
   revokeAccess,
   assignUserEvent,
   getSystemHealth,
-  getPasswordResetRequests,
-  issuePasswordResetLink,
-  dismissPasswordResetRequest,
 } from '../controllers/adminController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { requireRole } from '../middleware/roleMiddleware';
@@ -27,10 +24,6 @@ router.put('/users/:id/revoke-access', requireRole('SuperAdmin'), revokeAccess);
 // Deployment configuration diagnostic (booleans only, never secret values).
 router.get('/system-health', requireRole('SuperAdmin'), getSystemHealth);
 
-// Password reset requests. Only a Super Admin may see them or mint a reset link.
-router.get('/password-reset-requests', requireRole('SuperAdmin'), getPasswordResetRequests);
-router.post('/password-reset-requests/:id/issue-link', requireRole('SuperAdmin'), issuePasswordResetLink);
-router.post('/password-reset-requests/:id/dismiss', requireRole('SuperAdmin'), dismissPasswordResetRequest);
 
 // SuperAdmin and Admin routes
 router.get('/users/access-records', requireRole(['SuperAdmin', 'Admin']), getAccessRecords);

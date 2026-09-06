@@ -21,13 +21,11 @@ const SendPreview = lazy(() => import('./pages/Campaigns/SendPreview'));
 const CampaignReport = lazy(() => import('./pages/Campaigns/CampaignReport'));
 const Reports = lazy(() => import('./pages/Reports'));
 const Settings = lazy(() => import('./pages/Settings'));
+const ChangePassword = lazy(() => import('./pages/ChangePassword'));
 const Register = lazy(() => import('./pages/Register'));
-const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
-const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const UserApprovals = lazy(() => import('./pages/Admin/UserApprovals'));
 const JustAccess = lazy(() => import('./pages/Admin/JustAccess'));
 const AuditLogs = lazy(() => import('./pages/Admin/AuditLogs'));
-const PasswordResets = lazy(() => import('./pages/Admin/PasswordResets'));
 
 const PageLoader = () => (
   <div className="flex items-center justify-center h-[60vh]">
@@ -58,8 +56,6 @@ function AnimatedRoutes() {
       <Routes location={location} key={location.pathname}>
         <Route path="/login" element={<PageWrapper><Login /></PageWrapper>} />
         <Route path="/register" element={<PageWrapper><Register /></PageWrapper>} />
-        <Route path="/forgot-password" element={<PageWrapper><ForgotPassword /></PageWrapper>} />
-        <Route path="/reset-password" element={<PageWrapper><ResetPassword /></PageWrapper>} />
 
         <Route
           element={
@@ -79,6 +75,7 @@ function AnimatedRoutes() {
           <Route path="/campaigns/send-preview" element={<PageWrapper><SendPreview /></PageWrapper>} />
           <Route path="/campaigns/:campaignId/report" element={<PageWrapper><CampaignReport /></PageWrapper>} />
           <Route path="/reports" element={<PageWrapper><Reports /></PageWrapper>} />
+          <Route path="/change-password" element={<PageWrapper><ChangePassword /></PageWrapper>} />
           <Route
             path="/settings"
             element={<PageWrapper><RoleRoute allow={['SuperAdmin']}><Settings /></RoleRoute></PageWrapper>}
@@ -90,10 +87,6 @@ function AnimatedRoutes() {
           <Route
             path="/admin/just-access"
             element={<PageWrapper><RoleRoute allow={['SuperAdmin', 'Admin']}><JustAccess /></RoleRoute></PageWrapper>}
-          />
-          <Route
-            path="/admin/password-resets"
-            element={<PageWrapper><RoleRoute allow={['SuperAdmin']}><PasswordResets /></RoleRoute></PageWrapper>}
           />
           <Route
             path="/admin/audit-logs"

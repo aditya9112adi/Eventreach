@@ -29,7 +29,6 @@ const DashboardLayout = () => {
   const { showToast } = useToast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
-  const [resetRequestCount, setResetRequestCount] = useState(0);
   const location = useLocation();
   const navigate = useNavigate();
   const { socket, isConnected } = useSocket();
@@ -91,9 +90,6 @@ const DashboardLayout = () => {
       api.get('/admin/users/pending')
         .then(res => setPendingCount(res.data.length))
         .catch(console.error);
-      api.get('/admin/password-reset-requests')
-        .then(res => setResetRequestCount(res.data.length))
-        .catch(console.error);
     }
   }, [user, location.pathname]);
 
@@ -107,15 +103,9 @@ const DashboardLayout = () => {
       setPendingCount(data.pendingCount);
     };
 
-    const handleResetRequestsChanged = (data: { pendingCount: number }) => {
-      setResetRequestCount(data.pendingCount);
-    };
-
     socket.on('PENDING_APPROVALS_CHANGED', handlePendingChanged);
-    socket.on('PASSWORD_RESET_REQUESTS_CHANGED', handleResetRequestsChanged);
     return () => {
       socket.off('PENDING_APPROVALS_CHANGED', handlePendingChanged);
-      socket.off('PASSWORD_RESET_REQUESTS_CHANGED', handleResetRequestsChanged);
     };
   }, [socket, user?.role]);
 
@@ -125,12 +115,13 @@ const DashboardLayout = () => {
     { name: 'Guests', to: '/contacts', icon: Users },
     { name: 'Campaigns', to: '/campaigns', icon: Megaphone },
     { name: 'Reports', to: '/reports', icon: PieChart },
+    // Available to every signed-in role.
+    { name: 'Change Password', to: '/change-password', icon: KeyRound },
   ];
 
   if (user?.role === 'SuperAdmin') {
     navItems.push({ name: 'User Approvals', to: '/admin/approvals', icon: Users });
     navItems.push({ name: 'Just Access', to: '/admin/just-access', icon: MessageSquare });
-    navItems.push({ name: 'Password Resets', to: '/admin/password-resets', icon: KeyRound });
     navItems.push({ name: 'Audit Logs', to: '/admin/audit-logs', icon: Shield });
     navItems.push({ name: 'Settings', to: '/settings', icon: Settings });
   }
@@ -191,11 +182,6 @@ const DashboardLayout = () => {
                     {item.name === 'User Approvals' && pendingCount > 0 && (
                       <span className="ml-auto bg-accent text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
                         {pendingCount}
-                      </span>
-                    )}
-                    {item.name === 'Password Resets' && resetRequestCount > 0 && (
-                      <span className="ml-auto bg-accent text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                        {resetRequestCount}
                       </span>
                     )}
                   </div>

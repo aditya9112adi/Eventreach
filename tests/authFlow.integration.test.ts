@@ -33,9 +33,6 @@ const adminRoutes = require('../backend/dist/routes/adminRoutes').default;
 const eventRoutes = require('../backend/dist/routes/eventRoutes').default;
 const { User } = require('../backend/dist/models/User');
 const { Admin } = require('../backend/dist/models/Admin');
-const { PasswordResetToken } = require('../backend/dist/models/PasswordResetToken');
-const { PasswordResetRequest } = require('../backend/dist/models/PasswordResetRequest');
-const { hashResetToken, generateResetToken } = require('../backend/dist/utils/resetToken');
 
 const GOOD_PASSWORD = 'TestPass123';
 const NEW_PASSWORD = 'BrandNewPass456';
@@ -148,8 +145,6 @@ beforeEach(async () => {
   await Promise.all([
     User.deleteMany({}),
     Admin.deleteMany({}),
-    PasswordResetToken.deleteMany({}),
-    PasswordResetRequest.deleteMany({}),
   ]);
 });
 
@@ -318,281 +313,120 @@ describe('Approval authorization', () => {
   });
 });
 
-describe('Forgot password (Super Admin mediated)', () => {
-  test('9. the response is identical whether or not the account exists', async () => {
-    await seedAccount('User', 'exists9@example.com');
-
-    const known = await call('POST', '/api/auth/forgot-password', {
-      body: { email: 'exists9@example.com' },
+describe('Change password (signed in)', () => {
+  test('requires authentication', async () => {
+    const res = await call('POST', '/api/auth/change-password', {
+      body: { currentPassword: GOOD_PASSWORD, newPassword: NEW_PASSWORD },
     });
-    const unknown = await call('POST', '/api/auth/forgot-password', {
-      body: { email: 'nobody9@example.com' },
+    assert.equal(res.status, 401);
+  });
+
+  test('rejects a wrong current password and leaves the account untouched', async () => {
+    await seedAccount('User', 'wrongcur@example.com');
+    const token = (await loginAs('wrongcur@example.com', GOOD_PASSWORD)).body.token;
+
+    const res = await call('POST', '/api/auth/change-password', {
+      token,
+      body: { currentPassword: 'NotMyPassword123', newPassword: NEW_PASSWORD },
     });
+    assert.equal(res.status, 401);
+    assert.match(res.body.error, /current password is incorrect/i);
 
-    assert.equal(known.status, unknown.status);
-    assert.deepEqual(known.body, unknown.body);
-    assert.match(known.body.message, /if an account exists/i);
-
-    // A request was queued only for the real account.
-    assert.equal(await PasswordResetRequest.countDocuments({ status: 'Pending' }), 1);
+    // Original password still works; the new one never took effect.
+    assert.equal((await loginAs('wrongcur@example.com', GOOD_PASSWORD)).status, 200);
+    assert.equal((await loginAs('wrongcur@example.com', NEW_PASSWORD)).status, 401);
   });
 
-  test('queues a request and issues NO token until a Super Admin acts', async () => {
-    await seedAccount('User', 'queue@example.com');
-    await call('POST', '/api/auth/forgot-password', { body: { email: 'queue@example.com' } });
+  test('enforces the shared password policy on the new password', async () => {
+    await seedAccount('User', 'weaknew@example.com');
+    const token = (await loginAs('weaknew@example.com', GOOD_PASSWORD)).body.token;
 
-    const request = await PasswordResetRequest.findOne({ email: 'queue@example.com' });
-    assert.ok(request, 'a request should be queued');
-    assert.equal(request.status, 'Pending');
-
-    // Critically: no reset credential exists yet. Letting anyone self-serve a
-    // reset from an email address alone would be an account-takeover hole.
-    assert.equal(await PasswordResetToken.countDocuments({}), 0);
-  });
-
-  test('repeated requests collapse to a single pending row', async () => {
-    await seedAccount('User', 'dupe@example.com');
-    for (let i = 0; i < 3; i++) {
-      await call('POST', '/api/auth/forgot-password', { body: { email: 'dupe@example.com' } });
-    }
-    assert.equal(await PasswordResetRequest.countDocuments({ status: 'Pending' }), 1);
-  });
-
-  test('the endpoint is rate limited', async () => {
-    const sharedIp = '198.51.100.42';
-    let sawLimit = false;
-    // Must exceed passwordResetLimiter's cap (10 per 15 min) to observe a 429.
-    for (let i = 0; i < 16; i++) {
-      const res = await call('POST', '/api/auth/forgot-password', {
-        body: { email: 'probe' + i + '@example.com' },
-        ip: sharedIp,
-      });
-      if (res.status === 429) {
-        sawLimit = true;
-        break;
-      }
-    }
-    assert.ok(sawLimit, 'repeated requests from one client should be rate limited');
-  });
-});
-
-describe('Super Admin issues reset links', () => {
-  const queueRequest = async (email: string) => {
-    await call('POST', '/api/auth/forgot-password', { body: { email } });
-    return PasswordResetRequest.findOne({ email, status: 'Pending' });
-  };
-
-  test('only a Super Admin may view the queue', async () => {
-    await seedAccount('SuperAdmin', 'sa-q@example.com');
-    await seedAccount('Admin', 'admin-q@example.com');
-    await seedAccount('User', 'user-q@example.com');
-
-    const saToken = (await loginAs('sa-q@example.com', GOOD_PASSWORD)).body.token;
-    const adminToken = (await loginAs('admin-q@example.com', GOOD_PASSWORD)).body.token;
-    const userToken = (await loginAs('user-q@example.com', GOOD_PASSWORD)).body.token;
-
-    assert.equal((await call('GET', '/api/admin/password-reset-requests', { token: saToken })).status, 200);
-    assert.equal((await call('GET', '/api/admin/password-reset-requests', { token: adminToken })).status, 403);
-    assert.equal((await call('GET', '/api/admin/password-reset-requests', { token: userToken })).status, 403);
-    assert.equal((await call('GET', '/api/admin/password-reset-requests')).status, 401);
-  });
-
-  test('only a Super Admin may issue a link', async () => {
-    await seedAccount('User', 'victim@example.com');
-    const request = await queueRequest('victim@example.com');
-    await seedAccount('Admin', 'admin-i@example.com');
-    const adminToken = (await loginAs('admin-i@example.com', GOOD_PASSWORD)).body.token;
-
-    const res = await call('POST', '/api/admin/password-reset-requests/' + request._id + '/issue-link', {
-      token: adminToken,
-    });
-    assert.equal(res.status, 403);
-    assert.equal(await PasswordResetToken.countDocuments({}), 0, 'no token may be minted');
-  });
-
-  test('end to end: request -> Super Admin issues link -> user resets -> can sign in', async () => {
-    await seedAccount('User', 'e2e@example.com');
-    await seedAccount('SuperAdmin', 'sa-e2e@example.com');
-    const saToken = (await loginAs('sa-e2e@example.com', GOOD_PASSWORD)).body.token;
-
-    // 1. User asks for a reset.
-    const request = await queueRequest('e2e@example.com');
-    assert.ok(request);
-
-    // 2. Super Admin issues a one-time link.
-    const issued = await call('POST', '/api/admin/password-reset-requests/' + request._id + '/issue-link', {
-      token: saToken,
-    });
-    assert.equal(issued.status, 200);
-    assert.ok(issued.body.resetUrl.includes('/reset-password?token='));
-    assert.equal(issued.body.account.email, 'e2e@example.com');
-
-    // The request is now fulfilled and off the queue.
-    const after = await PasswordResetRequest.findById(request._id);
-    assert.equal(after.status, 'Fulfilled');
-    assert.ok(after.handledAt instanceof Date);
-
-    // Only the hash is persisted; the raw token lives solely in the URL.
-    const stored = await PasswordResetToken.findOne({});
-    assert.equal(stored.tokenHash.length, 64);
-    const rawToken = new URL(issued.body.resetUrl).searchParams.get('token');
-    assert.notEqual(stored.tokenHash, rawToken);
-
-    // 3. The user redeems it.
-    const reset = await call('POST', '/api/auth/reset-password', {
-      body: { token: rawToken, password: NEW_PASSWORD },
-    });
-    assert.equal(reset.status, 200);
-
-    // 4. Old password dead, new password works, role preserved.
-    assert.equal((await loginAs('e2e@example.com', GOOD_PASSWORD)).status, 401);
-    const login = await loginAs('e2e@example.com', NEW_PASSWORD);
-    assert.equal(login.status, 200);
-    assert.equal(login.body.user.role, 'User');
-  });
-
-  test('a request cannot be fulfilled twice', async () => {
-    await seedAccount('User', 'twice@example.com');
-    await seedAccount('SuperAdmin', 'sa-twice@example.com');
-    const saToken = (await loginAs('sa-twice@example.com', GOOD_PASSWORD)).body.token;
-    const request = await queueRequest('twice@example.com');
-
-    const first = await call('POST', '/api/admin/password-reset-requests/' + request._id + '/issue-link', { token: saToken });
-    assert.equal(first.status, 200);
-
-    const second = await call('POST', '/api/admin/password-reset-requests/' + request._id + '/issue-link', { token: saToken });
-    assert.equal(second.status, 400);
-    assert.match(second.body.error, /already been handled/i);
-  });
-
-  test('dismissing a request issues nothing', async () => {
-    await seedAccount('User', 'dismiss@example.com');
-    await seedAccount('SuperAdmin', 'sa-d@example.com');
-    const saToken = (await loginAs('sa-d@example.com', GOOD_PASSWORD)).body.token;
-    const request = await queueRequest('dismiss@example.com');
-
-    const res = await call('POST', '/api/admin/password-reset-requests/' + request._id + '/dismiss', { token: saToken });
-    assert.equal(res.status, 200);
-
-    assert.equal((await PasswordResetRequest.findById(request._id)).status, 'Dismissed');
-    assert.equal(await PasswordResetToken.countDocuments({}), 0);
-    // The original password still works.
-    assert.equal((await loginAs('dismiss@example.com', GOOD_PASSWORD)).status, 200);
-  });
-
-  test('issuing a new link supersedes any earlier one for that account', async () => {
-    await seedAccount('User', 'supersede@example.com');
-    await seedAccount('SuperAdmin', 'sa-s@example.com');
-    const saToken = (await loginAs('sa-s@example.com', GOOD_PASSWORD)).body.token;
-
-    const r1 = await queueRequest('supersede@example.com');
-    const first = await call('POST', '/api/admin/password-reset-requests/' + r1._id + '/issue-link', { token: saToken });
-    const oldToken = new URL(first.body.resetUrl).searchParams.get('token');
-
-    const r2 = await queueRequest('supersede@example.com');
-    const second = await call('POST', '/api/admin/password-reset-requests/' + r2._id + '/issue-link', { token: saToken });
-    const newToken = new URL(second.body.resetUrl).searchParams.get('token');
-
-    // The earlier link is dead; only the newest works.
-    const stale = await call('POST', '/api/auth/reset-password', {
-      body: { token: oldToken, password: NEW_PASSWORD },
-    });
-    assert.equal(stale.status, 400);
-
-    const fresh = await call('POST', '/api/auth/reset-password', {
-      body: { token: newToken, password: NEW_PASSWORD },
-    });
-    assert.equal(fresh.status, 200);
-  });
-});
-
-describe('Reset password', () => {
-  /** Issue a reset token directly so expiry/reuse can be controlled precisely. */
-  const issueToken = async (accountId: any, accountModel: 'Admin' | 'User', expiresAt: Date) => {
-    const raw = generateResetToken();
-    await PasswordResetToken.create({
-      tokenHash: hashResetToken(raw),
-      accountId,
-      accountModel,
-      expiresAt,
-    });
-    return raw;
-  };
-
-  test('10. an expired token is rejected', async () => {
-    const user = await seedAccount('User', 'expired10@example.com');
-    const raw = await issueToken(user._id, 'User', new Date(Date.now() - 60_000));
-
-    const res = await call('POST', '/api/auth/reset-password', {
-      body: { token: raw, password: NEW_PASSWORD },
+    const res = await call('POST', '/api/auth/change-password', {
+      token,
+      body: { currentPassword: GOOD_PASSWORD, newPassword: 'short' },
     });
     assert.equal(res.status, 400);
-    assert.match(res.body.error, /invalid or has expired/i);
-
-    // Old password still works.
-    assert.equal((await loginAs('expired10@example.com', GOOD_PASSWORD)).status, 200);
+    assert.match(res.body.error, /at least 8 characters/i);
   });
 
-  test('11. a token can only be used once', async () => {
-    const user = await seedAccount('User', 'once11@example.com');
-    const raw = await issueToken(user._id, 'User', new Date(Date.now() + 600_000));
+  test('refuses reusing the current password', async () => {
+    await seedAccount('User', 'same@example.com');
+    const token = (await loginAs('same@example.com', GOOD_PASSWORD)).body.token;
 
-    const first = await call('POST', '/api/auth/reset-password', {
-      body: { token: raw, password: NEW_PASSWORD },
+    const res = await call('POST', '/api/auth/change-password', {
+      token,
+      body: { currentPassword: GOOD_PASSWORD, newPassword: GOOD_PASSWORD },
     });
-    assert.equal(first.status, 200);
-
-    const second = await call('POST', '/api/auth/reset-password', {
-      body: { token: raw, password: 'YetAnotherPass789' },
-    });
-    assert.equal(second.status, 400);
-    assert.match(second.body.error, /invalid or has expired/i);
-
-    // The second attempt must not have taken effect.
-    assert.equal((await loginAs('once11@example.com', 'YetAnotherPass789')).status, 401);
-    assert.equal((await loginAs('once11@example.com', NEW_PASSWORD)).status, 200);
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /different/i);
   });
 
-  test('12. the password is updated securely and never returned', async () => {
-    const user = await seedAccount('User', 'secure12@example.com');
-    const raw = await issueToken(user._id, 'User', new Date(Date.now() + 600_000));
+  test('changes the password securely and never echoes it', async () => {
+    const account = await seedAccount('User', 'change@example.com');
+    const token = (await loginAs('change@example.com', GOOD_PASSWORD)).body.token;
 
-    const res = await call('POST', '/api/auth/reset-password', {
-      body: { token: raw, password: NEW_PASSWORD },
+    const res = await call('POST', '/api/auth/change-password', {
+      token,
+      body: { currentPassword: GOOD_PASSWORD, newPassword: NEW_PASSWORD },
     });
     assert.equal(res.status, 200);
 
     const serialised = JSON.stringify(res.body);
-    assert.ok(!serialised.includes(NEW_PASSWORD), 'response must not echo the password');
-    assert.ok(!/passwordHash/i.test(serialised), 'response must not include the hash');
+    assert.ok(!serialised.includes(NEW_PASSWORD), 'must not echo the password');
+    assert.ok(!/passwordHash/i.test(serialised), 'must not include the hash');
 
-    const updated = await User.findById(user._id);
+    const updated = await User.findById(account._id);
     assert.notEqual(updated.passwordHash, NEW_PASSWORD, 'must not be plaintext');
     assert.ok(updated.passwordHash.startsWith('$2'), 'must be a bcrypt hash');
     assert.ok(await bcrypt.compare(NEW_PASSWORD, updated.passwordHash));
     assert.ok(updated.passwordChangedAt instanceof Date);
 
-    // Old password no longer works, new one does.
-    assert.equal((await loginAs('secure12@example.com', GOOD_PASSWORD)).status, 401);
-    assert.equal((await loginAs('secure12@example.com', NEW_PASSWORD)).status, 200);
+    assert.equal((await loginAs('change@example.com', GOOD_PASSWORD)).status, 401);
+    assert.equal((await loginAs('change@example.com', NEW_PASSWORD)).status, 200);
   });
 
-  test('13. role and status are unchanged by a password reset (all three roles)', async () => {
+  test('revokes older sessions but keeps the caller signed in via a fresh token', async () => {
+    await seedAccount('User', 'sessions@example.com');
+    const oldToken = (await loginAs('sessions@example.com', GOOD_PASSWORD)).body.token;
+
+    // A second, older session for the same account.
+    const otherToken = (await loginAs('sessions@example.com', GOOD_PASSWORD)).body.token;
+    assert.notEqual((await call('GET', '/api/events', { token: otherToken })).status, 401);
+
+    // passwordChangedAt has second precision, so make sure it lands after `iat`.
+    await new Promise((r) => setTimeout(r, 2100));
+
+    const res = await call('POST', '/api/auth/change-password', {
+      token: oldToken,
+      body: { currentPassword: GOOD_PASSWORD, newPassword: NEW_PASSWORD },
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.token, 'a replacement token should be returned');
+
+    // Both pre-change tokens are dead.
+    assert.equal((await call('GET', '/api/events', { token: oldToken })).status, 401);
+    assert.equal((await call('GET', '/api/events', { token: otherToken })).status, 401);
+
+    // The replacement works.
+    assert.notEqual((await call('GET', '/api/events', { token: res.body.token })).status, 401);
+  });
+
+  test('works for all three roles and never alters role or status', async () => {
     const cases: Array<['SuperAdmin' | 'Admin' | 'User', string]> = [
-      ['SuperAdmin', 'super13@example.com'],
-      ['Admin', 'admin13@example.com'],
-      ['User', 'user13@example.com'],
+      ['SuperAdmin', 'sa-cp@example.com'],
+      ['Admin', 'admin-cp@example.com'],
+      ['User', 'user-cp@example.com'],
     ];
 
     for (const [kind, email] of cases) {
       const account = await seedAccount(kind, email);
-      const model = kind === 'User' ? 'User' : 'Admin';
-      const raw = await issueToken(account._id, model as any, new Date(Date.now() + 600_000));
+      const token = (await loginAs(email, GOOD_PASSWORD)).body.token;
 
-      const res = await call('POST', '/api/auth/reset-password', {
-        body: { token: raw, password: NEW_PASSWORD },
+      const res = await call('POST', '/api/auth/change-password', {
+        token,
+        body: { currentPassword: GOOD_PASSWORD, newPassword: NEW_PASSWORD },
       });
-      assert.equal(res.status, 200, `${kind} reset should succeed`);
+      assert.equal(res.status, 200, `${kind} should be able to change its password`);
 
       const Model = kind === 'User' ? User : Admin;
       const after = await Model.findById(account._id);
@@ -602,53 +436,42 @@ describe('Reset password', () => {
       }
 
       const login = await loginAs(email, NEW_PASSWORD);
-      assert.equal(login.status, 200, `${kind} should log in with the new password`);
-      assert.equal(login.body.user.role, kind, `${kind} keeps its role after reset`);
+      assert.equal(login.status, 200);
+      assert.equal(login.body.user.role, kind, `${kind} keeps its role`);
     }
   });
 
-  test('14. an invalid / empty / unknown token is rejected', async () => {
-    const missing = await call('POST', '/api/auth/reset-password', {
-      body: { password: NEW_PASSWORD },
-    });
-    assert.equal(missing.status, 400);
+  test('a User cannot change another account\'s password', async () => {
+    await seedAccount('User', 'attacker@example.com');
+    const victim = await seedAccount('User', 'target-cp@example.com');
+    const token = (await loginAs('attacker@example.com', GOOD_PASSWORD)).body.token;
 
-    const empty = await call('POST', '/api/auth/reset-password', {
-      body: { token: '', password: NEW_PASSWORD },
+    // The endpoint derives the account from the token; there is no id to supply,
+    // so an attempt to pass one must be ignored entirely.
+    const res = await call('POST', '/api/auth/change-password', {
+      token,
+      body: {
+        currentPassword: GOOD_PASSWORD,
+        newPassword: NEW_PASSWORD,
+        id: String(victim._id),
+        email: 'target-cp@example.com',
+      },
     });
-    assert.equal(empty.status, 400);
+    assert.equal(res.status, 200, 'it changes the caller\'s own password');
 
-    const unknown = await call('POST', '/api/auth/reset-password', {
-      body: { token: 'a'.repeat(64), password: NEW_PASSWORD },
-    });
-    assert.equal(unknown.status, 400);
-    assert.match(unknown.body.error, /invalid or has expired/i);
+    // The victim is untouched.
+    assert.equal((await loginAs('target-cp@example.com', GOOD_PASSWORD)).status, 200);
+    assert.equal((await loginAs('target-cp@example.com', NEW_PASSWORD)).status, 401);
   });
 
-  test('a weak password is rejected by the shared policy', async () => {
-    const user = await seedAccount('User', 'weak@example.com');
-    const raw = await issueToken(user._id, 'User', new Date(Date.now() + 600_000));
-
-    const res = await call('POST', '/api/auth/reset-password', {
-      body: { token: raw, password: 'short' },
-    });
-    assert.equal(res.status, 400);
-    assert.match(res.body.error, /at least 8 characters/i);
-  });
-
-  test('resetting the password invalidates tokens issued earlier', async () => {
-    const user = await seedAccount('User', 'session@example.com');
-    const oldSession = (await loginAs('session@example.com', GOOD_PASSWORD)).body.token;
-
-    // The old session works before the reset.
-    assert.notEqual((await call('GET', '/api/events', { token: oldSession })).status, 401);
-
-    const raw = await issueToken(user._id, 'User', new Date(Date.now() + 600_000));
-    // Ensure passwordChangedAt is comfortably after the token's `iat` (second precision).
-    await new Promise((r) => setTimeout(r, 2100));
-    await call('POST', '/api/auth/reset-password', { body: { token: raw, password: NEW_PASSWORD } });
-
-    const after = await call('GET', '/api/events', { token: oldSession });
-    assert.equal(after.status, 401, 'the pre-reset session must be revoked');
+  test('the removed reset endpoints are gone', async () => {
+    assert.equal(
+      (await call('POST', '/api/auth/forgot-password', { body: { email: 'x@example.com' } })).status,
+      404
+    );
+    assert.equal(
+      (await call('POST', '/api/auth/reset-password', { body: { token: 'x', password: NEW_PASSWORD } })).status,
+      404
+    );
   });
 });

@@ -6,16 +6,10 @@ import { User } from '../models/User';
 import { Admin } from '../models/Admin';
 import { Event } from '../models/Event';
 import { sendApprovalEmail } from '../utils/email';
-import { PasswordResetToken } from '../models/PasswordResetToken';
-import { PasswordResetRequest } from '../models/PasswordResetRequest';
 import { validatePassword } from '../utils/passwordPolicy';
-import { hashResetToken } from '../utils/resetToken';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
-import {
-  emitPendingApprovalsChanged,
-  emitPasswordResetRequestsChanged,
-} from '../services/socketService';
+import { emitPendingApprovalsChanged } from '../services/socketService';
 
 /** Matches the cost factor used everywhere else passwords are hashed. */
 const BCRYPT_ROUNDS = 10;
@@ -331,158 +325,97 @@ export const login = async (req: RequestWithId, res: Response) => {
   }
 };
 
-// ─── Password reset ───────────────────────────────────────────────────────────
 
-/** Identical response whether or not the address exists, to prevent enumeration. */
-const GENERIC_FORGOT_RESPONSE = {
-  message:
-    'If an account exists with this email address, your reset request has been sent to the Super Admin. ' +
-    'They will share a reset link with you.',
-};
+// ─── Change password (signed in) ──────────────────────────────────────────────
 
-/** Identical response for every failure mode, so probing reveals nothing. */
-const INVALID_RESET_TOKEN = 'This password reset link is invalid or has expired.';
-
-const forgotPasswordSchema = z.object({
-  email: z.string().email('Please enter a valid email address'),
-});
-
-const resetPasswordSchema = z.object({
-  token: z.string().min(1, 'Reset token is required'),
-  password: z.string().min(1, 'Password is required'),
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required'),
+  newPassword: z.string().min(1, 'New password is required'),
 });
 
 /**
- * POST /api/auth/forgot-password
+ * POST /api/auth/change-password
  *
- * Queues a reset request for the Super Admin rather than emailing a link. No
- * secret is generated here: a human authorises the reset and issues the one-time
- * link (see adminController.issuePasswordResetLink). Letting anyone self-serve a
- * reset from an email address alone would be an account-takeover hole.
+ * Self-service password change for any signed-in account (SuperAdmin, Admin or
+ * User). Knowledge of the current password is what proves identity here — there
+ * is no email or admin approval step.
  *
- * Works for every role — SuperAdmin, Admin and User are all looked up the same way.
+ * Note this cannot help someone who is already locked out; recovering a
+ * forgotten password necessarily requires proving identity through some other
+ * channel.
  */
-export const forgotPassword = async (req: RequestWithId, res: Response) => {
+export const changePassword = async (req: RequestWithId, res: Response) => {
   try {
-    const parsed = forgotPasswordSchema.safeParse(req.body);
-    if (!parsed.success) {
-      // A malformed address is a client-side format problem and reveals nothing
-      // about which accounts exist.
-      return res.status(400).json({ error: parsed.error.errors[0].message });
-    }
-
-    const email = parsed.data.email.trim().toLowerCase();
-
-    const admin = await Admin.findOne({ email });
-    const user = admin ? null : await User.findOne({ email });
-    const account: any = admin || user;
-
-    if (account) {
-      const accountModel = admin ? 'Admin' : 'User';
-
-      // Collapse older pending requests so the queue shows one row per person.
-      await PasswordResetRequest.updateMany(
-        { accountId: account._id, status: 'Pending' },
-        { $set: { status: 'Dismissed', handledAt: new Date() } }
-      );
-
-      await PasswordResetRequest.create({
-        accountId: account._id,
-        accountModel,
-        name: account.name,
-        email: account.email,
-        role: admin ? admin.role : 'User',
-        status: 'Pending',
-        requestedAt: new Date(),
-      });
-
-      await AuditService.log({
-        action: 'PASSWORD_RESET_REQUESTED',
-        collectionName: accountModel === 'Admin' ? 'admins' : 'users',
-        documentId: account._id.toString(),
-        request: AuditService.getRequestInfo(req),
-        description: `Password reset requested for ${account.email}`,
-      });
-
-      void emitPasswordResetRequestsChanged();
-    }
-
-    return res.json(GENERIC_FORGOT_RESPONSE);
-  } catch (error) {
-    console.error('Forgot password error:', error);
-    // Generic failure — still does not disclose whether the account exists.
-    return res.status(500).json({ error: 'Unable to process the request right now. Please try again later.' });
-  }
-};
-
-/**
- * POST /api/auth/reset-password
- *
- * The token is claimed atomically so it can only ever be redeemed once, even
- * under concurrent requests. The account's role and status are untouched.
- */
-export const resetPassword = async (req: RequestWithId, res: Response) => {
-  try {
-    const parsed = resetPasswordSchema.safeParse(req.body);
+    const parsed = changePasswordSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.errors[0].message });
     }
 
-    const policyProblem = validatePassword(parsed.data.password);
+    const current = (req as any).user;
+    const { currentPassword, newPassword } = parsed.data;
+
+    const policyProblem = validatePassword(newPassword);
     if (policyProblem) {
       return res.status(400).json({ error: policyProblem });
     }
-
-    const tokenHash = hashResetToken(parsed.data.token);
-    const now = new Date();
-
-    // Atomically claim an unused, unexpired token. Returns the pre-update
-    // document, so a second concurrent attempt finds nothing to claim.
-    const claimed = await PasswordResetToken.findOneAndUpdate(
-      { tokenHash, usedAt: null, expiresAt: { $gt: now } },
-      { $set: { usedAt: now } },
-      { new: false }
-    );
-
-    if (!claimed) {
-      return res.status(400).json({ error: INVALID_RESET_TOKEN });
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ error: 'The new password must be different from the current one.' });
     }
 
-    const Model: any = claimed.accountModel === 'Admin' ? Admin : User;
-    const account = await Model.findById(claimed.accountId);
+    const Model: any = current.role === 'User' ? User : Admin;
+    const account = await Model.findById(current.id);
     if (!account) {
-      return res.status(400).json({ error: INVALID_RESET_TOKEN });
+      return res.status(401).json({ error: 'Unauthorized: Account not found' });
     }
 
-    const passwordHash = await bcrypt.hash(parsed.data.password, BCRYPT_ROUNDS);
+    const matches = await bcrypt.compare(currentPassword, account.passwordHash);
+    if (!matches) {
+      await AuditService.log({
+        action: 'PASSWORD_CHANGE_FAILED',
+        collectionName: current.role === 'User' ? 'users' : 'admins',
+        documentId: account._id.toString(),
+        actor: AuditService.getActorFromReq(req),
+        request: AuditService.getRequestInfo(req),
+        success: false,
+        description: `Failed password change for ${account.email}: current password incorrect`,
+      });
+      return res.status(401).json({ error: 'Your current password is incorrect.' });
+    }
 
-    // Only password-related fields change — role, status and access windows are
-    // deliberately left alone.
+    const changedAt = new Date();
+    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+
+    // Only password fields change — role, status and access windows are untouched.
     await Model.updateOne(
       { _id: account._id },
-      { $set: { passwordHash, passwordChangedAt: now } }
-    );
-
-    // Retire every other outstanding link for this account.
-    await PasswordResetToken.updateMany(
-      { accountId: account._id, usedAt: null },
-      { $set: { usedAt: now } }
+      { $set: { passwordHash, passwordChangedAt: changedAt } }
     );
 
     await AuditService.log({
-      action: 'PASSWORD_RESET_COMPLETED',
-      collectionName: claimed.accountModel === 'Admin' ? 'admins' : 'users',
+      action: 'PASSWORD_CHANGED',
+      collectionName: current.role === 'User' ? 'users' : 'admins',
       documentId: account._id.toString(),
+      actor: AuditService.getActorFromReq(req),
       request: AuditService.getRequestInfo(req),
-      description: `Password reset completed for ${account.email}`,
+      description: `Password changed for ${account.email}`,
     });
 
-    // Never echo the password or its hash.
-    return res.json({
-      message: 'Your password has been reset. You can now sign in with your new password.',
-    });
+    // passwordChangedAt revokes every token issued earlier, including the one
+    // used for this request. Hand back a fresh token so the caller stays signed
+    // in here while any other session is signed out.
+    if (!process.env.JWT_SECRET) {
+      throw new Error('JWT_SECRET is not defined');
+    }
+    const token = jwt.sign(
+      { id: account._id, email: account.email, role: current.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
+    // Never return the password or its hash.
+    return res.json({ message: 'Your password has been changed.', token });
   } catch (error) {
-    console.error('Reset password error:', error);
-    return res.status(500).json({ error: 'Unable to reset the password right now. Please try again later.' });
+    console.error('Change password error:', error);
+    return res.status(500).json({ error: 'Unable to change the password right now. Please try again later.' });
   }
 };

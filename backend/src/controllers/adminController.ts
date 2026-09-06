@@ -4,22 +4,11 @@ import { Admin } from '../models/Admin';
 import { Event } from '../models/Event';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
-import {
-  getIO,
-  emitPendingApprovalsChanged,
-  emitPasswordResetRequestsChanged,
-} from '../services/socketService';
+import { getIO, emitPendingApprovalsChanged } from '../services/socketService';
 import { isEventAuthorized } from '../services/eventAuthService';
 import { sendRegistrationDecisionEmail, verifyEmailTransport } from '../utils/email';
 import { getFrontendBaseUrl, isFrontendUrlConfigured } from '../config/appUrls';
-import {
-  getResetTtlMinutes,
-  generateResetToken,
-  hashResetToken,
-  resetTokenExpiry,
-} from '../utils/resetToken';
-import { PasswordResetRequest } from '../models/PasswordResetRequest';
-import { PasswordResetToken } from '../models/PasswordResetToken';
+
 
 export const getPendingUsers = async (req: Request, res: Response) => {
   try {
@@ -429,9 +418,6 @@ export const getSystemHealth = async (req: Request, res: Response) => {
         error: mail.ok ? undefined : mail.error,
         superAdminRecipientConfigured: Boolean(process.env.SUPERADMIN_EMAIL),
       },
-      passwordReset: {
-        tokenTtlMinutes: getResetTtlMinutes(),
-      },
       whatsapp: {
         mode: process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_ID ? 'production' : 'mock',
         apiVersion: process.env.WHATSAPP_API_VERSION || 'v22.0',
@@ -443,130 +429,5 @@ export const getSystemHealth = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('System health error:', error);
     res.status(500).json({ error: 'Failed to read system health' });
-  }
-};
-
-// ─── Password reset requests (Super Admin) ────────────────────────────────────
-
-/** Queue of users waiting for the Super Admin to issue them a reset link. */
-export const getPasswordResetRequests = async (req: Request, res: Response) => {
-  try {
-    const requests = await PasswordResetRequest.find({ status: 'Pending' })
-      .sort({ requestedAt: -1 })
-      .lean();
-    res.json(requests);
-  } catch (error) {
-    console.error('Error fetching password reset requests:', error);
-    res.status(500).json({ error: 'Failed to fetch password reset requests' });
-  }
-};
-
-/**
- * Mint a single-use reset link for a queued request.
- *
- * This is the ONLY place the raw token is ever revealed, and only to an
- * authenticated Super Admin over HTTPS. Only its SHA-256 hash is stored, so the
- * link cannot be recovered afterwards — if it is lost, issue a new one.
- */
-export const issuePasswordResetLink = async (req: RequestWithId, res: Response) => {
-  try {
-    const { id } = req.params;
-    const currentUser = (req as any).user;
-
-    const request = await PasswordResetRequest.findById(id);
-    if (!request) {
-      return res.status(404).json({ error: 'Reset request not found' });
-    }
-    if (request.status !== 'Pending') {
-      return res.status(400).json({ error: 'This request has already been handled.' });
-    }
-
-    // Confirm the account still exists and is the one the request refers to.
-    const Model: any = request.accountModel === 'Admin' ? Admin : User;
-    const account = await Model.findById(request.accountId).select('email name');
-    if (!account) {
-      return res.status(404).json({ error: 'The account for this request no longer exists.' });
-    }
-
-    const now = new Date();
-
-    // Retire any outstanding links for this account so only the newest works.
-    await PasswordResetToken.updateMany(
-      { accountId: account._id, usedAt: null },
-      { $set: { usedAt: now } }
-    );
-
-    const rawToken = generateResetToken();
-    await PasswordResetToken.create({
-      tokenHash: hashResetToken(rawToken),
-      accountId: account._id,
-      accountModel: request.accountModel,
-      expiresAt: resetTokenExpiry(now),
-    });
-
-    request.status = 'Fulfilled';
-    request.handledAt = now;
-    request.handledBy = currentUser?.id;
-    await request.save();
-
-    const resetUrl = `${getFrontendBaseUrl()}/reset-password?token=${encodeURIComponent(rawToken)}`;
-
-    await AuditService.log({
-      action: 'PASSWORD_RESET_LINK_ISSUED',
-      collectionName: request.accountModel === 'Admin' ? 'admins' : 'users',
-      documentId: account._id.toString(),
-      actor: AuditService.getActorFromReq(req),
-      request: AuditService.getRequestInfo(req),
-      // The token itself is deliberately never written to the audit log.
-      description: `Password reset link issued for ${account.email}`,
-    });
-
-    void emitPasswordResetRequestsChanged();
-
-    res.json({
-      resetUrl,
-      expiresInMinutes: getResetTtlMinutes(),
-      account: { name: account.name, email: account.email },
-    });
-  } catch (error) {
-    console.error('Error issuing password reset link:', error);
-    res.status(500).json({ error: 'Failed to issue password reset link' });
-  }
-};
-
-/** Decline a reset request without issuing anything. */
-export const dismissPasswordResetRequest = async (req: RequestWithId, res: Response) => {
-  try {
-    const { id } = req.params;
-    const currentUser = (req as any).user;
-
-    const request = await PasswordResetRequest.findById(id);
-    if (!request) {
-      return res.status(404).json({ error: 'Reset request not found' });
-    }
-    if (request.status !== 'Pending') {
-      return res.status(400).json({ error: 'This request has already been handled.' });
-    }
-
-    request.status = 'Dismissed';
-    request.handledAt = new Date();
-    request.handledBy = currentUser?.id;
-    await request.save();
-
-    await AuditService.log({
-      action: 'PASSWORD_RESET_REQUEST_DISMISSED',
-      collectionName: request.accountModel === 'Admin' ? 'admins' : 'users',
-      documentId: request.accountId.toString(),
-      actor: AuditService.getActorFromReq(req),
-      request: AuditService.getRequestInfo(req),
-      description: `Password reset request dismissed for ${request.email}`,
-    });
-
-    void emitPasswordResetRequestsChanged();
-
-    res.json({ message: 'Request dismissed' });
-  } catch (error) {
-    console.error('Error dismissing password reset request:', error);
-    res.status(500).json({ error: 'Failed to dismiss request' });
   }
 };
