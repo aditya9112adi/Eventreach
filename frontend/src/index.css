@@ -10,69 +10,31 @@
    * product can be re-themed from this one block. Values are space-separated
    * RGB triplets so Tailwind can apply opacity via `<alpha-value>`.
    */
-  :root {
-    color-scheme: light;
+  :root, .dark {
+    /* Old pure black theme */
+    --color-background: 10 10 10;         /* #0a0a0a */
+    --color-surface: 15 15 15;            /* #0f0f0f */
+    --color-surface-hover: 25 25 25;      /* #191919 */
+    --color-card: 15 15 15;               /* Used by new UI */
 
-    /* Surfaces — a soft cool neutral page with clean white cards. */
-    --color-background: 247 248 250;      /* #F7F8FA */
-    --color-surface: 255 255 255;         /* #FFFFFF */
-    --color-surface-hover: 244 245 247;   /* #F4F5F7 */
-    --color-card: 255 255 255;            /* #FFFFFF */
-
-    /* Brand — deep indigo reads as trustworthy and enterprise-appropriate. */
-    --color-primary: 79 70 229;           /* #4F46E5 */
-    --color-primary-hover: 67 56 202;     /* #4338CA */
+    --color-primary: 59 130 246;          /* Blue 500 */
+    --color-primary-hover: 37 99 235;     /* Blue 600 */
     --color-primary-foreground: 255 255 255;
-    /* `accent` is an alias of primary, kept because pages reference it widely. */
-    --color-accent: 79 70 229;
+    
+    --color-accent: 59 130 246;
     --color-accent-foreground: 255 255 255;
 
-    /* Text — charcoal rather than pure black is easier to read at length. */
-    --color-foreground: 17 24 39;         /* #111827 */
-    --color-muted: 107 114 128;           /* #6B7280 */
+    --color-foreground: 255 255 255;
+    --color-muted: 156 163 175;
 
-    /* Lines — light enough that borders structure rather than dominate. */
-    --color-border: 229 231 235;          /* #E5E7EB */
-    --color-input: 209 213 219;           /* #D1D5DB */
-    --color-ring: 79 70 229;
+    --color-border: 34 34 34;             /* #222222 */
+    --color-input: 34 34 34;              /* Used by new UI */
+    --color-ring: 59 130 246;             /* Blue 500 */
 
-    /* Status */
-    --color-success: 5 150 105;           /* #059669 */
-    --color-warning: 217 119 6;           /* #D97706 */
-    --color-destructive: 220 38 38;       /* #DC2626 */
-    --color-info: 37 99 235;              /* #2563EB */
-
-    --shadow-rgb: 17 24 39;
-  }
-
-  .dark {
-    color-scheme: dark;
-
-    /* Deep navy-charcoal rather than pure black — less eye strain and it lets
-       elevation actually read. */
-    --color-background: 11 15 25;         /* #0B0F19 */
-    --color-surface: 19 25 38;            /* #131926 */
-    --color-surface-hover: 27 34 51;      /* #1B2233 */
-    --color-card: 19 25 38;
-
-    --color-primary: 99 102 241;          /* #6366F1 — lifted for dark bg */
-    --color-primary-hover: 129 140 248;   /* #818CF8 */
-    --color-primary-foreground: 255 255 255;
-    --color-accent: 99 102 241;
-    --color-accent-foreground: 255 255 255;
-
-    --color-foreground: 233 237 245;      /* #E9EDF5 */
-    --color-muted: 148 163 184;           /* #94A3B8 */
-
-    --color-border: 35 43 59;             /* #232B3B */
-    --color-input: 51 62 82;              /* #333E52 */
-    --color-ring: 129 140 248;
-
-    /* Brightened so status colours stay legible on a dark surface. */
+    --color-destructive: 127 29 29;
     --color-success: 16 185 129;
-    --color-warning: 245 158 11;
-    --color-destructive: 239 68 68;
-    --color-info: 96 165 250;
+    --color-warning: 217 119 6;
+    --color-info: 84 162 255;
 
     --shadow-rgb: 0 0 0;
   }

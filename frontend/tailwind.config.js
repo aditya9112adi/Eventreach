@@ -8,10 +8,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        // Inter is designed for UI and data-dense screens: tall x-height, clear
-        // digits and a tabular-numbers feature that keeps table columns aligned.
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
-        display: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        sans: ['"Space Grotesk"', 'sans-serif'],
+        display: ['"Space Grotesk"', 'sans-serif'],
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
       },
       fontSize: {
