@@ -4,6 +4,7 @@ import type { User } from '@eventreach/shared';
 import api from '../../services/api';
 import { Check, X, Users, Calendar, AlertTriangle } from 'lucide-react';
 import { useLoader } from '../../components/ui/FullScreenLoader';
+import { useSocket } from '../../contexts/SocketContext';
 
 const fmt = (d?: string | Date) => {
   if (!d) return 'N/A';
@@ -30,6 +31,7 @@ const UserApprovals = () => {
   const [rejectError, setRejectError] = useState('');
 
   const { showLoader, showSuccess, showError } = useLoader();
+  const { socket } = useSocket();
 
   const fetchUsers = async () => {
     try {
@@ -49,6 +51,22 @@ const UserApprovals = () => {
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  // Keep the list live: when someone registers (or another Super Admin approves
+  // or rejects a request) the server pushes PENDING_APPROVALS_CHANGED, so the
+  // table reflects it without a manual refresh.
+  useEffect(() => {
+    if (!socket) return;
+
+    const handlePendingChanged = () => {
+      fetchUsers();
+    };
+
+    socket.on('PENDING_APPROVALS_CHANGED', handlePendingChanged);
+    return () => {
+      socket.off('PENDING_APPROVALS_CHANGED', handlePendingChanged);
+    };
+  }, [socket]);
 
   const openApproveModal = (user: any) => {
     setSelectedUser(user);

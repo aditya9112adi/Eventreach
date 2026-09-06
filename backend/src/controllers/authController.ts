@@ -8,6 +8,7 @@ import { Event } from '../models/Event';
 import { sendApprovalEmail } from '../utils/email';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
+import { emitPendingApprovalsChanged } from '../services/socketService';
 
 const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -138,6 +139,10 @@ export const register = async (req: RequestWithId, res: Response) => {
       after: createdUser,
       description: isRecreated ? `${role} re-registered after previous rejection` : `New ${role} registration pending approval`
     });
+
+    // A new request is now awaiting approval — refresh every connected Super
+    // Admin's badge immediately rather than waiting for them to navigate.
+    void emitPendingApprovalsChanged();
 
     res.status(201).json({
       message: 'Registration successful. Please wait for Super Admin approval.',

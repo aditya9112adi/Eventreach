@@ -4,7 +4,7 @@ import { Admin } from '../models/Admin';
 import { Event } from '../models/Event';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
-import { getIO } from '../services/socketService';
+import { getIO, emitPendingApprovalsChanged } from '../services/socketService';
 import { isEventAuthorized } from '../services/eventAuthService';
 
 export const getPendingUsers = async (req: Request, res: Response) => {
@@ -103,6 +103,9 @@ export const approveUser = async (req: RequestWithId, res: Response) => {
       description: `Approved and enabled access for ${type}: ${user.email}`
     });
 
+    // One fewer request is pending — update every Super Admin's badge live.
+    void emitPendingApprovalsChanged();
+
     res.json(user);
   } catch (error) {
     console.error('Error approving user:', error);
@@ -145,6 +148,8 @@ export const rejectUser = async (req: RequestWithId, res: Response) => {
       after: user,
       description: `Rejected ${type} registration: ${user.email}`
     });
+
+    void emitPendingApprovalsChanged();
 
     res.json(user);
   } catch (error) {

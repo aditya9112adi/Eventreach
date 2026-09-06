@@ -92,6 +92,22 @@ const DashboardLayout = () => {
     }
   }, [user, location.pathname]);
 
+  // Live "User Approvals" badge. The server pushes a fresh count to every
+  // connected Super Admin whenever someone registers or a request is approved or
+  // rejected, so the badge appears and clears without navigating or refreshing.
+  useEffect(() => {
+    if (!socket || user?.role !== 'SuperAdmin') return;
+
+    const handlePendingChanged = (data: { pendingCount: number }) => {
+      setPendingCount(data.pendingCount);
+    };
+
+    socket.on('PENDING_APPROVALS_CHANGED', handlePendingChanged);
+    return () => {
+      socket.off('PENDING_APPROVALS_CHANGED', handlePendingChanged);
+    };
+  }, [socket, user?.role]);
+
   const navItems = [
     { name: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
     { name: 'Events', to: '/events', icon: CalendarDays },
