@@ -135,13 +135,20 @@ const DashboardLayout = () => {
       )}
 
       {/* Sidebar */}
+      {/* On desktop this is a sticky, viewport-tall column. It used to be a
+          static flex child, which stretched to the full page height, so on a
+          long page the footer (and with it Change Password and Logout) sat
+          hundreds of pixels below the fold. */}
       <aside className={`
-        fixed inset-y-0 left-0 z-50 w-64 bg-surface border-r border-border transition-transform duration-300 ease-in-out lg:static lg:translate-x-0
+        fixed inset-y-0 left-0 z-50 w-64 flex flex-col bg-surface border-r border-border transition-transform duration-300 ease-in-out
+        lg:sticky lg:top-0 lg:h-screen lg:translate-x-0
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
-        <div className="h-16 flex items-center px-6 border-b border-border">
+        <div className="h-16 shrink-0 flex items-center px-6 border-b border-border">
           <img src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'} alt="Events By Occasion" className="w-8 h-8 mr-3 object-contain dark:drop-shadow-sm mix-blend-multiply dark:mix-blend-normal" />
-          <span className="text-xl font-sans font-bold tracking-tighter uppercase truncate" title="Events By Occasion">Events By Occasion</span>
+          {/* text-xl overflowed the 164px of room here and rendered as
+              "EVENTS BY OCCA…"; text-base is the largest step that fits. */}
+          <span className="text-base font-sans font-bold tracking-tighter uppercase truncate" title="Events By Occasion">Events By Occasion</span>
           <button 
             className="ml-auto lg:hidden text-foreground/50 hover:text-foreground"
             onClick={() => setSidebarOpen(false)}
@@ -150,7 +157,7 @@ const DashboardLayout = () => {
           </button>
         </div>
 
-        <nav className="p-4 space-y-1 relative">
+        <nav className="flex-1 overflow-y-auto p-4 space-y-1 relative">
           {navItems.map((item) => (
             <NavLink
               key={item.name}
@@ -189,7 +196,7 @@ const DashboardLayout = () => {
           ))}
         </nav>
 
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-border">
+        <div className="shrink-0 p-4 border-t border-border">
           <div className="flex items-center">
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-foreground truncate">
