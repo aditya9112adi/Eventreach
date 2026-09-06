@@ -5,8 +5,11 @@ import { z } from 'zod';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
 import api from '../services/api';
-import { MessageSquare, Lock, Mail, EyeOff, Eye, Loader2, Sun, Moon } from 'lucide-react';
+import { AlertCircle, Lock, Mail, Moon, Sun } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
+import { Button } from '../components/ui/Button';
+import { Input } from '../components/ui/Input';
+import { PasswordInput } from '../components/ui/PasswordInput';
 
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
@@ -20,7 +23,6 @@ const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { theme, toggleTheme } = useTheme();
-  const [showPassword, setShowPassword] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
   const {
@@ -38,168 +40,120 @@ const Login = () => {
       login(response.data.token, response.data.user);
       navigate('/dashboard');
     } catch (error: any) {
-      setApiError(
-        error.response?.data?.error || 'Something went wrong. Please try again.'
-      );
+      setApiError(error.response?.data?.error || 'Something went wrong. Please try again.');
     }
   };
 
+  const banner = location.state?.message || apiError;
+
   return (
-    <div className="min-h-screen bg-background flex">
-      {/* Theme Toggle */}
-      <div className="absolute top-4 right-4 z-50">
-        <button
-          onClick={toggleTheme}
-          className="p-2 rounded-md text-foreground/60 hover:text-foreground hover:bg-foreground/5 transition-colors bg-background/50 backdrop-blur-sm border border-border/50"
-          title="Toggle Theme"
-        >
-          {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-        </button>
-      </div>
+    <div className="flex min-h-screen bg-background">
+      <button
+        type="button"
+        onClick={toggleTheme}
+        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+        className="absolute right-4 top-4 z-50 rounded-md border border-border bg-surface p-2 text-muted shadow-xs transition-colors duration-micro hover:text-foreground"
+      >
+        {theme === 'dark' ? (
+          <Sun className="h-4.5 w-4.5" aria-hidden="true" />
+        ) : (
+          <Moon className="h-4.5 w-4.5" aria-hidden="true" />
+        )}
+      </button>
 
-      {/* Left Column - 3D Rotating Logo (Desktop Only) */}
-      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden items-center justify-center">
-        
-        <div className="relative z-10 perspective-1000">
-          <img 
-            src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
-            alt="Events By Occasion Logo" 
-            className="w-64 h-auto object-contain dark:drop-shadow-2xl mix-blend-multiply dark:mix-blend-normal animate-spin-slow" 
-          />
+      {/* Brand panel — desktop only. */}
+      <div className="relative hidden w-1/2 flex-col justify-between overflow-hidden border-r border-border bg-surface p-12 lg:flex">
+        <div
+          className="pointer-events-none absolute inset-0 opacity-[0.07]"
+          style={{
+            backgroundImage:
+              'radial-gradient(circle at 1px 1px, rgb(var(--color-foreground)) 1px, transparent 0)',
+            backgroundSize: '24px 24px',
+          }}
+          aria-hidden="true"
+        />
+
+        <img
+          src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
+          alt="Events By Occasion"
+          className="relative h-10 w-auto object-contain object-left mix-blend-multiply dark:mix-blend-normal"
+        />
+
+        <div className="relative max-w-md">
+          <h2 className="text-display font-semibold tracking-tight text-foreground">
+            Every guest reached, on time.
+          </h2>
+          <p className="mt-4 text-md text-muted">
+            Plan events, manage guest lists and run WhatsApp campaigns from one place — with full
+            delivery reporting on every message you send.
+          </p>
         </div>
+
+        <p className="relative text-xs text-muted">
+          © {new Date().getFullYear()} Events By Occasion
+        </p>
       </div>
 
-      {/* Right Column - Form */}
-      <div className="flex-1 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-20 xl:px-24">
-        <div className="mx-auto w-full max-w-sm lg:max-w-md">
-          {/* Mobile Logo (Visible only on small screens) */}
-          <div className="flex justify-center mb-8 lg:hidden">
-            <div className="perspective-1000">
-              <img 
-                src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
-                alt="Events By Occasion Logo" 
-                className="w-32 h-auto object-contain dark:drop-shadow-xl mix-blend-multiply dark:mix-blend-normal animate-spin-slow" 
-              />
-            </div>
-          </div>
-          
-          <div className="text-center lg:text-left mb-8 animate-fade-in">
-            <h2 className="text-3xl font-extrabold text-foreground tracking-tight">
-              Welcome Back
-            </h2>
-            <p className="mt-2 text-sm text-foreground/60">
-              Sign in to manage your events and campaigns
+      {/* Form panel */}
+      <div className="flex flex-1 flex-col justify-center px-4 py-12 sm:px-6 lg:px-16 xl:px-24">
+        <div className="mx-auto w-full max-w-sm">
+          <img
+            src={theme === 'dark' ? '/logo-dark.png' : '/logo.png'}
+            alt="Events By Occasion"
+            className="mx-auto mb-8 h-10 w-auto object-contain mix-blend-multiply dark:mix-blend-normal lg:hidden"
+          />
+
+          <div className="mb-7">
+            <h1 className="text-h1 font-semibold tracking-tight text-foreground">Welcome back</h1>
+            <p className="mt-1.5 text-sm text-muted">
+              Sign in to manage your events and campaigns.
             </p>
           </div>
 
-          <div className="bg-card py-8 px-4 shadow-xl shadow-black/5 sm:rounded-2xl sm:px-10 border border-border/50 animate-spring-up">
-            {location.state?.message && (
-              <div className="bg-destructive/10 border border-destructive/20 text-destructive p-3 rounded-lg mb-6 text-sm text-center font-medium">
-                {location.state.message}
-              </div>
-            )}
-            
-            {apiError && (
-              <div className="bg-destructive/10 border border-destructive/20 text-destructive p-3 rounded-lg mb-6 text-sm text-center font-medium">
-                {apiError}
-              </div>
-            )}
+          {banner && (
+            <div
+              role="alert"
+              className="mb-5 flex items-start gap-2.5 rounded-lg border border-destructive/25 bg-destructive/10 px-3.5 py-3 text-sm text-destructive"
+            >
+              <AlertCircle className="mt-px h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="font-medium">{banner}</span>
+            </div>
+          )}
 
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1.5">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Mail className="h-5 w-5 text-foreground/40" />
-                  </div>
-                  <input
-                    type="email"
-                    {...register('email')}
-                    className={`block w-full pl-10 pr-3 py-2.5 border ${
-                      errors.email ? 'border-destructive' : 'border-input'
-                    } rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm`}
-                    placeholder="name@company.com"
-                  />
-                </div>
-                {errors.email && (
-                  <p className="mt-1.5 text-sm text-destructive font-medium">{errors.email.message}</p>
-                )}
-              </div>
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+            <Input
+              label="Email address"
+              type="email"
+              autoComplete="email"
+              placeholder="name@company.com"
+              icon={<Mail className="h-4 w-4" />}
+              error={errors.email?.message}
+              {...register('email')}
+            />
 
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1.5">
-                  Password
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Lock className="h-5 w-5 text-foreground/40" />
-                  </div>
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    {...register('password')}
-                    className={`block w-full pl-10 pr-10 py-2.5 border ${
-                      errors.password ? 'border-destructive' : 'border-input'
-                    } rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all sm:text-sm`}
-                    placeholder="••••••••"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center transition-colors"
-                  >
-                    {showPassword ? (
-                      <EyeOff className="h-5 w-5 text-foreground/40 hover:text-foreground" />
-                    ) : (
-                      <Eye className="h-5 w-5 text-foreground/40 hover:text-foreground" />
-                    )}
-                  </button>
-                </div>
-                {errors.password && (
-                  <p className="mt-1.5 text-sm text-destructive font-medium">
-                    {errors.password.message}
-                  </p>
-                )}
-              </div>
+            <PasswordInput
+              label="Password"
+              autoComplete="current-password"
+              placeholder="••••••••"
+              icon={<Lock className="h-4 w-4" />}
+              error={errors.password?.message}
+              {...register('password')}
+            />
 
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <input
-                    id="remember-me"
-                    name="remember-me"
-                    type="checkbox"
-                    className="h-4 w-4 text-accent focus:ring-accent border-input rounded bg-background"
-                  />
-                  <label
-                    htmlFor="remember-me"
-                    className="ml-2 block text-sm font-medium text-foreground/80 cursor-pointer"
-                  >
-                    Remember me
-                  </label>
-                </div>
-              </div>
+            <Button type="submit" size="lg" block isLoading={isSubmitting} className="!mt-6">
+              {isSubmitting ? 'Signing in…' : 'Sign in'}
+            </Button>
+          </form>
 
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-accent hover:bg-accent/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed transition-all transform active:scale-[0.98]"
-              >
-                {isSubmitting ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  'Sign In'
-                )}
-              </button>
-
-              <div className="text-center mt-6 text-sm">
-                <span className="text-foreground/60">Don't have an account? </span>
-                <Link to="/register" className="font-bold text-accent hover:text-accent/80 transition-colors">
-                  Create an account
-                </Link>
-              </div>
-            </form>
-          </div>
+          <p className="mt-6 text-center text-sm text-muted">
+            Don't have an account?{' '}
+            <Link
+              to="/register"
+              className="font-medium text-primary transition-colors duration-micro hover:text-primary-hover"
+            >
+              Create one
+            </Link>
+          </p>
         </div>
       </div>
     </div>

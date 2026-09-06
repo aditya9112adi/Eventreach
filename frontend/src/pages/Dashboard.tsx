@@ -1,21 +1,29 @@
 import { useState, useEffect, useCallback } from 'react';
-import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
 import { useSocket } from '../contexts/SocketContext';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip as RechartsTooltip, ResponsiveContainer,
+  Tooltip as RechartsTooltip, ResponsiveContainer, Legend,
   LineChart, Line,
 } from 'recharts';
 import {
   CalendarDays, Users, Megaphone, Send,
-  CheckCircle2, XCircle, Clock,
+  CheckCircle2, XCircle, Clock, LineChart as LineChartIcon, Inbox,
 } from 'lucide-react';
 import api from '../services/api';
 import type { Event, Campaign, EventStatus } from '@eventreach/shared';
 import { EventSearch } from '../components/ui/EventSearch';
 import { Button } from '../components/ui/Button';
+import { Card, CardHeader } from '../components/ui/Card';
+import { StatCard, type StatTone } from '../components/ui/StatCard';
+import { SkeletonStats, SkeletonCard } from '../components/ui/Skeleton';
+import { EmptyState, ErrorState } from '../components/ui/EmptyState';
+import { StatusBadge } from '../components/ui/StatusBadge';
+import { Select } from '../components/ui/Select';
+import { PageHeader } from '../components/ui/PageHeader';
+import { useTheme } from '../store/themeStore';
+import { formatDateTime } from '../utils/datetime';
 
 interface DashboardStats {
   totalEvents: number;
@@ -26,6 +34,9 @@ interface DashboardStats {
   messagesFailed: number;
   messagesPending: number;
 }
+
+/** Entrance delays for the stat row, written out so Tailwind keeps them. */
+const STAGGER = ['stagger-1', 'stagger-2', 'stagger-3', 'stagger-4', 'stagger-5'];
 
 const STATUS_OPTIONS: { label: string; value: '' | EventStatus }[] = [
   { label: 'All', value: '' },
@@ -43,6 +54,7 @@ const Dashboard = () => {
   const [recentCampaigns, setRecentCampaigns] = useState<Campaign[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   // FILTER 1 — Status dropdown (re-fetches stats from API)
   const [statusFilter, setStatusFilter] = useState<'' | EventStatus>('');
@@ -51,6 +63,7 @@ const Dashboard = () => {
   const [selectedEventId, setSelectedEventId] = useState<string>('');
 
   const { user } = useAuth();
+  const { theme } = useTheme();
 
   const selectedEvent = events.find(e => e._id === selectedEventId) || null;
 
@@ -75,8 +88,10 @@ const Dashboard = () => {
       setChartData(activityRes.data.chartData || []);
       setRecentCampaigns(activityRes.data.recentCampaigns || []);
       setEvents(eventsRes.data);
+      setLoadError(false);
     } catch (error) {
       console.error('Failed to fetch dashboard data', error);
+      setLoadError(true);
     } finally {
       setIsLoading(false);
     }
@@ -103,213 +118,234 @@ const Dashboard = () => {
     };
   }, [socket, fetchAll]);
 
+  const isSuperAdminOrAdmin = user?.role === 'SuperAdmin' || user?.role === 'Admin';
+
+  // Charts read their colours from the active theme rather than hard-coded
+  // slate values, which were unreadable on the light background.
+  const isDark = theme === 'dark';
+  const chartColors = {
+    axis: isDark ? '#94A3B8' : '#6B7280',
+    grid: isDark ? 'rgba(148,163,184,0.16)' : 'rgba(17,24,39,0.08)',
+    sent: isDark ? '#818CF8' : '#4F46E5',
+    delivered: isDark ? '#34D399' : '#059669',
+    tooltipBg: isDark ? '#131926' : '#FFFFFF',
+    tooltipBorder: isDark ? '#232B3B' : '#E5E7EB',
+    tooltipText: isDark ? '#E9EDF5' : '#111827',
+  };
+
+  const tooltipStyle = {
+    borderRadius: '0.5rem',
+    border: `1px solid ${chartColors.tooltipBorder}`,
+    backgroundColor: chartColors.tooltipBg,
+    color: chartColors.tooltipText,
+    fontSize: '0.8125rem',
+    boxShadow: '0 4px 8px -2px rgba(0,0,0,0.08), 0 12px 20px -4px rgba(0,0,0,0.08)',
+  };
+
+  const filterControls = isSuperAdminOrAdmin ? (
+    <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-end">
+      <div className="sm:w-44">
+        <Select
+          label="Event status"
+          value={statusFilter}
+          onChange={(e) => {
+            setStatusFilter(e.target.value as '' | EventStatus);
+            setSelectedEventId('');
+          }}
+        >
+          {STATUS_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </Select>
+      </div>
+
+      <div className="sm:w-64">
+        <label className="mb-1.5 block text-sm font-medium text-foreground">Event</label>
+        <EventSearch
+          events={events}
+          value={selectedEventId}
+          onChange={(id) => { setSelectedEventId(id); setStatusFilter(''); }}
+          placeholder="Search events…"
+          allowClear={true}
+        />
+      </div>
+    </div>
+  ) : null;
+
+  const subtitle = isSuperAdminOrAdmin
+    ? selectedEvent
+      ? `Showing ${selectedEvent.eventName}`
+      : statusFilter
+        ? `Showing ${statusFilter.toLowerCase()} events`
+        : 'Across all of your events'
+    : `Assigned event: ${events[0]?.eventName || user?.assignedEventName || 'none yet'}`;
+
   if (isLoading) {
     return (
-      <div className='space-y-6'>
-        <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6'>
-          {[...Array(7)].map((_, i) => (
-            <div key={i} className='glass-panel rounded-2xl p-6 animate-pulse'>
-              <div className='flex items-center'>
-                <div className='w-12 h-12 rounded-full bg-white/10 dark:bg-black/10 mr-4' />
-                <div className='space-y-2 flex-1'>
-                  <div className='h-3 bg-white/10 dark:bg-black/10 rounded w-24' />
-                  <div className='h-6 bg-white/10 dark:bg-black/10 rounded w-16' />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className='grid grid-cols-1 lg:grid-cols-2 gap-6'>
-          {[0, 1].map((i) => (
-            <div key={i} className='glass-panel rounded-2xl p-6 h-80 animate-pulse'>
-              <div className='h-4 bg-white/10 dark:bg-black/10 rounded w-48 mb-4' />
-              <div className='h-64 bg-white/10 dark:bg-black/10 rounded' />
-            </div>
-          ))}
+      <div className="space-y-6">
+        <PageHeader title="Dashboard" description={subtitle} />
+        <SkeletonStats count={4} />
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <SkeletonCard lines={6} />
+          <SkeletonCard lines={6} />
         </div>
       </div>
     );
   }
 
-  const statCards = [
-    ...(selectedEventId ? [] : [{ label: 'Total Events',     value: stats.totalEvents,       icon: CalendarDays,  color: 'text-blue-500 dark:text-blue-400',      bg: 'bg-blue-500/10' }]),
-    { label: 'Total Contacts',   value: stats.totalContacts,     icon: Users,         color: 'text-indigo-500 dark:text-indigo-400',   bg: 'bg-indigo-500/10' },
-    { label: 'Active Campaigns', value: stats.totalCampaigns,    icon: Megaphone,     color: 'text-purple-500 dark:text-purple-400',   bg: 'bg-purple-500/10' },
-    { label: 'Messages Sent',    value: stats.messagesSent,      icon: Send,          color: 'text-sky-500 dark:text-sky-400',         bg: 'bg-sky-500/10' },
-    { label: 'Delivered',        value: stats.messagesDelivered, icon: CheckCircle2,  color: 'text-emerald-500 dark:text-emerald-400', bg: 'bg-emerald-500/10' },
-    { label: 'Failed',           value: stats.messagesFailed,    icon: XCircle,       color: 'text-rose-500 dark:text-rose-400',       bg: 'bg-rose-500/10' },
-    { label: 'Pending',          value: stats.messagesPending,   icon: Clock,         color: 'text-amber-500 dark:text-amber-400',     bg: 'bg-amber-500/10' },
+  if (loadError) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Dashboard" />
+        <Card flush>
+          <ErrorState
+            message="We couldn't load your dashboard data. Check your connection and try again."
+            onRetry={fetchAll}
+          />
+        </Card>
+      </div>
+    );
+  }
+
+  const statCards: Array<{ label: string; value: number; icon: any; tone: StatTone }> = [
+    ...(selectedEventId
+      ? []
+      : [{ label: 'Total events', value: stats.totalEvents, icon: CalendarDays, tone: 'info' as StatTone }]),
+    { label: 'Total contacts', value: stats.totalContacts, icon: Users, tone: 'primary' },
+    { label: 'Active campaigns', value: stats.totalCampaigns, icon: Megaphone, tone: 'primary' },
+    { label: 'Messages sent', value: stats.messagesSent, icon: Send, tone: 'info' },
+    { label: 'Delivered', value: stats.messagesDelivered, icon: CheckCircle2, tone: 'success' },
+    { label: 'Failed', value: stats.messagesFailed, icon: XCircle, tone: 'error' },
+    { label: 'Pending', value: stats.messagesPending, icon: Clock, tone: 'warning' },
   ];
 
-  const isSuperAdmin = user?.role === 'SuperAdmin';
-  const isSuperAdminOrAdmin = user?.role === 'SuperAdmin' || user?.role === 'Admin';
+  const hasActivity = chartData.length > 0;
 
   return (
-    <div className='space-y-6'>
+    <div className="space-y-6">
+      <PageHeader title="Dashboard" description={subtitle} actions={filterControls} />
 
-      {/* Header row with both independent filters */}
-      <div className='flex flex-col sm:flex-row sm:items-end justify-between gap-4'>
-        <div>
-          <h2 className='text-3xl font-sans font-bold text-foreground animate-slide-in uppercase'>Dashboard Overview</h2>
-          {/* Active filter indicator for Admin/SuperAdmin */}
-          {isSuperAdminOrAdmin && (selectedEvent || statusFilter) && (
-            <p className='text-xs text-foreground/50 mt-1 flex items-center gap-1'>
-              Showing:
-              {selectedEvent && <span className='text-accent font-semibold'>{selectedEvent.eventName}</span>}
-              {!selectedEvent && statusFilter && <span className='text-accent font-semibold'>{statusFilter} events</span>}
-            </p>
-          )}
-          {/* Assigned event indicator for regular User */}
-          {!isSuperAdminOrAdmin && (
-            <p className='text-xs text-foreground/50 mt-1 flex items-center gap-1'>
-              Assigned Event: <span className='text-accent font-semibold'>{events[0]?.eventName || user?.assignedEventName || 'No Event Assigned'}</span>
-            </p>
-          )}
-        </div>
-
-        {isSuperAdminOrAdmin && (
-          <div className='flex flex-col sm:flex-row items-start sm:items-end gap-3 relative z-50'>
-
-            {/* FILTER 1: Status Dropdown — independent, re-fetches stats */}
-            <div className='flex flex-col'>
-              <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Select Event Status</label>
-              <select
-                value={statusFilter}
-                onChange={(e) => { setStatusFilter(e.target.value as ('' | EventStatus)); setSelectedEventId(''); }}
-                className='bg-surface border border-border text-foreground px-4 py-2 rounded-md focus:outline-none focus:border-accent transition-colors font-medium text-sm min-w-[160px] cursor-pointer'
-              >
-                {STATUS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* FILTER 2: Event Search dropdown — selects a specific event */}
-            <div className='flex flex-col w-[260px]'>
-              <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Select Event Name</label>
-              <EventSearch
-                events={events}
-                value={selectedEventId}
-                onChange={(id) => { setSelectedEventId(id); setStatusFilter(''); }}
-                placeholder='Search events...'
-                allowClear={true}
-              />
-            </div>
-
+      {/* Stat tiles */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {statCards.map((stat, index) => (
+          <div
+            key={stat.label}
+            // Literal classes: Tailwind cannot see dynamically built names.
+            className={`animate-fade-up ${STAGGER[Math.min(index, STAGGER.length - 1)]}`}
+          >
+            <StatCard label={stat.label} value={stat.value} icon={stat.icon} tone={stat.tone} />
           </div>
-        )}
+        ))}
       </div>
 
-      {/* Stat Cards */}
-      <motion.div
-        className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6'
-        initial="hidden"
-        animate="visible"
-        variants={{ visible: { transition: { staggerChildren: 0.08 } } }}
-      >
-        {statCards.map((stat, idx) => (
-          <motion.div
-            key={idx}
-            variants={{
-              hidden: { opacity: 0, y: 20 },
-              visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: 'easeOut' } },
-            }}
-            className='glass-panel rounded-2xl p-6 flex items-center hover:-translate-y-1 hover:shadow-glass-lg hover:border-accent/30 transition-all duration-300'
-          >
-            <div className={'w-12 h-12 rounded-full flex items-center justify-center ' + stat.bg + ' ' + stat.color + ' mr-4 backdrop-blur-md'}>
-              <stat.icon className='w-6 h-6' />
-            </div>
-            <div>
-              <p className='text-sm font-medium text-foreground/60'>{stat.label}</p>
-              <h3 className='text-2xl font-bold text-foreground mt-1'>{stat.value}</h3>
-            </div>
-          </motion.div>
-        ))}
-      </motion.div>
-
       {/* Charts */}
-      <div className='grid grid-cols-1 lg:grid-cols-2 gap-6'>
-        <div className='glass-panel rounded-2xl p-6 animate-spring-up stagger-4'>
-          <h3 className='text-lg font-sans font-bold text-foreground mb-4 uppercase tracking-wider'>Messages Sent vs Delivered</h3>
-          <div className='h-72'>
-            {chartData.length > 0 ? (
-              <ResponsiveContainer width='100%' height='100%'>
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray='3 3' vertical={false} stroke='rgba(148,163,184,0.2)' />
-                  <XAxis dataKey='name' axisLine={false} tickLine={false} tick={{ fill: '#94A3B8' }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94A3B8' }} />
-                  <RechartsTooltip cursor={{ fill: 'rgba(148,163,184,0.1)' }} contentStyle={{ borderRadius: '1rem', border: '1px solid rgba(255,255,255,0.1)', backgroundColor: 'rgba(15,23,42,0.8)', backdropFilter: 'blur(12px)', color: '#F8FAFC' }} />
-                  <Bar dataKey='sent' fill='#3B82F6' radius={[4, 4, 0, 0]} name='Sent' />
-                  <Bar dataKey='delivered' fill='#22C55E' radius={[4, 4, 0, 0]} name='Delivered' />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card flush>
+          <CardHeader title="Sent vs delivered" description="Message volume over recent activity" />
+          <div className="h-72 p-5 pt-4">
+            {hasActivity ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.grid} />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: chartColors.axis, fontSize: 12 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: chartColors.axis, fontSize: 12 }} allowDecimals={false} />
+                  <RechartsTooltip cursor={{ fill: chartColors.grid }} contentStyle={tooltipStyle} />
+                  <Legend wrapperStyle={{ fontSize: '0.75rem', color: chartColors.axis }} />
+                  <Bar dataKey="sent" fill={chartColors.sent} radius={[4, 4, 0, 0]} name="Sent" maxBarSize={36} />
+                  <Bar dataKey="delivered" fill={chartColors.delivered} radius={[4, 4, 0, 0]} name="Delivered" maxBarSize={36} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <div className='h-full relative overflow-hidden rounded-xl border border-border/30 bg-surface/10 flex items-center justify-center group'>
-                {/* Skeleton Background */}
-                <div className='absolute inset-0 flex items-end justify-around p-4 opacity-10 pointer-events-none'>
-                  <div className='w-8 h-[30%] bg-blue-500 rounded-t-sm'></div>
-                  <div className='w-8 h-[70%] bg-blue-500 rounded-t-sm'></div>
-                  <div className='w-8 h-[40%] bg-blue-500 rounded-t-sm'></div>
-                  <div className='w-8 h-[90%] bg-blue-500 rounded-t-sm'></div>
-                  <div className='w-8 h-[60%] bg-blue-500 rounded-t-sm'></div>
-                </div>
-                
-                {/* Glass Overlay Content */}
-                <div className='relative z-10 flex flex-col items-center text-center p-6 bg-surface/60 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl max-w-sm mx-4 transition-transform duration-300 group-hover:scale-[1.02]'>
-                  <div className='w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center mb-4 text-blue-400'>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
-                  </div>
-                  <h4 className='text-foreground font-medium mb-2'>No message activity yet</h4>
-                  <p className='text-sm text-foreground/60 mb-6'>Your messaging journey starts here. Send your first campaign to see delivery metrics.</p>
-                  <Link to="/events">
-                    <Button variant="primary" className="shadow-lg shadow-blue-500/20">
-                      Create Campaign
-                    </Button>
-                  </Link>
-                </div>
-              </div>
+              <EmptyState
+                icon={Send}
+                title="No message activity yet"
+                description="Send your first campaign and delivery metrics will appear here."
+                className="h-full"
+              />
             )}
           </div>
-        </div>
-        <div className='glass-panel rounded-2xl p-6 animate-spring-up stagger-5'>
-          <h3 className='text-lg font-sans font-bold text-foreground mb-4 uppercase tracking-wider'>Delivery Rate Trend</h3>
-          <div className='h-72'>
-            {chartData.length > 0 ? (
-              <ResponsiveContainer width='100%' height='100%'>
-                <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray='3 3' vertical={false} stroke='rgba(148,163,184,0.2)' />
-                  <XAxis dataKey='name' axisLine={false} tickLine={false} tick={{ fill: '#94A3B8' }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94A3B8' }} />
-                  <RechartsTooltip contentStyle={{ borderRadius: '1rem', border: '1px solid rgba(255,255,255,0.1)', backgroundColor: 'rgba(15,23,42,0.8)', backdropFilter: 'blur(12px)', color: '#F8FAFC' }} />
-                  <Line type='monotone' dataKey='delivered' stroke='#22C55E' strokeWidth={3} dot={{ strokeWidth: 2, r: 4 }} activeDot={{ r: 6 }} name='Delivered' />
+        </Card>
+
+        <Card flush>
+          <CardHeader title="Delivery trend" description="Delivered messages over time" />
+          <div className="h-72 p-5 pt-4">
+            {hasActivity ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.grid} />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: chartColors.axis, fontSize: 12 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: chartColors.axis, fontSize: 12 }} allowDecimals={false} />
+                  <RechartsTooltip contentStyle={tooltipStyle} />
+                  <Line
+                    type="monotone"
+                    dataKey="delivered"
+                    stroke={chartColors.delivered}
+                    strokeWidth={2.5}
+                    dot={{ strokeWidth: 2, r: 3 }}
+                    activeDot={{ r: 5 }}
+                    name="Delivered"
+                  />
                 </LineChart>
               </ResponsiveContainer>
-              ) : (
-                <div className='h-full relative overflow-hidden rounded-xl border border-border/30 bg-surface/10 flex items-center justify-center group'>
-                  {/* Skeleton Background */}
-                  <div className='absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none'>
-                    <svg viewBox="0 0 100 50" className="w-full h-full preserve-3d" preserveAspectRatio="none">
-                      <path d="M0,40 Q25,35 50,20 T100,5" fill="none" stroke="#22C55E" strokeWidth="2" />
-                    </svg>
-                  </div>
-                  
-                  {/* Glass Overlay Content */}
-                  <div className='relative z-10 flex flex-col items-center text-center p-6 bg-surface/60 backdrop-blur-md rounded-2xl border border-white/5 shadow-xl max-w-sm mx-4 transition-transform duration-300 group-hover:scale-[1.02]'>
-                    <div className='w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mb-4 text-green-400'>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
-                    </div>
-                    <h4 className='text-foreground font-medium mb-2'>Track your success</h4>
-                    <p className='text-sm text-foreground/60 mb-6'>Trend data will populate right here once your campaigns go live and start delivering.</p>
-                  </div>
-                </div>
-              )}
+            ) : (
+              <EmptyState
+                icon={LineChartIcon}
+                title="Nothing to trend yet"
+                description="Trend data appears once your campaigns go live and start delivering."
+                className="h-full"
+              />
+            )}
           </div>
-        </div>
+        </Card>
       </div>
 
+      {/* Recent campaigns — this data was already fetched but never shown. */}
+      <Card flush>
+        <CardHeader
+          title="Recent campaigns"
+          description="Your most recently created message campaigns"
+          actions={
+            <Link to="/campaigns">
+              <Button variant="secondary" size="sm">New campaign</Button>
+            </Link>
+          }
+        />
+        {recentCampaigns.length === 0 ? (
+          <EmptyState
+            icon={Inbox}
+            title="No campaigns yet"
+            description="Compose a message for one of your events to get started."
+          />
+        ) : (
+          <ul className="divide-y divide-border">
+            {recentCampaigns.slice(0, 5).map((campaign) => {
+              const eventName =
+                typeof campaign.eventId === 'object' && campaign.eventId
+                  ? campaign.eventId.eventName
+                  : 'Event';
+              return (
+                <li key={campaign._id}>
+                  <Link
+                    to={`/campaigns/${campaign._id}/report`}
+                    className="flex items-center gap-4 px-5 py-3.5 transition-colors duration-micro hover:bg-surfaceHover"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-foreground">{eventName}</p>
+                      <p className="truncate text-xs text-muted">{campaign.messageText}</p>
+                    </div>
+                    <span className="hidden shrink-0 text-xs text-muted sm:block">
+                      {formatDateTime(campaign.createdAt)}
+                    </span>
+                    <StatusBadge status={campaign.status} size="sm" />
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Card>
     </div>
   );
 };
 
 export default Dashboard;
-

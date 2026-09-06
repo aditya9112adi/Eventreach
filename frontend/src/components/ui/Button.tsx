@@ -1,40 +1,87 @@
 import React from 'react';
 import { Loader2 } from 'lucide-react';
-import { motion } from 'framer-motion';
-import type { HTMLMotionProps } from 'framer-motion';
 
-interface ButtonProps extends HTMLMotionProps<"button"> {
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
+export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'subtle';
+export type ButtonSize = 'sm' | 'md' | 'lg';
+
+interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
   isLoading?: boolean;
+  /** Stretch to the width of the parent. */
+  block?: boolean;
 }
 
+const VARIANTS: Record<ButtonVariant, string> = {
+  primary:
+    'bg-primary text-primary-foreground hover:bg-primary-hover shadow-xs active:shadow-none',
+  secondary:
+    'bg-surface text-foreground border border-border hover:bg-surfaceHover hover:border-input shadow-xs',
+  danger:
+    'bg-destructive text-white hover:brightness-110 shadow-xs active:shadow-none',
+  ghost:
+    'bg-transparent text-foreground hover:bg-surfaceHover',
+  subtle:
+    'bg-primary/10 text-primary hover:bg-primary/15 dark:bg-primary/15 dark:hover:bg-primary/25',
+};
+
+const SIZES: Record<ButtonSize, string> = {
+  sm: 'h-8 px-3 text-xs gap-1.5 rounded-md',
+  md: 'h-9 px-4 text-sm gap-2 rounded-md',
+  lg: 'h-11 px-5 text-md gap-2 rounded-lg',
+};
+
+/**
+ * The application's single button.
+ *
+ * Motion is a CSS transition on transform/opacity rather than a spring library:
+ * it is cheaper, respects prefers-reduced-motion through the global rule, and
+ * keeps buttons usable inside lists without a component per row.
+ */
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className = '', variant = 'primary', isLoading, children, disabled, ...props }, ref) => {
-    
-    // Note: removed CSS transition-all and active:scale because framer-motion handles it via spring physics now
-    const baseStyles = "inline-flex items-center justify-center font-sans rounded-md font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-background disabled:opacity-50 disabled:pointer-events-none text-sm px-6 py-2.5";
-    
-    const variants = {
-      primary: "bg-foreground text-background hover:bg-foreground/90 shadow-md border border-border/50",
-      secondary: "bg-surface text-foreground border border-border hover:bg-surfaceHover focus:ring-surfaceHover",
-      danger: "bg-destructive text-white hover:bg-destructive/90 focus:ring-destructive",
-      ghost: "bg-transparent text-foreground hover:bg-surfaceHover focus:ring-surfaceHover"
-    };
+  (
+    {
+      className = '',
+      variant = 'primary',
+      size = 'md',
+      isLoading = false,
+      block = false,
+      children,
+      disabled,
+      type = 'button',
+      ...props
+    },
+    ref
+  ) => {
+    const inactive = disabled || isLoading;
 
     return (
-      <motion.button
+      <button
         ref={ref}
-        whileHover={disabled || isLoading ? undefined : { scale: 1.01 }}
-        whileTap={disabled || isLoading ? undefined : { scale: 0.96 }}
-        transition={{ type: "spring", stiffness: 400, damping: 25 }}
-        className={`${baseStyles} ${variants[variant]} ${className}`}
-        disabled={disabled || isLoading}
+        type={type}
+        // Communicates the pending state to assistive tech, not just visually.
+        aria-busy={isLoading || undefined}
+        disabled={inactive}
+        className={[
+          'inline-flex items-center justify-center whitespace-nowrap font-medium',
+          'transition-[background-color,border-color,color,box-shadow,transform]',
+          'duration-control ease-out-expo',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+          'disabled:opacity-55 disabled:pointer-events-none',
+          inactive ? '' : 'active:translate-y-px',
+          SIZES[size],
+          VARIANTS[variant],
+          block ? 'w-full' : '',
+          className,
+        ].join(' ')}
         {...props}
       >
-        {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-        {children as React.ReactNode}
-      </motion.button>
+        {isLoading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+        {children}
+      </button>
     );
   }
 );
 Button.displayName = 'Button';
+
+export default Button;

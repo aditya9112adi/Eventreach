@@ -1,8 +1,7 @@
-
 import { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { Search, ChevronDown, X } from 'lucide-react';
 import type { Event } from '@eventreach/shared';
+import { formatDate } from '../../utils/datetime';
 
 interface EventSearchProps {
   events: Event[];
@@ -12,17 +11,26 @@ interface EventSearchProps {
   allowClear?: boolean;
 }
 
-export const EventSearch = ({ events, value, onChange, placeholder = 'Search events...', allowClear = true }: EventSearchProps) => {
+export const EventSearch = ({
+  events,
+  value,
+  onChange,
+  placeholder = 'Search events…',
+  allowClear = true,
+}: EventSearchProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  const selectedEvent = events.find(e => e._id === value);
+  const selectedEvent = events.find((e) => e._id === value);
 
-  const filteredEvents = events.filter(e =>
-    e.eventName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    e.eventType?.toLowerCase().includes(searchTerm.toLowerCase())
-  ).slice(0, 50);
+  const filteredEvents = events
+    .filter(
+      (e) =>
+        e.eventName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        e.eventType?.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+    .slice(0, 50);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -35,98 +43,147 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Escape closes the list without changing the selection.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+        setSearchTerm('');
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isOpen]);
+
   return (
-    <div className="relative w-full min-w-[240px]" ref={wrapperRef}>
-      {/* Trigger button */}
-      <div
-        className={`flex items-center justify-between bg-surface border text-foreground px-3 py-2 rounded-md cursor-pointer transition-colors ${
-          isOpen ? 'border-accent' : 'border-border hover:border-accent/50'
-        }`}
-        onClick={() => { setIsOpen(!isOpen); if (!isOpen) setSearchTerm(''); }}
+    <div className="relative w-full" ref={wrapperRef}>
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        onClick={() => {
+          setIsOpen(!isOpen);
+          if (!isOpen) setSearchTerm('');
+        }}
+        className={[
+          'flex h-9 w-full items-center justify-between rounded-md border bg-surface px-3',
+          'transition-[border-color,box-shadow] duration-control ease-out-expo',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25',
+          isOpen ? 'border-primary ring-2 ring-primary/25' : 'border-input hover:border-muted/60',
+        ].join(' ')}
       >
-        {selectedEvent ? (
-          <span className="truncate flex-1 text-sm font-medium text-foreground">
-            {selectedEvent.eventName}
-          </span>
-        ) : (
-          <span className="truncate flex-1 text-sm text-foreground/50">
-            {placeholder}
-          </span>
-        )}
+        <span
+          className={`flex-1 truncate text-left text-sm ${
+            selectedEvent ? 'font-medium text-foreground' : 'text-muted'
+          }`}
+        >
+          {selectedEvent ? selectedEvent.eventName : placeholder}
+        </span>
 
-        <div className="flex items-center ml-2 gap-1 shrink-0">
+        <span className="ml-2 flex shrink-0 items-center gap-1">
           {allowClear && selectedEvent && (
-            <div
-              className="p-1 hover:bg-background rounded-md text-foreground/40 hover:text-foreground transition-colors"
-              onClick={(e) => { e.stopPropagation(); onChange(''); setSearchTerm(''); }}
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label="Clear selection"
+              className="rounded p-0.5 text-muted transition-colors duration-micro hover:bg-surfaceHover hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange('');
+                setSearchTerm('');
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onChange('');
+                  setSearchTerm('');
+                }
+              }}
             >
-              <X className="w-3.5 h-3.5" />
-            </div>
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
           )}
-          <ChevronDown className={`w-4 h-4 text-foreground/40 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
-        </div>
-      </div>
+          <ChevronDown
+            className={`h-4 w-4 text-muted transition-transform duration-control ${
+              isOpen ? 'rotate-180' : ''
+            }`}
+            aria-hidden="true"
+          />
+        </span>
+      </button>
 
-      {/* Dropdown */}
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95, y: -10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: -10 }}
-            transition={{ duration: 0.15, ease: 'easeOut' }}
-            className="absolute z-50 w-full mt-1 bg-surface border border-border rounded-md shadow-glass-lg overflow-hidden flex flex-col max-h-[320px] origin-top"
-          >
-            {/* Search input row */}
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-background/30">
-              <Search className="w-4 h-4 text-foreground/40 shrink-0" />
-              <input
-                type="text"
-                className="w-full bg-transparent border-none focus:outline-none text-sm text-foreground placeholder:text-foreground/40"
-                placeholder="Type to search events..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                autoFocus
-              />
-            </div>
+      {isOpen && (
+        <div
+          role="listbox"
+          className="absolute z-50 mt-1.5 flex max-h-80 w-full origin-top flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-lg animate-scale-in"
+        >
+          <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+            <Search className="h-4 w-4 shrink-0 text-muted" aria-hidden="true" />
+            <input
+              type="text"
+              className="w-full border-none bg-transparent text-sm text-foreground placeholder:text-muted focus:outline-none"
+              placeholder="Type to search events…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              autoFocus
+            />
+          </div>
 
-            {/* Options list */}
-            <div className="overflow-y-auto flex-1">
-              {allowClear && (
-                <div
-                  className="px-4 py-2.5 text-sm text-foreground/50 cursor-pointer hover:bg-surfaceHover transition-colors border-b border-border/40"
-                  onClick={() => { onChange(''); setIsOpen(false); setSearchTerm(''); }}
+          <div className="flex-1 overflow-y-auto p-1">
+            {allowClear && (
+              <button
+                type="button"
+                className="w-full rounded-md px-3 py-2 text-left text-sm text-muted transition-colors duration-micro hover:bg-surfaceHover"
+                onClick={() => {
+                  onChange('');
+                  setIsOpen(false);
+                  setSearchTerm('');
+                }}
+              >
+                All events
+              </button>
+            )}
+
+            {filteredEvents.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted">
+                <Search className="h-5 w-5 opacity-40" aria-hidden="true" />
+                No events found
+              </div>
+            ) : (
+              filteredEvents.map((evt) => (
+                <button
+                  key={evt._id}
+                  type="button"
+                  role="option"
+                  aria-selected={value === evt._id}
+                  className={[
+                    'flex w-full items-start justify-between gap-4 rounded-md px-3 py-2.5 text-left',
+                    'transition-colors duration-micro hover:bg-surfaceHover',
+                    value === evt._id ? 'bg-primary/10' : '',
+                  ].join(' ')}
+                  onClick={() => {
+                    onChange(evt._id);
+                    setIsOpen(false);
+                    setSearchTerm('');
+                  }}
                 >
-                  All Events / Clear Selection
-                </div>
-              )}
-
-              {filteredEvents.length === 0 ? (
-                <div className="px-4 py-6 text-sm text-center text-foreground/50 flex flex-col items-center gap-2">
-                  <Search className="w-5 h-5 opacity-20" />
-                  No events found
-                </div>
-              ) : (
-                filteredEvents.map(evt => (
-                  <div
-                    key={evt._id}
-                    className={`px-4 py-3 cursor-pointer hover:bg-surfaceHover transition-colors flex items-start justify-between gap-4 ${
-                      value === evt._id ? 'bg-accent/10' : ''
-                    }`}
-                    onClick={() => { onChange(evt._id); setIsOpen(false); setSearchTerm(''); }}
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-foreground truncate">{evt.eventName}</p>
-                      <p className="text-xs text-foreground/50 mt-0.5 truncate">{evt.eventType}</p>
-                    </div>
-                    <span className="text-xs text-foreground/50 shrink-0 mt-0.5">{evt.eventDate}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-foreground">
+                      {evt.eventName}
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-muted">{evt.eventType}</span>
+                  </span>
+                  <span className="mt-0.5 shrink-0 text-xs text-muted">
+                    {formatDate(evt.eventDate)}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
