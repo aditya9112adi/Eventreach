@@ -49,3 +49,14 @@ export const formatDateTime = (value?: string | Date | null, fallback = 'N/A'): 
   if (!d) return fallback;
   return `${formatDate(d)}, ${formatTime(d)}`;
 };
+
+/**
+ * Compact stamp for download file names, e.g. "21082026" for 21 Aug 2026.
+ *
+ * Deliberately digits-only: file names travel through email, Windows Explorer
+ * and object storage, where spaces and punctuation cause trouble.
+ */
+export const formatFileStamp = (value: string | Date = new Date()): string => {
+  const d = toDate(value) ?? new Date();
+  return `${pad(d.getDate())}${pad(d.getMonth() + 1)}${d.getFullYear()}`;
+};

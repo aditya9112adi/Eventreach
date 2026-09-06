@@ -6,6 +6,7 @@ import { useLoader } from '../../components/ui/FullScreenLoader';
 import { useAuth } from '../../store/authStore';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { getAccessStatus } from '../../utils/accessStatus';
 
 const JustAccess = () => {
   const { user: currentAuthUser } = useAuth();
@@ -102,14 +103,8 @@ const JustAccess = () => {
     }
   };
 
-  const getStatus = (record: any) => {
-    if (record.status === 'Rejected') return 'Rejected';
-    if (record.isAccessCancelled) return 'Cancelled';
-    const now = new Date();
-    if (record.accessStartDate && now < new Date(record.accessStartDate)) return 'Scheduled';
-    if (record.accessExpiryDate && now > new Date(record.accessExpiryDate)) return 'Expired';
-    return 'Active';
-  };
+  // Shared with the Access Report so both screens report the same status.
+  const getStatus = getAccessStatus;
 
   const getTimeRemaining = (record: any) => {
     const status = getStatus(record);
