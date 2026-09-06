@@ -1,3 +1,4 @@
+import dns from 'dns';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -22,6 +23,12 @@ import { getAllowedOrigins, getFrontendBaseUrl, isFrontendUrlConfigured } from '
 import { verifyEmailTransport } from './utils/email';
 
 dotenv.config();
+
+// Node 17+ returns DNS results verbatim, which usually puts IPv6 first. Render's
+// containers have no outbound IPv6 route, so an AAAA answer fails immediately
+// with ENETUNREACH and the IPv4 address is never tried — which silently broke
+// all outbound SMTP. Prefer IPv4 so those connections actually get made.
+dns.setDefaultResultOrder('ipv4first');
 
 const app = express();
 const PORT = process.env.PORT || 5000;

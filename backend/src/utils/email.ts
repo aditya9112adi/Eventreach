@@ -30,7 +30,15 @@ const getTransporter = () => {
   return nodemailer.createTransport({
     service: 'gmail',
     auth: { user: EMAIL_USER, pass: EMAIL_PASS },
-  });
+    // Render has no outbound IPv6 route; without this the SMTP connection fails
+    // with ENETUNREACH against Gmail's AAAA record.
+    family: 4,
+    // Bound every stage so a blocked network path fails fast instead of hanging
+    // the request that triggered the send.
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
+  } as nodemailer.TransportOptions);
 };
 
 /**
@@ -51,7 +59,14 @@ export const verifyEmailTransport = async (): Promise<{
     return { configured: false, ok: false, error: 'EMAIL_USER / EMAIL_PASS not configured' };
   }
   try {
-    await transporter.verify();
+    // Hard cap: transporter timeouts cover the socket, but never let an admin
+    // request block on a wedged network path.
+    await Promise.race([
+      transporter.verify(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('SMTP verification timed out after 15s')), 15_000)
+      ),
+    ]);
     return { configured: true, ok: true };
   } catch (error: any) {
     return { configured: true, ok: false, error: String(error?.message || error).slice(0, 200) };
