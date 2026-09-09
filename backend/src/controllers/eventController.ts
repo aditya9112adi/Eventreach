@@ -173,15 +173,26 @@ const runExpirySweep = async (): Promise<void> => {
       }))
     );
 
-    for (const event of expired) {
-      await AuditService.log({
-        action: 'EVENT_COMPLETED',
-        collectionName: 'events',
-        documentId: event._id.toString(),
-        before: { ...event.toObject() },
-        after: { ...event.toObject(), eventStatus: 'Completed' },
-        description: `Event automatically marked as completed: ${event.eventName}`
-      });
+    // These entries are independent of one another — each records a different
+    // event — and AuditService.log never throws, so writing them one at a time
+    // only added round trips. They are written in bounded batches rather than
+    // all at once so a large sweep cannot open an unbounded number of
+    // simultaneous writes; the batch size matches QueueService.
+    const AUDIT_BATCH_SIZE = 10;
+    for (let i = 0; i < expired.length; i += AUDIT_BATCH_SIZE) {
+      const batch = expired.slice(i, i + AUDIT_BATCH_SIZE);
+      await Promise.all(
+        batch.map((event: any) =>
+          AuditService.log({
+            action: 'EVENT_COMPLETED',
+            collectionName: 'events',
+            documentId: event._id.toString(),
+            before: { ...event.toObject() },
+            after: { ...event.toObject(), eventStatus: 'Completed' },
+            description: `Event automatically marked as completed: ${event.eventName}`
+          })
+        )
+      );
     }
 
     try {

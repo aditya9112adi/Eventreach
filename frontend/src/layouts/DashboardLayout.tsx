@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate, NavLink, Outlet } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../store/authStore';
@@ -85,13 +85,46 @@ const DashboardLayout = () => {
     };
   }, [socket, logout, navigate, updateUser, showToast, location.pathname]);
 
+  /**
+   * Pending-approvals badge count.
+   *
+   * The socket pushes a fresh count whenever someone registers or a request
+   * is decided, so this HTTP call is only a fallback for what the socket
+   * could not deliver. It used to run on every navigation, which meant a
+   * request per route change for no new information. It is now cached and
+   * only refetched when the value could actually be out of date.
+   */
+  const pendingFetchedAtRef = useRef(0);
+  const PENDING_STALE_MS = 60000;
+
+  const fetchPendingCount = useCallback(
+    async (force = false) => {
+      if (user?.role !== 'SuperAdmin') return;
+      if (!force && Date.now() - pendingFetchedAtRef.current < PENDING_STALE_MS) return;
+      try {
+        const res = await api.get('/admin/users/pending');
+        setPendingCount(res.data.length);
+        pendingFetchedAtRef.current = Date.now();
+      } catch {
+        /* the socket push below is the live source; a failed poll is not fatal */
+      }
+    },
+    [user?.role]
+  );
+
+  // On mount and on navigation, but the call itself is skipped while the
+  // cached count is still fresh. The approvals screen itself always gets
+  // current data, since that is where the list is acted on.
   useEffect(() => {
-    if (user?.role === 'SuperAdmin') {
-      api.get('/admin/users/pending')
-        .then(res => setPendingCount(res.data.length))
-        .catch(console.error);
-    }
-  }, [user, location.pathname]);
+    const needsFresh = location.pathname.startsWith('/admin/approvals');
+    void fetchPendingCount(needsFresh);
+  }, [fetchPendingCount, location.pathname]);
+
+  // A reconnect means events may have been missed while offline, so the
+  // cache is bypassed and the count is re-read.
+  useEffect(() => {
+    if (isConnected) void fetchPendingCount(true);
+  }, [isConnected, fetchPendingCount]);
 
   // Live "User Approvals" badge. The server pushes a fresh count to every
   // connected Super Admin whenever someone registers or a request is approved or

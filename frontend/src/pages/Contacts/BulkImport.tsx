@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, XCircle, AlertTriangle, Upload } from 'lucide-react';
 import api from '../../services/api';
 import type { ExtractedContact, Event } from '@eventreach/shared';
+import { DEFAULT_COUNTRY_CODE } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
 import { EventSearch } from '../../components/ui/EventSearch';
 import { Badge } from '../../components/ui/Badge';
@@ -51,7 +52,7 @@ const BulkImport = () => {
     
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('countryCode', 'US'); // could be dynamic
+    formData.append('countryCode', DEFAULT_COUNTRY_CODE);
 
     try {
       const response = await api.post(`/contacts/event/${selectedEventId}/upload`, formData, {

@@ -36,4 +36,10 @@ const ContactSchema: Schema = new Schema(
 
 ContactSchema.index({ eventId: 1, phoneNumber: 1 }, { unique: true });
 
+// Serves the contact list: filter by event, newest first, then skip/limit.
+// The unique index above leads with eventId too, but its second key is
+// phoneNumber, so it cannot satisfy the createdAt sort — without this the
+// server had to sort every contact in an event in memory before paging.
+ContactSchema.index({ eventId: 1, createdAt: -1 });
+
 export const Contact = mongoose.model<IContact>('Contact', ContactSchema);

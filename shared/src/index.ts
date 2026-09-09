@@ -131,3 +131,32 @@ export const validatePassword = (password: unknown): string | null => {
 };
 
 export const isPasswordValid = (password: unknown): boolean => validatePassword(password) === null;
+
+// ─── Phone country codes ──────────────────────────────────────────────────────
+// Shared by the contact form, bulk import and the server-side phone parser.
+// The code is an ISO 3166-1 alpha-2 region, which is what libphonenumber-js
+// expects in order to read a number typed in local format.
+
+export interface CountryOption {
+  /** ISO 3166-1 alpha-2 region code, e.g. "IN". */
+  code: string;
+  /** Label shown in the picker, e.g. "IN (+91)". */
+  label: string;
+}
+
+export const COUNTRY_OPTIONS: CountryOption[] = [
+  { code: 'IN', label: 'IN (+91)' },
+  { code: 'US', label: 'US (+1)' },
+  { code: 'GB', label: 'UK (+44)' },
+  { code: 'AU', label: 'AU (+61)' },
+];
+
+/**
+ * Region assumed when none is supplied.
+ *
+ * This is not only the picker's initial value: the backend passes it to
+ * libphonenumber-js when parsing a number that was typed without a country
+ * prefix, so the frontend default and the server fallback must agree or the
+ * same digits would resolve to two different countries.
+ */
+export const DEFAULT_COUNTRY_CODE = 'IN';

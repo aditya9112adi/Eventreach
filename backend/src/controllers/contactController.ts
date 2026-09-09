@@ -4,9 +4,86 @@ import { parsePhoneNumberWithError } from 'libphonenumber-js';
 import { Contact } from '../models/Contact';
 import { extractFromExcel, extractFromPDF, RawContact } from '../utils/fileExtractors';
 import type { ExtractedContact } from '@eventreach/shared';
+import { DEFAULT_COUNTRY_CODE } from '@eventreach/shared';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { isEventAuthorized, getAuthorizedEventIds } from '../services/eventAuthService';
+
+/**
+ * Optional server-side pagination for contact listings.
+ *
+ * Pagination is opt-in: a request that sends neither `page` nor `limit` gets
+ * the same plain array it always did, so existing callers that legitimately
+ * need every contact (the campaign send preview, the Contact Report export)
+ * are unaffected. When either parameter is present the response becomes
+ * { data, pagination } instead.
+ */
+const PAGE_SIZE_DEFAULT = 10;
+const PAGE_SIZE_MAX = 200;
+
+/** Escapes user input before it is used inside a RegExp. */
+const escapeRegex = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, (match) => `\\${match}`);
+
+const wantsPagination = (req: Request): boolean =>
+  req.query.page !== undefined || req.query.limit !== undefined;
+
+/**
+ * Adds the name/phone search to a contact query. The search runs in the
+ * database rather than in the browser, so a large event no longer has to ship
+ * every contact over the wire to filter four characters.
+ */
+const applyContactSearch = (query: any, rawSearch: unknown): any => {
+  const search = typeof rawSearch === 'string' ? rawSearch.trim() : '';
+  if (!search) return query;
+  const safe = escapeRegex(search);
+  return {
+    ...query,
+    $or: [
+      { fullName: { $regex: safe, $options: 'i' } },
+      { phoneNumber: { $regex: safe, $options: 'i' } },
+    ],
+  };
+};
+
+const readPageParams = (req: Request) => {
+  const page = Math.max(1, parseInt(String(req.query.page ?? 1), 10) || 1);
+  const requested = parseInt(String(req.query.limit ?? PAGE_SIZE_DEFAULT), 10) || PAGE_SIZE_DEFAULT;
+  // Capped so a caller cannot ask for the whole collection in one page.
+  const limit = Math.min(PAGE_SIZE_MAX, Math.max(1, requested));
+  return { page, limit };
+};
+
+/** Runs a contact listing, paginated or not, and sends the response. */
+const sendContactList = async (req: Request, res: Response, baseQuery: any) => {
+  const query = applyContactSearch(baseQuery, req.query.search);
+
+  if (!wantsPagination(req)) {
+    const contacts = await Contact.find(query).sort({ createdAt: -1 }).lean();
+    return res.json(contacts);
+  }
+
+  const { page, limit } = readPageParams(req);
+  const [contacts, total] = await Promise.all([
+    Contact.find(query)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+    Contact.countDocuments(query),
+  ]);
+
+  return res.json({
+    data: contacts,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  });
+};
+
 import crypto from 'crypto';
 
 const createContactSchema = z.object({
@@ -92,8 +169,7 @@ export const getContactsByEvent = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
     }
 
-    const contacts = await Contact.find({ eventId }).sort({ createdAt: -1 }).lean();
-    res.json(contacts);
+    return await sendContactList(req, res, { eventId });
   } catch (error) {
     console.error('Get contacts error:', error);
     res.status(500).json({ error: 'Failed to fetch contacts' });
@@ -110,7 +186,7 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
     }
 
     const file = req.file;
-    const countryCode = req.body.countryCode || 'US';
+    const countryCode = req.body.countryCode || DEFAULT_COUNTRY_CODE;
 
     if (!file) {
       return res.status(400).json({ error: 'No file provided' });
@@ -126,7 +202,7 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
 
     const previewContacts: ExtractedContact[] = [];
     
-    const existingContacts = await Contact.find({ eventId }).select('phoneNumber');
+    const existingContacts = await Contact.find({ eventId }).select('phoneNumber').lean();
     const existingNumbers = new Set(existingContacts.map(c => c.phoneNumber));
 
     for (let i = 0; i < rawContacts.length; i++) {
@@ -212,7 +288,7 @@ export const bulkImportContacts = async (req: RequestWithId, res: Response) => {
       const countryCode =
         typeof candidate?.countryCode === 'string' && candidate.countryCode.trim()
           ? candidate.countryCode.trim()
-          : 'US';
+          : DEFAULT_COUNTRY_CODE;
       const email = typeof candidate?.email === 'string' ? candidate.email.trim() : '';
 
       if (!fullName || fullName.length > 200 || !rawPhone) continue;
@@ -405,8 +481,7 @@ export const getAllContacts = async (req: Request, res: Response) => {
       query.eventId = { $in: authorizedIds };
     }
 
-    const contacts = await Contact.find(query).sort({ createdAt: -1 }).lean();
-    res.json(contacts);
+    return await sendContactList(req, res, query);
   } catch (error) {
     console.error('Get all contacts error:', error);
     res.status(500).json({ error: 'Failed to fetch contacts' });

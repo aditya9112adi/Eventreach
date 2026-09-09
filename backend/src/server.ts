@@ -1,7 +1,10 @@
 import dns from 'dns';
 import express from 'express';
+import mongoose from 'mongoose';
 import cors from 'cors';
 import helmet from 'helmet';
+import { requireAuth } from './middleware/authMiddleware';
+import { authorizeUpload } from './middleware/uploadAuthMiddleware';
 import mongoSanitize from 'express-mongo-sanitize';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -54,8 +57,15 @@ app.use(express.json());
 app.use(mongoSanitize()); // Prevent NoSQL injection
 app.use(requestMiddleware);
 
-// Serve uploads statically
-app.use('/uploads', express.static(path.join(__dirname, '../../uploads')));
+// Serve uploads. Campaign media is private to its event, so the same
+// authentication and per-event authorization used by the API applies here
+// before any file is read from disk.
+app.use(
+  '/uploads',
+  requireAuth,
+  authorizeUpload,
+  express.static(path.join(__dirname, '../../uploads'))
+);
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -113,7 +123,55 @@ const startServer = async () => {
   httpServer.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
+
+  /**
+   * Graceful shutdown.
+   *
+   * The host sends SIGTERM before replacing the instance on a deploy. Without
+   * this the process is killed outright and any request still in flight — a
+   * bulk import, a campaign send — is dropped mid-write. Stop accepting new
+   * connections, let the current ones finish, then close the database.
+   */
+  const shutdown = (signal: string) => {
+    console.log(`${signal} received, shutting down gracefully`);
+    httpServer.close(async () => {
+      try {
+        await mongoose.connection.close(false);
+      } catch (err) {
+        console.error('Error closing MongoDB connection:', err);
+      }
+      process.exit(0);
+    });
+
+    // Never hang forever if a connection refuses to drain.
+    setTimeout(() => {
+      console.error('Shutdown timed out, forcing exit');
+      process.exit(1);
+    }, 10000).unref();
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 };
 
-startServer();
+/**
+ * Last-resort process guards.
+ *
+ * On current Node an unhandled promise rejection terminates the process, so a
+ * single missed `.catch()` anywhere in a request handler took the whole API
+ * down until the host restarted it. Log and keep serving instead; a crash is
+ * never the better outcome for an already-running deployment.
+ */
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error);
+});
+
+startServer().catch((error) => {
+  console.error('Failed to start server:', error);
+  process.exit(1);
+});
 

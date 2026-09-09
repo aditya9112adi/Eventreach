@@ -5,6 +5,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { Search, Plus, Phone, CheckCircle2, XCircle, AlertTriangle, Users, Trash2, Edit3, X, ChevronRight, ChevronLeft } from 'lucide-react';
 import api from '../../services/api';
 import type { Contact, Event } from '@eventreach/shared';
+import { COUNTRY_OPTIONS, DEFAULT_COUNTRY_CODE } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
@@ -47,6 +48,10 @@ const ContactList = () => {
   
   const [events, setEvents] = useState<Event[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  // Total across the whole result set, reported by the server, not the page length.
+  const [totalContacts, setTotalContacts] = useState(0);
+  // Bumped to re-run the contact fetch after an add, edit or delete.
+  const [refreshToken, setRefreshToken] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -69,7 +74,7 @@ const ContactList = () => {
 
   const { register, handleSubmit, reset, watch, setValue, formState: { errors, isSubmitting } } = useForm<ContactForm>({
     resolver: zodResolver(contactSchema),
-    defaultValues: { countryCode: 'US' }
+    defaultValues: { countryCode: DEFAULT_COUNTRY_CODE }
   });
 
   const [wFullName, wPhone, wEmail] = watch(['fullName', 'phoneNumber', 'email']);
@@ -86,21 +91,53 @@ const ContactList = () => {
     fetchEvents();
   }, []);
 
+  // Typing used to filter an already-downloaded list; it now queries the
+  // server, so wait for a pause before asking.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchTerm), 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    let cancelled = false;
+
     const fetchContacts = async () => {
       setIsLoading(true);
       try {
         const endpoint = activeEventId ? `/contacts/event/${activeEventId}` : '/contacts';
-        const response = await api.get(endpoint);
-        setContacts(response.data);
+        // Only this page is fetched. Passing page/limit opts into the
+        // paginated response shape; callers that omit them still get an array.
+        const response = await api.get(endpoint, {
+          params: {
+            page: currentPage,
+            limit: rowsPerPage,
+            ...(debouncedSearch ? { search: debouncedSearch } : {}),
+          },
+        });
+        if (cancelled) return;
+
+        const payload = response.data;
+        if (Array.isArray(payload)) {
+          // Defensive: an older backend would still return a bare array.
+          setContacts(payload);
+          setTotalContacts(payload.length);
+        } else {
+          setContacts(payload.data || []);
+          setTotalContacts(payload.pagination?.total ?? 0);
+        }
       } catch (error) {
-        console.error('Failed to fetch contacts', error);
+        if (!cancelled) console.error('Failed to fetch contacts', error);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
+
     fetchContacts();
-  }, [activeEventId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeEventId, currentPage, rowsPerPage, debouncedSearch, refreshToken]);
 
   const onAddContact = async (data: ContactForm) => {
     if (!activeEvent) return;
@@ -110,7 +147,7 @@ const ContactList = () => {
         ...data,
         eventId: activeEvent._id
       });
-      setContacts([response.data, ...contacts]);
+      setRefreshToken((t) => t + 1);
       setIsAddModalOpen(false);
       reset();
       showToast('success', 'Guest added successfully');
@@ -124,7 +161,7 @@ const ContactList = () => {
     try {
       setAddError('');
       const response = await api.put(`/contacts/${editingContact._id}`, data);
-      setContacts(contacts.map(c => c._id === editingContact._id ? response.data : c));
+      setRefreshToken((t) => t + 1);
       setEditingContact(null);
       reset();
       showToast('success', 'Contact updated');
@@ -141,7 +178,7 @@ const ContactList = () => {
     if (!confirmDeleteId) return;
     try {
       await api.delete(`/contacts/${confirmDeleteId}`);
-      setContacts(contacts.filter(c => c._id !== confirmDeleteId));
+      setRefreshToken((t) => t + 1);
       showToast('success', 'Contact deleted');
     } catch (err) {
       showToast('error', 'Failed to delete contact');
@@ -159,24 +196,23 @@ const ContactList = () => {
     setAddError('');
   };
 
-  const filteredContacts = contacts.filter(c => 
-    c.fullName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    c.phoneNumber.includes(searchTerm)
-  );
+  // The server already applied the search and returned just this page, so
+  // these are pass-throughs kept under their original names.
+  const filteredContacts = contacts;
 
-  const totalPages = Math.ceil(filteredContacts.length / rowsPerPage);
-  const paginatedContacts = filteredContacts.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage);
+  const totalPages = Math.ceil(totalContacts / rowsPerPage);
+  const paginatedContacts = contacts;
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, activeEventId, rowsPerPage]);
+  }, [debouncedSearch, activeEventId, rowsPerPage]);
 
   useEffect(() => {
-    const totalPages = Math.ceil(filteredContacts.length / rowsPerPage);
+    const totalPages = Math.ceil(totalContacts / rowsPerPage);
     if (currentPage > totalPages && totalPages > 0) {
       setCurrentPage(totalPages);
     }
-  }, [filteredContacts.length, currentPage, rowsPerPage]);
+  }, [totalContacts, currentPage, rowsPerPage]);
 
   const getStatusIcon = (status: string, reason?: string) => {
     if (status === 'Valid') return <span title="Valid Number"><CheckCircle2 className="w-5 h-5 text-emerald-500" /></span>;
@@ -233,7 +269,7 @@ const ContactList = () => {
                 return;
               }
               setEditingContact(null); 
-              reset({ countryCode: 'US', fullName: '', phoneNumber: '', email: '' }); 
+              reset({ countryCode: DEFAULT_COUNTRY_CODE, fullName: '', phoneNumber: '', email: '' }); 
               setIsAddModalOpen(true); 
             }}>
             <Plus className="w-4 h-4 mr-2" />
@@ -265,7 +301,7 @@ const ContactList = () => {
             />
           </div>
           <div className="text-sm text-foreground/50 flex items-center font-medium">
-            {contacts.length} contacts total
+            {totalContacts} contacts total
           </div>
         </div>
 
@@ -360,7 +396,7 @@ const ContactList = () => {
           <PaginationControls
             currentPage={currentPage}
             rowsPerPage={rowsPerPage}
-            totalItems={filteredContacts.length}
+            totalItems={totalContacts}
             onPageChange={setCurrentPage}
             onRowsChange={setRowsPerPage}
           />
@@ -404,10 +440,11 @@ const ContactList = () => {
                       className="w-full rounded-md border border-border bg-surface/50 text-foreground px-3 py-2.5 text-sm focus:ring-2 focus:ring-white/20 outline-none transition-all duration-200"
                       {...register('countryCode')}
                     >
-                      <option value="US">US (+1)</option>
-                      <option value="GB">UK (+44)</option>
-                      <option value="IN">IN (+91)</option>
-                      <option value="AU">AU (+61)</option>
+                      {COUNTRY_OPTIONS.map((country) => (
+                        <option key={country.code} value={country.code}>
+                          {country.label}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div className="w-2/3">
