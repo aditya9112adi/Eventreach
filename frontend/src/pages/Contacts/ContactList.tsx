@@ -313,7 +313,17 @@ const ContactList = () => {
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-foreground/50">
             <Users className="w-12 h-12 text-foreground/20 mb-4" />
             <p>No guests found for this event.</p>
-            <Button variant="secondary" className="mt-4" onClick={() => setIsAddModalOpen(true)}>
+            <Button
+              variant="secondary"
+              className="mt-4"
+              onClick={() => {
+                // Match the main "Add Guest" button: clear any stale field
+                // values and set the country back to the default before opening.
+                setEditingContact(null);
+                reset({ countryCode: DEFAULT_COUNTRY_CODE, fullName: '', phoneNumber: '', email: '' });
+                setIsAddModalOpen(true);
+              }}
+            >
               Add First Guest
             </Button>
           </div>
