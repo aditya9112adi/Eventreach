@@ -23,8 +23,8 @@ const eventSchema = z.object({
   organizerMobile:  z.string().regex(/^\d{10}$/, 'Mobile No must be exactly 10 digits'),
   eventName:        z.string().min(1, 'Event Name is required').max(LIMITS.name, `Event Name max ${LIMITS.name} characters`),
   eventType:        z.string().min(1, 'Event Type is required').max(LIMITS.type, `Event Type max ${LIMITS.type} characters`),
-  eventDate:        z.string().min(1, 'Event Date is required'),
-  eventTime:        z.string().min(1, 'Event Time is required'),
+  eventDate:        z.string().min(1, 'Event Date is required').regex(/^\d{4}-\d{2}-\d{2}$/, 'Event Date must be YYYY-MM-DD'),
+  eventTime:        z.string().min(1, 'Event Time is required').regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Event Time must be a valid HH:MM'),
   eventVenue:       z.string().min(1, 'Event Venue is required').max(LIMITS.venue, `Event Venue max ${LIMITS.venue} characters`),
   eventDescription: z.string().max(LIMITS.description, `Event Description max ${LIMITS.description} characters`).optional(),
 }).superRefine((data, ctx) => {

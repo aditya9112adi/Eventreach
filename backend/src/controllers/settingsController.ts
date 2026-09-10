@@ -44,6 +44,17 @@ export const updateSettings = async (req: RequestWithId, res: Response) => {
 
     for (const [key, value] of Object.entries(updates)) {
       if (!ALLOWED_KEYS.includes(key)) continue;
+
+      // The endpoint previously wrote any value through untouched. 2000 is
+      // comfortably above every real setting (the longest is a WhatsApp token
+      // at a few hundred characters); the migration dry-run confirms that all
+      // stored values already conform before the DB validator enforces it.
+      if (typeof value !== 'string') {
+        return res.status(400).json({ error: `Setting '${key}' must be a string` });
+      }
+      if (value.length > 2000) {
+        return res.status(400).json({ error: `Setting '${key}' exceeds 2000 characters` });
+      }
       
       // Don't overwrite token with masked value
       if (key === 'whatsapp_token' && value.startsWith('••••')) continue;

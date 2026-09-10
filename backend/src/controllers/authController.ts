@@ -6,7 +6,7 @@ import { User } from '../models/User';
 import { Admin } from '../models/Admin';
 import { Event } from '../models/Event';
 import { sendApprovalEmail } from '../utils/email';
-import { validatePassword } from '../utils/passwordPolicy';
+import { validatePassword, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from '../utils/passwordPolicy';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { emitPendingApprovalsChanged } from '../services/socketService';
@@ -22,7 +22,10 @@ const loginSchema = z.object({
 const registerSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
   email: z.string().email('Invalid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters').max(100, 'Password is too long'),
+  // Length is owned by the shared password policy (validatePassword), which
+  // runs on this same request; this bound just mirrors it so the two layers
+  // cannot report conflicting minimums.
+  password: z.string().min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`).max(PASSWORD_MAX_LENGTH, 'Password is too long'),
   role: z.enum(['Admin', 'User']),
   accessStartDate: z.string().optional(),
   accessEndDate: z.string().optional(),

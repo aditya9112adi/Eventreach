@@ -11,7 +11,7 @@ import { Badge } from '../../components/ui/Badge';
 import { PaginationControls } from '../../components/ui/PaginationControls';
 import { getPaginatedData } from '../../utils/pagination';
 
-type SortField = 'eventName' | 'eventType' | 'eventDate' | 'eventVenue' | 'eventStatus' | 'organizerName' | 'organizerMobile';
+type SortField = 'eventId' | 'eventName' | 'eventType' | 'eventDate' | 'eventVenue' | 'eventStatus' | 'organizerName' | 'organizerMobile';
 type SortDir = 'asc' | 'desc';
 
 const EventList = () => {
@@ -78,7 +78,7 @@ const EventList = () => {
 
     const filtered = events.filter(e => {
       const matchesSearch = !q || [
-        e.organizerName, e.organizerMobile, e.eventName,
+        e.eventId, e.organizerName, e.organizerMobile, e.eventName,
         e.eventType, e.eventDate, e.eventTime, e.eventVenue, e.eventStatus,
       ].some(v => (v || '').toLowerCase().includes(q));
 
@@ -92,6 +92,7 @@ const EventList = () => {
       let aVal = '';
       let bVal = '';
       switch (sortField) {
+        case 'eventId':          aVal = a.eventId || ''; bVal = b.eventId || ''; break;
         case 'eventName':        aVal = a.eventName || ''; bVal = b.eventName || ''; break;
         case 'eventType':        aVal = a.eventType || ''; bVal = b.eventType || ''; break;
         case 'eventDate':        aVal = `${a.eventDate || ''}${a.eventTime || ''}`; bVal = `${b.eventDate || ''}${b.eventTime || ''}`; break;
@@ -168,7 +169,7 @@ const EventList = () => {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/40 pointer-events-none" />
               <input
                 type="text"
-                placeholder="Search by organizer, mobile, name, type, venue, status..."
+                placeholder="Search by Event ID, organizer, mobile, name, type, venue, status..."
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
                 className="w-full rounded-md border border-border bg-surface/50 pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-foreground/40 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 hover:border-border/80 transition-all duration-200"
@@ -229,6 +230,7 @@ const EventList = () => {
               <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border uppercase tracking-wide text-xs">
+                  <SortTh field="eventId"         label="Event ID" />
                   <SortTh field="organizerName"   label="Event Organizer" />
                   <SortTh field="organizerMobile" label="Mobile No" />
                   <SortTh field="eventName"       label="Event Name" />
@@ -254,6 +256,7 @@ const EventList = () => {
                     }}
                     className="hover:bg-surfaceHover transition-colors group"
                   >
+                    <td className="py-3 px-4 text-sm font-mono text-foreground/70">{event.eventId || '—'}</td>
                     <td className="py-3 px-4 text-sm font-medium text-foreground">{event.organizerName || '—'}</td>
                     <td className="py-3 px-4 text-sm text-foreground/80">{event.organizerMobile || '—'}</td>
                     <td className="py-3 px-4 font-medium text-foreground">{event.eventName}</td>

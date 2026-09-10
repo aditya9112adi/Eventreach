@@ -25,6 +25,7 @@ export type EventStatus = 'Upcoming' | 'Completed' | 'Cancelled';
 
 export interface Event {
   _id: string;
+  eventId: string;               // human-readable unique id, e.g. "EVT-000001"
   organizerName: string;
   organizerMobile: string;
   eventName: string;

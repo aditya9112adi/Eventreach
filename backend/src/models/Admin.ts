@@ -9,7 +9,8 @@ export interface IAdmin extends Document {
   accessGrantedOn?: Date;
   accessStartDate?: Date;
   accessExpiryDate?: Date;
-  accessDurationDays?: number;
+  accessDurationValue?: number;
+  accessDurationUnit?: 'minutes' | 'hours' | 'days';
   isAccessCancelled?: boolean;
   pendingAccessStartDate?: Date;
   pendingAccessEndDate?: Date;
@@ -56,7 +57,7 @@ const AdminSchema: Schema = new Schema(
     accessGrantedOn: { type: Date },
     accessStartDate: { type: Date },
     accessExpiryDate: { type: Date },
-    accessDurationValue: { type: Number },
+    accessDurationValue: { type: Number, min: 0, validate: { validator: Number.isInteger, message: 'accessDurationValue must be a whole number' } },
     accessDurationUnit: { type: String, enum: ['minutes', 'hours', 'days'] },
     isAccessCancelled: { type: Boolean, default: false },
     // Requested by Admin during registration, used by SuperAdmin on approval

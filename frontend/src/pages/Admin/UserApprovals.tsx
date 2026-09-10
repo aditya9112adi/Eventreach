@@ -251,7 +251,7 @@ const UserApprovals = () => {
                         <option value="">No Event Assigned</option>
                         {events.map((ev) => (
                           <option key={ev._id} value={ev._id}>
-                            {ev.eventName} ({ev.eventType} - {ev.eventDate})
+                            {ev.eventId ? `${ev.eventId} | ` : ''}{ev.eventName} ({ev.eventType} - {ev.eventDate})
                           </option>
                         ))}
                       </select>

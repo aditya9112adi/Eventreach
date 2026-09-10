@@ -88,6 +88,9 @@ const EventDetail = () => {
                 <Badge variant={event.eventStatus === 'Completed' ? 'success' : 'info'}>{event.eventStatus}</Badge>
               </div>
               <p className="text-foreground/50 text-lg uppercase tracking-wider">{event.eventType}</p>
+              {event.eventId && (
+                <p className="text-foreground/40 text-sm font-mono mt-1">{event.eventId}</p>
+              )}
             </div>
             {event.eventStatus !== 'Completed' && (
               <Button

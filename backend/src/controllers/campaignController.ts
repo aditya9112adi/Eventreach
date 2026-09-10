@@ -1,10 +1,33 @@
 import { Request, Response } from 'express';
+import { z } from 'zod';
 import { Campaign } from '../models/Campaign';
 import { queueService } from '../services/QueueService';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { isEventAuthorized, getAuthorizedEventIds } from '../services/eventAuthService';
 import crypto from 'crypto';
+
+/** One media attachment, matching mediaAttachmentSchema in the Campaign model. */
+const mediaAttachmentBody = z.object({
+  url: z.string().min(1, 'Attachment url is required'),
+  type: z.enum(['image', 'video', 'audio', 'document'], {
+    errorMap: () => ({ message: 'Attachment type must be image, video, audio or document' }),
+  }),
+  filename: z.string().min(1, 'Attachment filename is required'),
+});
+
+/**
+ * Body accepted by saveCampaign.
+ *
+ * messageText intentionally has no maximum: no UI or API layer caps it today,
+ * and imposing one here could reject drafts that already exist. The migration
+ * dry-run reports the longest stored value so a limit can be set deliberately.
+ */
+const saveCampaignSchema = z.object({
+  messageText: z.string().optional().default(''),
+  mediaAttachments: z.array(mediaAttachmentBody).optional().default([]),
+  status: z.enum(['Draft', 'Scheduled', 'Sending', 'Completed']).optional().default('Draft'),
+});
 
 export const uploadMedia = async (req: Request, res: Response) => {
   try {
@@ -70,7 +93,15 @@ export const saveCampaign = async (req: RequestWithId, res: Response) => {
       return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
     }
 
-    const { messageText, mediaAttachments, status } = req.body;
+    // This endpoint previously wrote req.body straight through with no
+    // validation of any kind. The rules below are exactly the ones the schema
+    // and the application already rely on — no new limits are introduced, and
+    // messageText stays unbounded because no existing layer caps it.
+    const parsed = saveCampaignSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0].message });
+    }
+    const { messageText, mediaAttachments, status } = parsed.data;
 
     const beforeCampaign = await Campaign.findOne({ eventId });
 

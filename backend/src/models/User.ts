@@ -8,7 +8,8 @@ export interface IUser extends Document {
   accessGrantedOn?: Date;
   accessStartDate?: Date;
   accessExpiryDate?: Date;
-  accessDurationDays?: number;
+  accessDurationValue?: number;
+  accessDurationUnit?: 'minutes' | 'hours' | 'days';
   isAccessCancelled?: boolean;
   assignedEventId?: Schema.Types.ObjectId | string;
   adminId?: Schema.Types.ObjectId | string;
@@ -50,7 +51,7 @@ const UserSchema: Schema = new Schema(
     accessGrantedOn: { type: Date },
     accessStartDate: { type: Date },
     accessExpiryDate: { type: Date },
-    accessDurationValue: { type: Number },
+    accessDurationValue: { type: Number, min: 0, validate: { validator: Number.isInteger, message: 'accessDurationValue must be a whole number' } },
     accessDurationUnit: { type: String, enum: ['minutes', 'hours', 'days'] },
     isAccessCancelled: { type: Boolean, default: false },
     assignedEventId: { type: Schema.Types.ObjectId, ref: 'Event', index: true },

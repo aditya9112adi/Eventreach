@@ -38,6 +38,8 @@ const serialize = (ev: any) => {
   const obj = ev.toObject ? ev.toObject() : { ...ev };
   if (obj.eventDate instanceof Date) obj.eventDate = formatDate(obj.eventDate);
   if (typeof obj.eventTime === 'number') obj.eventTime = minutesToTime(obj.eventTime);
+  // organizerMobile is a string in the schema; coerce any pre-migration
+  // numeric value so the API contract stays string-only.
   if (typeof obj.organizerMobile === 'number') obj.organizerMobile = String(obj.organizerMobile);
   return obj;
 };
@@ -49,8 +51,12 @@ const eventBody = z.object({
   organizerMobile:  z.string().regex(/^\d{10}$/, 'Mobile No must be exactly 10 digits'),
   eventName:        z.string().min(1, 'Event Name is required').max(20, 'Event Name max 20 characters'),
   eventType:        z.string().min(1, 'Event Type is required').max(20, 'Event Type max 20 characters'),
-  eventDate:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Event Date must be YYYY-MM-DD'),
-  eventTime:        z.string().regex(/^\d{2}:\d{2}$/, 'Event Time must be HH:MM'),
+  eventDate:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Event Date must be YYYY-MM-DD')
+                     .refine((v) => {
+                       const d = new Date(v + 'T00:00:00.000Z');
+                       return !Number.isNaN(d.getTime()) && v === d.toISOString().slice(0, 10);
+                     }, 'Event Date is not a real calendar date'),
+  eventTime:        z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Event Time must be a valid HH:MM (00:00–23:59)'),
   eventVenue:       z.string().min(1, 'Event Venue is required').max(50, 'Event Venue max 50 characters'),
   eventDescription: z.string().max(256, 'Event Description max 256 characters').optional(),
   assignedUserId:   z.string().optional(),
@@ -98,7 +104,7 @@ export const createEvent = async (req: RequestWithId, res: Response) => {
 
     const event = await Event.create({
       ...rest,
-      organizerMobile: Number(organizerMobile),
+      organizerMobile,
       eventDate: new Date(eventDate + 'T00:00:00.000Z'),
       eventTime: timeToMinutes(eventTime),
       createdBy: currentUser?.id,
@@ -281,7 +287,7 @@ export const updateEvent = async (req: RequestWithId, res: Response) => {
 
     const updatePayload: any = {
       ...rest,
-      organizerMobile: Number(organizerMobile),
+      organizerMobile,
       eventDate: new Date(eventDate + 'T00:00:00.000Z'),
       eventTime: timeToMinutes(eventTime),
     };

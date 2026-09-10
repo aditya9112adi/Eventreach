@@ -49,14 +49,18 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     fileName: 'EventReport',
     endpoint: '/events',
     options: [
-      { key: 'EventName', label: 'Event Name', type: 'text' },
+      { key: 'EventName', label: 'Name / ID', type: 'text' },
+      { key: 'EventID', label: 'Event ID', type: 'text' },
       { key: 'Status', label: 'Status', type: 'text' },
       { key: 'Date', label: 'Date', type: 'date' },
     ],
-    text: (row) => value(row.eventName),
+    // Searched for both the "Name / ID" and "Event ID" text filters, so
+    // "Wedding" and "EVT-000003" both match.
+    text: (row) => `${value(row.eventId)} ${value(row.eventName)}`,
     status: (row) => value(row.eventStatus, 'Upcoming'),
     date: (row) => row.eventDate,
     columns: [
+      { header: 'Event ID', value: (r) => value(r.eventId, '-'), width: 14 },
       { header: 'Event Name', value: (r) => value(r.eventName), width: 28 },
       { header: 'Event Type', value: (r) => value(r.eventType, '-'), width: 18 },
       { header: 'Organizer', value: (r) => value(r.organizerName, '-'), width: 22 },

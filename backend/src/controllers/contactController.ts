@@ -86,13 +86,31 @@ const sendContactList = async (req: Request, res: Response, baseQuery: any) => {
 
 import crypto from 'crypto';
 
-const createContactSchema = z.object({
-  fullName: z.string().min(1, 'Full name is required'),
-  phoneNumber: z.string().min(1, 'Phone number is required'),
-  countryCode: z.string().min(1, 'Country code is required'),
-  email: z.string().email().optional().or(z.literal('')),
+/**
+ * One definition of a contact's editable fields, shared by add and update so
+ * the two endpoints cannot drift apart. Previously `updateContact` read
+ * req.body with no validation at all, so a 10,000-character name or a
+ * malformed e-mail could be written straight to the database.
+ *
+ * `fullName` mirrors the 50-character limit the contact form already enforces.
+ * `phoneNumber` is deliberately only checked for presence: the controller runs
+ * it through libphonenumber and, when it cannot be parsed, stores it as typed
+ * with status 'Invalid' so the import flow can surface the bad row instead of
+ * discarding it. `email` uses a generic address check rather than the form's
+ * @gmail.com rule, because imported contacts legitimately carry other domains.
+ */
+const contactFieldsSchema = z.object({
+  fullName: z.string().min(1, 'Full name is required').max(50, 'Full name max 50 characters'),
+  phoneNumber: z.string().min(1, 'Phone number is required').max(30, 'Phone number is too long'),
+  countryCode: z.string().min(1, 'Country code is required').max(8, 'Country code is too long'),
+  email: z.string().email('Invalid email address').max(120, 'Email max 120 characters').optional().or(z.literal('')),
+});
+
+const createContactSchema = contactFieldsSchema.extend({
   eventId: z.string().min(1, 'Event ID is required'),
 });
+
+const updateContactSchema = contactFieldsSchema;
 
 export const addContact = async (req: RequestWithId, res: Response) => {
   try {
@@ -410,7 +428,13 @@ export const deleteContact = async (req: RequestWithId, res: Response) => {
 export const updateContact = async (req: RequestWithId, res: Response) => {
   try {
     const { id } = req.params;
-    const { fullName, phoneNumber, countryCode, email } = req.body;
+
+    // Same rules as addContact — this endpoint previously accepted raw req.body.
+    const parsed = updateContactSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0].message });
+    }
+    const { fullName, phoneNumber, countryCode, email } = parsed.data;
 
     const beforeContact = await Contact.findById(id);
     if (!beforeContact) {

@@ -16,20 +16,49 @@ export interface IContact extends Document {
 
 const ContactSchema: Schema = new Schema(
   {
-    fullName: { type: String, required: true, trim: true },
-    phoneNumber: { type: String, required: true },
-    countryCode: { type: String, required: true },
+    // 50 is the limit the contact form and its Zod schema already enforce.
+    fullName: { type: String, required: true, trim: true, minlength: 1, maxlength: 50 },
+
+    /**
+     * Deliberately unpatterned.
+     *
+     * A valid number is normalised to E.164 ("+919112472833"); an unparseable
+     * one is kept exactly as supplied and flagged with status 'Invalid' plus a
+     * validationReason, because the import flow is meant to surface bad rows
+     * rather than drop them. Applying the form's ^\d{10}$ here would reject the
+     * application's own legitimate Invalid records. Strict phone rules stay in
+     * the UI and API layers where they belong.
+     */
+    phoneNumber: { type: String, required: true, trim: true },
+
+    /**
+     * Not enumerated on purpose. The manual form offers COUNTRY_OPTIONS, but
+     * bulk import takes the country code from the uploaded file, so historical
+     * and future imports can legitimately carry a code outside that list.
+     */
+    countryCode: { type: String, required: true, trim: true },
+
+    // No pattern: the form restricts to @gmail.com, but imported contacts may
+    // legitimately hold other domains and must not be rejected retroactively.
     email: { type: String, trim: true, lowercase: true },
-    tags: [{ type: String }],
+
+    tags: [{ type: String, trim: true }],
     eventId: { type: Schema.Types.ObjectId, ref: 'Event', required: true },
-    source: { type: String, required: true, default: 'Manual' },
+
+    // Written only by the server: 'Manual' (form) or 'Bulk Import' (upload).
+    source: {
+      type: String,
+      required: true,
+      enum: ['Manual', 'Bulk Import'],
+      default: 'Manual'
+    },
     status: {
       type: String,
       required: true,
       enum: ['Valid', 'Invalid', 'Duplicate'],
       default: 'Valid'
     },
-    validationReason: { type: String },
+    validationReason: { type: String, trim: true },
   },
   { timestamps: true }
 );

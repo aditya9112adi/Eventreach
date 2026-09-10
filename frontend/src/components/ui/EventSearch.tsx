@@ -19,9 +19,11 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
 
   const selectedEvent = events.find(e => e._id === value);
 
+  const q = searchTerm.toLowerCase();
   const filteredEvents = events.filter(e =>
-    e.eventName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    e.eventType?.toLowerCase().includes(searchTerm.toLowerCase())
+    e.eventName.toLowerCase().includes(q) ||
+    e.eventType?.toLowerCase().includes(q) ||
+    e.eventId?.toLowerCase().includes(q)
   ).slice(0, 50);
 
   useEffect(() => {
@@ -46,7 +48,7 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
       >
         {selectedEvent ? (
           <span className="truncate flex-1 text-sm font-medium text-foreground">
-            {selectedEvent.eventName}
+            {selectedEvent.eventId ? `${selectedEvent.eventId} | ` : ''}{selectedEvent.eventName}
           </span>
         ) : (
           <span className="truncate flex-1 text-sm text-foreground/50">
@@ -83,7 +85,7 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
               <input
                 type="text"
                 className="w-full bg-transparent border-none focus:outline-none text-sm text-foreground placeholder:text-foreground/40"
-                placeholder="Type to search events..."
+                placeholder="Search by name, type or Event ID..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 autoFocus
@@ -116,7 +118,10 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
                     onClick={() => { onChange(evt._id); setIsOpen(false); setSearchTerm(''); }}
                   >
                     <div className="min-w-0">
-                      <p className="text-sm font-bold text-foreground truncate">{evt.eventName}</p>
+                      <p className="text-sm font-bold text-foreground truncate">
+                        {evt.eventId ? <span className="text-foreground/50 font-mono font-normal">{evt.eventId} | </span> : null}
+                        {evt.eventName}
+                      </p>
                       <p className="text-xs text-foreground/50 mt-0.5 truncate">{evt.eventType}</p>
                     </div>
                     <span className="text-xs text-foreground/50 shrink-0 mt-0.5">{evt.eventDate}</span>
