@@ -117,11 +117,19 @@ const reportConfiguration = async () => {
 
 const startServer = async () => {
   await connectDB();
-  await reportConfiguration();
+
   const httpServer = createServer(app);
   initSocket(httpServer);
   httpServer.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+  });
+
+  // Configuration diagnostics run AFTER the server is accepting connections.
+  // reportConfiguration() does a live network check of the email provider that
+  // can take 10-15s; nothing depends on its result, so it must not delay the
+  // service becoming reachable — this matters most on a cold boot.
+  reportConfiguration().catch((err) => {
+    console.error('Configuration diagnostics failed:', err);
   });
 
   /**

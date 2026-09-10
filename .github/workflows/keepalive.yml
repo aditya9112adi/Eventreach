@@ -1,0 +1,42 @@
+name: Keep backend warm
+
+# The API runs on Render's free plan, which spins the service down after ~15
+# minutes with no traffic. The next visitor then pays a 30-50s cold start, which
+# is what makes "the first launch of the day" feel slow while later launches are
+# instant.
+#
+# This pings the DB-free /health endpoint often enough that the service never
+# gets a chance to sleep. It costs nothing (public repo) and touches nothing but
+# a static { "status": "ok" } response.
+
+on:
+  schedule:
+    # Every 10 minutes. GitHub's scheduler can lag under load, so each run also
+    # pings again after a pause — see the step below — to widen the coverage.
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Ping /health (twice, five minutes apart)
+        run: |
+          URL="https://eventreach-fisn.onrender.com/health"
+          ping() {
+            for attempt in 1 2 3; do
+              code=$(curl -sS -m 60 -o /dev/null -w '%{http_code}' "$URL" || echo 000)
+              echo "$(date -u '+%H:%M:%S') attempt $attempt -> HTTP $code"
+              [ "$code" = "200" ] && return 0
+              sleep 15
+            done
+            return 1
+          }
+          ping || { echo "first ping failed"; exit 1; }
+          sleep 300
+          ping || { echo "second ping failed"; exit 1; }

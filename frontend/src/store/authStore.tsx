@@ -42,7 +42,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // treat it as untrusted: the server is the source of truth for identity and
       // role, so it is revalidated below.
       const cached = readCachedUser();
-      if (cached && !cancelled) setUser(cached);
+      if (cached && !cancelled) {
+        setUser(cached);
+        // Stop gating the app on the revalidation round-trip. The cached profile
+        // was valid at last sign-in and every API call is still authorized by
+        // the JWT server-side, so it is safe to render now and let /auth/me
+        // reconcile role/status (or drop a revoked session) a beat later —
+        // exactly as it already does when access is revoked mid-session. This is
+        // what keeps the app from sitting on the spinner while a cold backend
+        // wakes up.
+        setIsLoading(false);
+      }
 
       try {
         const response = await api.get('/auth/me');
@@ -62,6 +72,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setUser(null);
         }
       } finally {
+        // No cached profile: the app was blocked on this request, so release it now.
         if (!cancelled) setIsLoading(false);
       }
     };

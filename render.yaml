@@ -6,6 +6,9 @@ services:
     plan: free
     buildCommand: npm install && cd shared && npm run build && cd ../backend && npm run build
     startCommand: cd backend && npm start
+    # Lightweight, DB-free endpoint so Render detects readiness the moment the
+    # server binds the port rather than inferring it.
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
