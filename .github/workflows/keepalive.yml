@@ -24,19 +24,20 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      HEALTH_URL: https://eventreach-fisn.onrender.com/health
     steps:
-      - name: Ping /health (twice, five minutes apart)
+      - name: First ping
         run: |
-          URL="https://eventreach-fisn.onrender.com/health"
-          ping() {
-            for attempt in 1 2 3; do
-              code=$(curl -sS -m 60 -o /dev/null -w '%{http_code}' "$URL" || echo 000)
-              echo "$(date -u '+%H:%M:%S') attempt $attempt -> HTTP $code"
-              [ "$code" = "200" ] && return 0
-              sleep 15
-            done
-            return 1
-          }
-          ping || { echo "first ping failed"; exit 1; }
+          curl --fail --silent --show-error --location \
+               --max-time 90 --retry 4 --retry-delay 20 --retry-all-errors \
+               -o /dev/null -w 'HTTP %{http_code} in %{time_total}s\n' \
+               "$HEALTH_URL"
+
+      - name: Wait, then ping again (covers scheduler lag)
+        run: |
           sleep 300
-          ping || { echo "second ping failed"; exit 1; }
+          curl --fail --silent --show-error --location \
+               --max-time 90 --retry 4 --retry-delay 20 --retry-all-errors \
+               -o /dev/null -w 'HTTP %{http_code} in %{time_total}s\n' \
+               "$HEALTH_URL"
