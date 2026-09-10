@@ -267,7 +267,7 @@ async function main() {
 
   console.log('\nDeterministic conversions pending:');
   console.log(`  events.eventId to backfill            : ${needEventId}`);
-  console.log(`  events.organizerMobile Double->String : ${needMobileConv}`);
+  console.log(`  events.organizerMobile ->Int64        : ${needMobileConv}`);
   console.log(`  access duration Double->Int32         : ${needDurationConv}`);
 
   console.log('\nLongest stored value (fields with no limit today — informational):');
