@@ -230,14 +230,21 @@ describe('MongoDB is the second validation layer (UI bypassed, API called direct
 });
 
 describe('Correct BSON types on stored documents', () => {
-  test('organizerMobile is a String and eventTime is an integer in the raw document', async () => {
+  test('organizerMobile is BSON Int64 and eventTime is an integer in the raw document', async () => {
     const res = await call('POST', '/api/events', {
       token: adminToken,
       body: validEvent({ organizerMobile: '9766813161', eventTime: '18:15' }),
     });
-    const raw = await mongoose.connection.db.collection('events').findOne({ _id: new mongoose.Types.ObjectId(res.body._id) });
-    assert.equal(typeof raw.organizerMobile, 'string');
-    assert.equal(raw.organizerMobile, '9766813161');
+    const _id = new mongoose.Types.ObjectId(res.body._id);
+
+    // $type reports the actual BSON type on the server, not the driver's
+    // JS representation — this is what proves it is a long and not a double.
+    const [{ t }] = await mongoose.connection.db.collection('events')
+      .aggregate([{ $match: { _id } }, { $project: { t: { $type: '$organizerMobile' } } }]).toArray();
+    assert.equal(t, 'long', 'organizerMobile must be BSON Int64');
+
+    const raw = await mongoose.connection.db.collection('events').findOne({ _id });
+    assert.equal(String(raw.organizerMobile), '9766813161');
     assert.equal(Number.isInteger(raw.eventTime), true);
     assert.equal(raw.eventTime, 18 * 60 + 15); // 1095, matches the screenshot value
     assert.ok(raw.eventDate instanceof Date);

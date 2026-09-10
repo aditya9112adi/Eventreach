@@ -108,10 +108,21 @@ async function main() {
     else if (seenEventIds.has(e.eventId)) note('events', id, 'eventId', `duplicate of ${seenEventIds.get(e.eventId)}: ${e.eventId}`);
     else seenEventIds.set(e.eventId, String(id));
 
+    // Target is BSON Int64 (bsonType "long") in 1000000000..9999999999.
+    // The collection can currently hold Double (legacy), String (written
+    // between the code deploy and this migration) or already-correct Long.
     const m = e.organizerMobile;
-    if (isStr(m) && MOBILE_10.test(m)) { /* already correct */ }
-    else if (typeof m === 'number' && Number.isInteger(m) && MOBILE_10.test(String(m))) needMobileConv++;
-    else note('events', id, 'organizerMobile', `cannot form 10 digits from ${JSON.stringify(m)}`);
+    const asDigits =
+      typeof m === 'bigint' ? m.toString()
+      : typeof m === 'number' && Number.isInteger(m) ? String(m)
+      : isStr(m) ? m.trim()
+      : null;
+
+    if (asDigits === null || !MOBILE_10.test(asDigits)) {
+      note('events', id, 'organizerMobile', `cannot form a 10-digit number from ${JSON.stringify(m)}`);
+    } else if (typeof m !== 'bigint') {
+      needMobileConv++;
+    }
 
     if (!isInt(e.eventTime) || e.eventTime < 0 || e.eventTime > 1439)
       note('events', id, 'eventTime', `not an integer in 0..1439: ${JSON.stringify(e.eventTime)}`);
@@ -306,11 +317,17 @@ async function main() {
 
   let mob = 0;
   for (const e of events) {
-    if (isStr(e.organizerMobile)) continue;
-    await col('events').updateOne({ _id: e._id }, { $set: { organizerMobile: String(e.organizerMobile) } });
+    const m = e.organizerMobile;
+    if (typeof m === 'bigint') continue;                       // already Int64
+    const digits = typeof m === 'number' ? String(m) : String(m).trim();
+    if (!MOBILE_10.test(digits)) continue;                     // blocked in the audit above
+    await col('events').updateOne(
+      { _id: e._id },
+      { $set: { organizerMobile: mongoose.mongo.Long.fromString(digits) } }
+    );
     mob++;
   }
-  console.log(`✓ events.organizerMobile -> String   : ${mob}`);
+  console.log(`✓ events.organizerMobile -> Int64    : ${mob}`);
 
   let dur = 0;
   for (const name of ['admins', 'users']) {
@@ -411,7 +428,10 @@ async function main() {
       properties: {
         eventId: str({ pattern: '^EVT-[0-9]{6,}$' }),
         organizerName: str({ minLength: 1, maxLength: EVENT_LIMITS.organizerName }),
-        organizerMobile: str({ pattern: '^[0-9]{10}$' }),
+        // BSON Int64. `int` is not usable here: a 10-digit mobile (~9.1e9)
+        // overflows int32's 2147483647 ceiling. The range is what expresses
+        // "exactly ten digits" — MongoDB has no numeric precision/size.
+        organizerMobile: { bsonType: 'long', minimum: 1000000000, maximum: 9999999999 },
         eventName: str({ minLength: 1, maxLength: EVENT_LIMITS.eventName }),
         eventType: str({ minLength: 1, maxLength: EVENT_LIMITS.eventType }),
         eventDate: { bsonType: 'date' },
@@ -483,7 +503,9 @@ async function main() {
   const ids = post.map((e) => e.eventId);
   console.log(`  every event has a valid eventId : ${post.every((e) => isStr(e.eventId) && EVENT_ID_RE.test(e.eventId))}`);
   console.log(`  eventId values unique           : ${new Set(ids).size === ids.length}`);
-  console.log(`  organizerMobile all strings     : ${post.every((e) => isStr(e.organizerMobile))}`);
+  const mobileTypes = await col('events').aggregate([{ $group: { _id: { $type: '$organizerMobile' }, n: { $sum: 1 } } }]).toArray();
+  console.log(`  organizerMobile BSON types      : ${mobileTypes.map((t: any) => `${t._id}=${t.n}`).join(', ')}`);
+  console.log(`  organizerMobile all Int64       : ${mobileTypes.length === 1 && mobileTypes[0]._id === 'long'}`);
   console.log(`  eventTime all int 0..1439       : ${post.every((e) => isInt(e.eventTime) && e.eventTime >= 0 && e.eventTime <= 1439)}`);
   const withValidators = (await db.listCollections().toArray()).filter((c: any) => c.options?.validator).map((c: any) => c.name);
   console.log(`  collections with a validator    : ${withValidators.sort().join(', ')}`);

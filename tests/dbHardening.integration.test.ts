@@ -17,6 +17,7 @@ import { execFileSync } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
 const mongoose = require('mongoose');
+const { Long } = mongoose.mongo;
 const TSNODE = require.resolve('ts-node/dist/bin.js');
 
 const DB = `mongodb://127.0.0.1:27017/eventreach_hard_${Date.now()}`;
@@ -31,7 +32,7 @@ const rejects = async (fn: () => Promise<any>) => {
 
 const baseEvent = (o: Record<string, any> = {}) => ({
   eventId: `EVT-9${String(Math.floor(Math.random() * 99999)).padStart(5, '0')}`,
-  organizerName: 'A', organizerMobile: '9112472833', eventName: 'N', eventType: 'T',
+  organizerName: 'A', organizerMobile: Long.fromString('9112472833'), eventName: 'N', eventType: 'T',
   eventDate: new Date(), eventTime: 600, eventVenue: 'V', eventStatus: 'Upcoming',
   createdAt: new Date(), updatedAt: new Date(), ...o,
 });
@@ -82,7 +83,8 @@ describe('Migration outcome', () => {
     assert.ok(events.every((e: any) => /^EVT-\d{6,}$/.test(e.eventId)), 'all have an eventId');
     assert.equal(new Set(events.map((e: any) => e.eventId)).size, events.length, 'ids unique');
     assert.ok(events.some((e: any) => e.eventId === 'EVT-000002'), 'existing id preserved');
-    assert.ok(events.every((e: any) => typeof e.organizerMobile === 'string'), 'mobile is string');
+    const types = await db.collection('events').aggregate([{ $group: { _id: { $type: '$organizerMobile' }, n: { $sum: 1 } } }]).toArray();
+    assert.deepEqual(types.map((t: any) => t._id), ['long'], 'every organizerMobile is BSON Int64');
     assert.ok(events.every((e: any) => Number.isInteger(e.eventTime) && e.eventTime >= 0 && e.eventTime <= 1439));
   });
 
@@ -97,8 +99,10 @@ describe('Migration outcome', () => {
 describe('MongoDB rejects invalid direct writes (UI, API and Mongoose all bypassed)', () => {
   test('events', async () => {
     await rejects(() => db.collection('events').insertOne(baseEvent({ organizerName: 'x'.repeat(51) })));
-    await rejects(() => db.collection('events').insertOne(baseEvent({ organizerMobile: '123' })));
-    await rejects(() => db.collection('events').insertOne(baseEvent({ organizerMobile: '+919112472833' })));
+    await rejects(() => db.collection('events').insertOne(baseEvent({ organizerMobile: Long.fromString('123') })));        // 3 digits
+    await rejects(() => db.collection('events').insertOne(baseEvent({ organizerMobile: Long.fromString('99999999999') })));  // 11 digits
+    await rejects(() => db.collection('events').insertOne(baseEvent({ organizerMobile: '9112472833' })));                   // String, not Int64
+    await rejects(() => db.collection('events').insertOne(baseEvent({ organizerMobile: 9112472833 })));                     // Double, not Int64
     await rejects(() => db.collection('events').insertOne(baseEvent({ eventTime: 1440 })));
     await rejects(() => db.collection('events').insertOne(baseEvent({ eventTime: -1 })));
     await rejects(() => db.collection('events').insertOne(baseEvent({ eventTime: 600.5 })));

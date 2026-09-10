@@ -5,7 +5,7 @@ import { nextSequence, formatEventId } from './Counter';
 export interface IEvent extends Document {
   eventId: string;                 // "EVT-000001" — human-readable, unique, immutable
   organizerName: string;           // 1–50 chars
-  organizerMobile: string;         // exactly 10 digits ("^[0-9]{10}$") — identifier, not a quantity
+  organizerMobile: bigint;         // BSON Int64, exactly 10 digits (1000000000–9999999999)
   eventName: string;               // 1–20 chars
   eventType: string;               // 1–20 chars, free text
   eventDate: Date;                 // BSON Date (date component; time is eventTime)
@@ -33,9 +33,27 @@ const EventSchema: Schema = new Schema(
       match: /^EVT-\d{6,}$/,
     },
     organizerName:    { type: String,  required: true, trim: true, minlength: 1, maxlength: 50 },
-    // Phone number stored as a digit string, matching Contact.phoneNumber. The
-    // app validates ^\d{10}$ with no country code / '+' / leading-zero handling.
-    organizerMobile:  { type: String,  required: true, trim: true, match: /^[0-9]{10}$/ },
+    /**
+     * Stored as BSON Int64 (`long`), constrained to exactly ten digits.
+     *
+     * `BigInt` is what produces a true Int64: Mongoose's `Number` type writes a
+     * `double` for any value above 2^31, which is the original defect this
+     * replaces — and a 10-digit mobile (~9.1e9) overflows int32, so `int` is not
+     * an option either. The API contract is unaffected: serialize() renders it
+     * back to a string, and callers only ever send the validated 10-digit
+     * string, which Mongoose casts.
+     *
+     * Note this makes a leading zero or an international prefix unrepresentable;
+     * both are already rejected by the ^\d{10}$ rule in the UI and the API.
+     */
+    organizerMobile: {
+      type: BigInt,
+      required: true,
+      validate: {
+        validator: (v: bigint) => v >= 1000000000n && v <= 9999999999n,
+        message: 'Mobile No must be exactly 10 digits',
+      },
+    },
     eventName:        { type: String,  required: true, trim: true, minlength: 1, maxlength: 20 },
     eventType:        { type: String,  required: true, trim: true, minlength: 1, maxlength: 20 },
     eventDate:        { type: Date,    required: true },

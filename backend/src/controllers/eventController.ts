@@ -38,9 +38,17 @@ const serialize = (ev: any) => {
   const obj = ev.toObject ? ev.toObject() : { ...ev };
   if (obj.eventDate instanceof Date) obj.eventDate = formatDate(obj.eventDate);
   if (typeof obj.eventTime === 'number') obj.eventTime = minutesToTime(obj.eventTime);
-  // organizerMobile is a string in the schema; coerce any pre-migration
-  // numeric value so the API contract stays string-only.
-  if (typeof obj.organizerMobile === 'number') obj.organizerMobile = String(obj.organizerMobile);
+  /**
+   * organizerMobile is BSON Int64 (a JS bigint once hydrated). The API has
+   * always exposed it as a string, so it is rendered back here.
+   *
+   * This must not be skipped: JSON.stringify throws outright on a bigint, so
+   * leaving one in the payload would fail the whole response. The number and
+   * string branches cover documents written before the migration converges the
+   * column — during that window the collection legitimately holds all three.
+   */
+  const m = obj.organizerMobile;
+  if (typeof m === 'bigint' || typeof m === 'number') obj.organizerMobile = String(m);
   return obj;
 };
 
@@ -104,7 +112,8 @@ export const createEvent = async (req: RequestWithId, res: Response) => {
 
     const event = await Event.create({
       ...rest,
-      organizerMobile,
+      // Zod already proved this is exactly ten digits; store it as BSON Int64.
+      organizerMobile: BigInt(organizerMobile),
       eventDate: new Date(eventDate + 'T00:00:00.000Z'),
       eventTime: timeToMinutes(eventTime),
       createdBy: currentUser?.id,
@@ -287,7 +296,8 @@ export const updateEvent = async (req: RequestWithId, res: Response) => {
 
     const updatePayload: any = {
       ...rest,
-      organizerMobile,
+      // Zod already proved this is exactly ten digits; store it as BSON Int64.
+      organizerMobile: BigInt(organizerMobile),
       eventDate: new Date(eventDate + 'T00:00:00.000Z'),
       eventTime: timeToMinutes(eventTime),
     };
