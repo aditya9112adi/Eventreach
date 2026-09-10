@@ -227,7 +227,11 @@ const EventList = () => {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+              {/* min-w-full rather than w-full: with nine columns, w-full forced
+                  the browser to compress every column to fit the container,
+                  which wrapped the Event ID and crowded the date/time column.
+                  Sizing to content instead lets the wrapper scroll as intended. */}
+              <table className="min-w-full text-left border-collapse">
               <thead>
                 <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border uppercase tracking-wide text-xs">
                   <SortTh field="eventId"         label="Event ID" />
@@ -256,9 +260,10 @@ const EventList = () => {
                     }}
                     className="hover:bg-surfaceHover transition-colors group"
                   >
-                    <td className="py-3 px-4 text-sm font-mono text-foreground/70">{event.eventId || '—'}</td>
+                    {/* select-all makes the id easy to copy in one click. */}
+                    <td className="py-3 px-4 text-sm font-mono text-foreground/70 whitespace-nowrap select-all">{event.eventId || '—'}</td>
                     <td className="py-3 px-4 text-sm font-medium text-foreground">{event.organizerName || '—'}</td>
-                    <td className="py-3 px-4 text-sm text-foreground/80">{event.organizerMobile || '—'}</td>
+                    <td className="py-3 px-4 text-sm text-foreground/80 whitespace-nowrap">{event.organizerMobile || '—'}</td>
                     <td className="py-3 px-4 font-medium text-foreground">{event.eventName}</td>
                     <td className="py-3 px-4 text-sm text-foreground/80">{event.eventType}</td>
                     <td className="py-3 px-4">
@@ -273,8 +278,8 @@ const EventList = () => {
                         {event.eventVenue}
                       </div>
                     </td>
-                    <td className="py-3 px-4">{getStatusBadge(event.eventStatus)}</td>
-                    <td className="py-3 px-4 text-right">
+                    <td className="py-3 px-4 whitespace-nowrap">{getStatusBadge(event.eventStatus)}</td>
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
                       <Link to={`/events/${event._id}`}>
                         <Button variant="secondary" className="text-xs py-1.5 px-3">View</Button>
                       </Link>
