@@ -18,6 +18,9 @@ build/
 .DS_Store
 Thumbs.db
 
+# Database dumps — contain real customer data, never commit these
+backups/
+
 # Logs
 *.log
 npm-debug.log*

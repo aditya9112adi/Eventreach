@@ -8,7 +8,9 @@
     "build": "tsc",
     "seed": "ts-node src/utils/seed.ts",
     "reset-superadmin-password": "ts-node src/utils/reset-superadmin-password.ts",
-    "verify-db": "ts-node verifyDbHardening.ts"
+    "verify-db": "ts-node verifyDbHardening.ts",
+    "backup-db": "ts-node backupDb.ts",
+    "restore-db": "ts-node restoreDb.ts"
   },
   "dependencies": {
     "@eventreach/shared": "*",
