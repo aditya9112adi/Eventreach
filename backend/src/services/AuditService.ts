@@ -1,19 +1,58 @@
+import mongoose from 'mongoose';
 import { AuditLog } from '../models/AuditLog';
 
 // Sensitive fields to sanitize
 const SENSITIVE_FIELDS = ['password', 'hash', 'token', 'secret', 'passwordHash', 'refreshToken', 'apiKey'];
 
-function sanitizeObject(obj: any): any {
-  if (!obj) return obj;
-  if (typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map(sanitizeObject);
+/**
+ * True for a BSON Int64. Event.organizerMobile hydrates as a native `bigint`
+ * through Mongoose; a document read through the raw driver can also hand
+ * back a BSON Long instance instead — both need the same handling here.
+ */
+const isBsonLong = (v: any): boolean => !!v && typeof v === 'object' && mongoose.mongo.Long.isLong(v);
 
-  const sanitized = { ...obj };
-  for (const key of Object.keys(sanitized)) {
+/**
+ * True only for a plain object literal or a Mongoose lean()/toObject() result
+ * — never for a Date, ObjectId, Buffer or other class instance that also
+ * happens to be `typeof === 'object'`. That distinction matters: recursing
+ * into one of those with a naive `{...obj}` spread destroys it, because its
+ * real value lives outside its own enumerable properties (a Date spreads to
+ * `{}`; an ObjectId spreads to its raw buffer bytes).
+ */
+const isPlainObject = (v: any): boolean => {
+  if (typeof v !== 'object' || v === null) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+};
+
+/**
+ * Deep-clones audit data into a form that is always safe to JSON.stringify
+ * (used below for change-detection) and to store in a Mixed field, redacting
+ * sensitive keys at any depth.
+ *
+ * - bigint and BSON Long (organizerMobile, BSON Int64) become a decimal
+ *   string — never a Number, which would silently lose precision past 2^53 —
+ *   and JSON.stringify throws outright on a raw bigint, so this must happen
+ *   before anything here reaches it.
+ * - Date, ObjectId, Buffer and any other non-plain object are returned
+ *   exactly as they are: see isPlainObject for why recursing into them would
+ *   corrupt them instead.
+ * - Arrays and plain objects are walked recursively, so a BigInt or a Date
+ *   nested at any depth (e.g. inside mediaAttachments, or a bulk snapshot
+ *   array) is handled the same way as one at the top level.
+ */
+function sanitizeObject(obj: any): any {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'bigint' || isBsonLong(obj)) return obj.toString();
+  if (Array.isArray(obj)) return obj.map(sanitizeObject);
+  if (!isPlainObject(obj)) return obj; // Date, ObjectId, Buffer, etc. — left intact
+
+  const sanitized: Record<string, any> = {};
+  for (const key of Object.keys(obj)) {
     if (SENSITIVE_FIELDS.includes(key.toLowerCase()) || SENSITIVE_FIELDS.some(s => key.toLowerCase().includes(s))) {
       sanitized[key] = '***REDACTED***';
-    } else if (typeof sanitized[key] === 'object' && sanitized[key] !== null) {
-      sanitized[key] = sanitizeObject(sanitized[key]);
+    } else {
+      sanitized[key] = sanitizeObject(obj[key]);
     }
   }
   return sanitized;
@@ -97,7 +136,10 @@ export class AuditService {
         },
         bulk: params.bulk ? { ...params.bulk, isBulk: true } : { isBulk: false },
         request: params.request || {},
-        metadata: params.metadata || {},
+        // No current caller puts a raw document here, but metadata is Mixed
+        // just like changes.before/after — sanitized the same way in case a
+        // future caller ever does.
+        metadata: sanitizeObject(params.metadata) || {},
         success: params.success !== false,
         error: params.error || {}
       });
