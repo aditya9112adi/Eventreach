@@ -8,30 +8,77 @@ export { getFrontendBaseUrl };
  *
  * Two delivery providers are supported:
  *
- *  - RESEND_API_KEY -> Resend's HTTPS API. Required in production on Render,
- *    which blocks outbound SMTP (ports 25/465/587). Gmail SMTP from Render fails
- *    with ENETUNREACH on IPv6 and a connection timeout on IPv4.
- *  - EMAIL_USER / EMAIL_PASS -> Gmail SMTP. Convenient for local development.
+ *  - RESEND_API_KEY -> Resend's HTTPS API. The only provider usable in
+ *    production: Render (and most hosts) block outbound SMTP entirely
+ *    (ports 25/465/587), so an SMTP attempt there cannot succeed under any
+ *    configuration — it only ever produces a confusing ENETUNREACH or
+ *    connection timeout in place of a clear "not configured" message.
+ *  - EMAIL_USER / EMAIL_PASS -> Gmail SMTP. A local-development-only
+ *    convenience; never selected when NODE_ENV=production, regardless of
+ *    whether these are set, so a stale credential left over from an earlier
+ *    setup can never cause a silent, doomed SMTP attempt in production.
  *
- * Resend wins when both are set. All credentials come from the environment and
- * are never logged. If nothing is configured the helpers warn and return without
- * throwing, so a missing mail setup can never break the request that triggered
- * the notification.
+ * Resend wins whenever it is configured, in every environment. All
+ * credentials come from the environment and are never logged — not even
+ * their presence is inferred from a boolean flag printed anywhere. If
+ * nothing usable is configured the helpers warn and return without
+ * throwing, so a missing mail setup can never break the request that
+ * triggered the notification.
  */
 
 type Provider = 'resend' | 'smtp' | 'none';
 
-const activeProvider = (): Provider => {
-  if (process.env.RESEND_API_KEY) return 'resend';
-  const { EMAIL_USER, EMAIL_PASS } = process.env;
-  if (EMAIL_USER && EMAIL_PASS && EMAIL_PASS !== 'your_app_password_here') return 'smtp';
-  return 'none';
+const isProduction = (): boolean => process.env.NODE_ENV === 'production';
+
+/**
+ * Reads an env var and treats a blank or whitespace-only value as unset. A
+ * stray space or trailing newline pasted into a platform's env-var UI must
+ * not silently count as "configured" — that is indistinguishable from a
+ * healthy key until a send is attempted and fails.
+ */
+const cleanEnv = (name: string): string | undefined => {
+  const trimmed = process.env[name]?.trim();
+  return trimmed ? trimmed : undefined;
 };
 
-/** Sender address. Resend requires a verified domain, or its shared test sender. */
-const fromAddress = (): string =>
-  process.env.EMAIL_FROM?.trim() ||
-  (process.env.EMAIL_USER ? `EventReach <${process.env.EMAIL_USER}>` : 'EventReach <onboarding@resend.dev>');
+const resendApiKey = (): string | undefined => cleanEnv('RESEND_API_KEY');
+
+const smtpCredentials = (): { user: string; pass: string } | null => {
+  const user = cleanEnv('EMAIL_USER');
+  const pass = cleanEnv('EMAIL_PASS');
+  if (!user || !pass || pass === 'your_app_password_here') return null;
+  return { user, pass };
+};
+
+/**
+ * Decide which provider to use. Resend is checked first and wins outright
+ * whenever it is configured — this function returns before SMTP is even
+ * considered. SMTP is additionally unavailable in production outright: see
+ * the file-level comment for why that can never be the right choice there.
+ */
+export const activeProvider = (): Provider => {
+  if (resendApiKey()) return 'resend';
+  if (isProduction()) return 'none';
+  return smtpCredentials() ? 'smtp' : 'none';
+};
+
+/**
+ * Sender address, chosen for whichever provider is actually sending.
+ * EMAIL_USER only makes sense as a From address for an actual SMTP send (it
+ * is a real, deliverable Gmail send-as address in that context) — using it
+ * as the From address for a Resend send would get rejected as an unverified
+ * domain if it were ever left over from an earlier SMTP setup. EMAIL_FROM
+ * always wins when set, for either provider.
+ */
+const fromAddress = (provider: Provider): string => {
+  const explicit = cleanEnv('EMAIL_FROM');
+  if (explicit) return explicit;
+  if (provider === 'smtp') {
+    const user = cleanEnv('EMAIL_USER');
+    if (user) return `EventReach <${user}>`;
+  }
+  return 'EventReach <onboarding@resend.dev>';
+};
 
 const escapeHtml = (unsafe: string) =>
   unsafe
@@ -42,15 +89,12 @@ const escapeHtml = (unsafe: string) =>
     .replace(/'/g, '&#039;');
 
 const getTransporter = () => {
-  const { EMAIL_USER, EMAIL_PASS } = process.env;
-
-  if (!EMAIL_USER || !EMAIL_PASS || EMAIL_PASS === 'your_app_password_here') {
-    return null;
-  }
+  const credentials = smtpCredentials();
+  if (!credentials) return null;
 
   return nodemailer.createTransport({
     service: 'gmail',
-    auth: { user: EMAIL_USER, pass: EMAIL_PASS },
+    auth: { user: credentials.user, pass: credentials.pass },
     // Render has no outbound IPv6 route; without this the SMTP connection fails
     // with ENETUNREACH against Gmail's AAAA record.
     family: 4,
@@ -83,7 +127,9 @@ export const verifyEmailTransport = async (): Promise<{
       configured: false,
       ok: false,
       provider,
-      error: 'No provider configured (set RESEND_API_KEY, or EMAIL_USER/EMAIL_PASS)',
+      error: isProduction()
+        ? 'RESEND_API_KEY is not set. SMTP is never used in production, even if EMAIL_USER/EMAIL_PASS are set — set RESEND_API_KEY.'
+        : 'No provider configured (set RESEND_API_KEY, or EMAIL_USER/EMAIL_PASS for local development)',
     };
   }
 
@@ -91,7 +137,7 @@ export const verifyEmailTransport = async (): Promise<{
     try {
       // Cheap authenticated read — validates the key without sending anything.
       const r = await fetch('https://api.resend.com/domains', {
-        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+        headers: { Authorization: `Bearer ${resendApiKey()}` },
         signal: AbortSignal.timeout(10_000),
       });
       return r.ok
@@ -135,15 +181,19 @@ const sendViaResend = async (to: string, subject: string, html: string) => {
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      Authorization: `Bearer ${resendApiKey()}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ from: fromAddress(), to: [to], subject, html }),
+    body: JSON.stringify({ from: fromAddress('resend'), to: [to], subject, html }),
     signal: AbortSignal.timeout(15_000),
   });
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
+    // The response body can echo the request back (some APIs do this for
+    // 4xx validation errors); it is truncated and this never includes the
+    // Authorization header, but callers must still treat this as untrusted
+    // text, not something to log verbatim at a higher verbosity than here.
     throw new Error(`Resend responded ${response.status}: ${detail.slice(0, 200)}`);
   }
 };
@@ -152,7 +202,11 @@ const send = async (mailOptions: nodemailer.SendMailOptions, context: string) =>
   const provider = activeProvider();
 
   if (provider === 'none') {
-    console.warn(`No email provider configured (set RESEND_API_KEY, or EMAIL_USER/EMAIL_PASS). Skipping ${context}.`);
+    console.warn(
+      isProduction()
+        ? `RESEND_API_KEY is not set — skipping ${context}. SMTP is never used in production.`
+        : `No email provider configured (set RESEND_API_KEY, or EMAIL_USER/EMAIL_PASS for local development). Skipping ${context}.`
+    );
     return;
   }
 
@@ -164,12 +218,17 @@ const send = async (mailOptions: nodemailer.SendMailOptions, context: string) =>
         String(mailOptions.html ?? '')
       );
     } else {
-      await getTransporter()!.sendMail({ ...mailOptions, from: fromAddress() });
+      await getTransporter()!.sendMail({ ...mailOptions, from: fromAddress('smtp') });
     }
+    // Only the fixed, human-authored context label is logged (e.g. "password
+    // reset link") — never the recipient, the message body, or anything
+    // derived from either, so a reset link or token can never end up here.
     console.log(`Email sent via ${provider}: ${context}`);
   } catch (error: any) {
     // Never surface mail transport errors to the caller — that would leak
-    // whether an account exists.
+    // whether an account exists. The underlying error message (e.g. a
+    // network failure) is logged for operators, but it originates from the
+    // transport layer, never from the credentials or the message content.
     console.error(`Failed to send email via ${provider} (${context}):`, error?.message || error);
   }
 };
