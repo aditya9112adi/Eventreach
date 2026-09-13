@@ -107,16 +107,30 @@ const getTransporter = () => {
 };
 
 /**
- * Check the mail credentials without sending anything.
+ * Report which provider will be used, and whether its credentials are known
+ * to work — without sending anything, and without needing any permission
+ * beyond the one the application actually uses.
  *
- * A dead App Password used to be invisible: `send()` swallows transport errors
- * so the API still answers "reset link sent". This surfaces the problem in the
- * server log at boot instead of when a user tries to reset their password.
+ * `verified` distinguishes "we proved these credentials work" from "they are
+ * present and will be used": only SMTP can be proven at boot.
+ *
+ * Resend is deliberately NOT probed. The application only ever needs Sending
+ * access, and Resend has no endpoint that validates such a key without
+ * actually sending a message — every management route (GET /domains,
+ * /api-keys, …) is forbidden to a restricted key and answers
+ * `401 restricted_api_key`. Probing one reported a perfectly good
+ * sending-only key as FAILED at boot, which is precisely the bug this
+ * replaces. Requiring Full access purely to satisfy a health check would
+ * also mean granting the service far more authority than it needs, so the
+ * key's presence is the check here, and a genuinely bad key surfaces on the
+ * first real send — which send() already logs.
+ *
  * Never logs or returns the credentials themselves.
  */
 export const verifyEmailTransport = async (): Promise<{
   configured: boolean;
   ok: boolean;
+  verified: boolean;
   provider: Provider;
   error?: string;
 }> => {
@@ -126,6 +140,7 @@ export const verifyEmailTransport = async (): Promise<{
     return {
       configured: false,
       ok: false,
+      verified: false,
       provider,
       error: isProduction()
         ? 'RESEND_API_KEY is not set. SMTP is never used in production, even if EMAIL_USER/EMAIL_PASS are set — set RESEND_API_KEY.'
@@ -134,33 +149,34 @@ export const verifyEmailTransport = async (): Promise<{
   }
 
   if (provider === 'resend') {
-    try {
-      // Cheap authenticated read — validates the key without sending anything.
-      const r = await fetch('https://api.resend.com/domains', {
-        headers: { Authorization: `Bearer ${resendApiKey()}` },
-        signal: AbortSignal.timeout(10_000),
-      });
-      return r.ok
-        ? { configured: true, ok: true, provider }
-        : { configured: true, ok: false, provider, error: `Resend rejected the API key (HTTP ${r.status})` };
-    } catch (error: any) {
-      return { configured: true, ok: false, provider, error: String(error?.message || error).slice(0, 200) };
-    }
+    // No network call at all: see above. A Sending-access key is enough.
+    return { configured: true, ok: true, verified: false, provider };
   }
 
   const transporter = getTransporter()!;
+  let timer: NodeJS.Timeout | undefined;
   try {
     // Hard cap: transporter timeouts cover the socket, but never let an admin
-    // request block on a wedged network path.
+    // request block on a wedged network path. The timer is cleared in the
+    // finally below — left dangling it keeps the event loop alive for a full
+    // 15s after the check has already resolved.
     await Promise.race([
       transporter.verify(),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('SMTP verification timed out after 15s')), 15_000)
-      ),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('SMTP verification timed out after 15s')), 15_000);
+      }),
     ]);
-    return { configured: true, ok: true, provider };
+    return { configured: true, ok: true, verified: true, provider };
   } catch (error: any) {
-    return { configured: true, ok: false, provider, error: String(error?.message || error).slice(0, 200) };
+    return {
+      configured: true,
+      ok: false,
+      verified: false,
+      provider,
+      error: String(error?.message || error).slice(0, 200),
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 };
 
@@ -176,7 +192,15 @@ const button = (href: string, label: string) => `
   </a>
 `;
 
-/** Deliver over Resend's HTTPS API. Throws on a non-2xx so send() can log it. */
+/**
+ * Deliver over Resend's HTTPS API. Throws on a non-2xx so send() can log it.
+ *
+ * POST /emails is the only Resend route this application ever calls — it is
+ * exactly what the `resend` SDK's `resend.emails.send()` issues, so no SDK
+ * dependency is needed for it. It is also the only route a Sending-access
+ * key is permitted to use, which is deliberate: the service holds the
+ * narrowest credential that does the job, and nothing here needs more.
+ */
 const sendViaResend = async (to: string, subject: string, html: string) => {
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',

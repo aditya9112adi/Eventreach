@@ -102,7 +102,15 @@ const reportConfiguration = async () => {
   // actually set, only which provider that check resolved to.
   const mail = await verifyEmailTransport();
   if (mail.ok) {
-    console.log(`Email transport: OK (provider=${mail.provider})`);
+    // Resend is reported as configured rather than verified: it is never
+    // probed at boot, because doing so would require management permissions
+    // this service deliberately does not hold. Any real delivery failure is
+    // logged per send instead.
+    console.log(
+      mail.verified
+        ? `Email transport: OK (provider=${mail.provider}, credentials verified)`
+        : `Email transport: OK (provider=${mail.provider}, key present — delivery errors are logged per send)`
+    );
   } else if (!mail.configured) {
     console.warn(`Email transport: NOT CONFIGURED — ${mail.error}. Password reset and approval emails will not be sent.`);
   } else {

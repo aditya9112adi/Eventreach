@@ -147,6 +147,88 @@ describe('verifyEmailTransport — never logs or returns secrets', () => {
   });
 });
 
+describe('verifyEmailTransport — a Sending-access Resend key is enough', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /**
+   * Regression: the boot check used to probe GET /domains to validate the
+   * key. A key restricted to "Sending access" — all this application needs —
+   * is refused there with `401 restricted_api_key`, so a perfectly healthy
+   * key was reported as FAILED at boot and the only "fix" would have been to
+   * grant the service management permissions it has no use for.
+   */
+  test('makes no network request at all — no /domains, no management endpoint', async () => {
+    process.env.RESEND_API_KEY = 're_sending_only_key';
+    process.env.NODE_ENV = 'production';
+
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      requestedUrls.push(String(url));
+      // Mimics what Resend actually answers a restricted key on a
+      // management route, so a reintroduced probe fails this test loudly
+      // rather than silently passing against a permissive stub.
+      return {
+        ok: false,
+        status: 401,
+        text: async () =>
+          JSON.stringify({
+            name: 'restricted_api_key',
+            message: 'This API key is restricted to only send emails',
+            statusCode: 401,
+          }),
+      } as Response;
+    }) as any;
+
+    const result = await verifyEmailTransport();
+
+    assert.deepEqual(requestedUrls, [], 'boot verification must not call the Resend API at all');
+    assert.equal(result.provider, 'resend');
+    assert.equal(result.configured, true);
+    assert.equal(result.ok, true, 'a sending-only key must not be reported as FAILED');
+    assert.equal(result.verified, false, 'honest: the key was never probed, so it is not "verified"');
+    assert.equal(result.error, undefined);
+  });
+
+  test('a restricted key still sends normally, using only POST /emails', async () => {
+    process.env.RESEND_API_KEY = 're_sending_only_key';
+    process.env.NODE_ENV = 'production';
+
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      requestedUrls.push(String(url));
+      return { ok: true, text: async () => '' } as Response;
+    }) as any;
+
+    await sendPasswordResetEmail('Test', 'test@example.com', 'https://example.com/reset-password?token=x');
+
+    assert.deepEqual(requestedUrls, ['https://api.resend.com/emails']);
+    assert.ok(
+      !requestedUrls.some((url) => /\/domains|\/api-keys|\/audiences|\/contacts/.test(url)),
+      'no management endpoint may be called'
+    );
+  });
+
+  test('SMTP is still genuinely verified in development, and says so', async () => {
+    process.env.NODE_ENV = 'development';
+    process.env.EMAIL_USER = 'dev-sender@gmail.com';
+    process.env.EMAIL_PASS = 'app-password';
+
+    const originalCreateTransport = nodemailer.createTransport;
+    nodemailer.createTransport = () => ({ verify: async () => true });
+    try {
+      const result = await verifyEmailTransport();
+      assert.equal(result.provider, 'smtp');
+      assert.equal(result.ok, true);
+      assert.equal(result.verified, true, 'SMTP is the one provider that can be proven at boot');
+    } finally {
+      nodemailer.createTransport = originalCreateTransport;
+    }
+  });
+});
+
 describe('sendPasswordResetEmail — delivers over Resend when configured', () => {
   const originalFetch = globalThis.fetch;
   afterEach(() => {

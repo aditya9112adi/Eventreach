@@ -418,6 +418,10 @@ export const getSystemHealth = async (req: Request, res: Response) => {
         provider: mail.provider,
         credentialsConfigured: mail.configured,
         credentialsAccepted: mail.ok,
+        // False for Resend even when healthy: its credentials are never
+        // probed at boot (that would need management permissions this
+        // service does not hold), so "will be used" is all that is known.
+        credentialsVerified: mail.verified,
         error: mail.ok ? undefined : mail.error,
         superAdminRecipientConfigured: Boolean(process.env.SUPERADMIN_EMAIL),
       },
