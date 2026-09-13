@@ -210,6 +210,33 @@ export const sendApprovalEmail = async (newAdminName: string, newAdminEmail: str
 };
 
 /**
+ * Deliver a self-service password-reset link. Owning this inbox is what
+ * proves the recipient's identity — the link is single-use and expires
+ * shortly (see RESET_TOKEN_TTL_MS in utils/passwordResetToken.ts); its raw
+ * form is never logged or stored anywhere, only its hash.
+ */
+export const sendPasswordResetEmail = async (name: string, email: string, resetLink: string) => {
+  const safeName = escapeHtml(name || 'there');
+
+  await send(
+    {
+      to: email,
+      subject: 'Reset your EventReach password',
+      html: shell(`
+        <h2>Reset your password</h2>
+        <p>Hi ${safeName},</p>
+        <p>We received a request to reset the password for your EventReach account. This link is valid for 15 minutes and can only be used once.</p>
+        ${button(resetLink, 'Reset Password')}
+        <p style="font-size: 13px; color: #666; margin-top: 20px;">
+          If you did not request this, you can safely ignore this email — your password will not be changed.
+        </p>
+      `),
+    },
+    'password reset link'
+  );
+};
+
+/**
  * Tell an applicant whether their registration was approved or rejected.
  */
 export const sendRegistrationDecisionEmail = async (

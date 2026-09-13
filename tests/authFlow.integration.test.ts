@@ -464,15 +464,19 @@ describe('Change password (signed in)', () => {
     assert.equal((await loginAs('target-cp@example.com', NEW_PASSWORD)).status, 401);
   });
 
-  test('the removed reset endpoints are gone', async () => {
+  test('forgot-password and reset-password exist as self-service, token-verified endpoints', async () => {
+    // See forgotPassword.integration.test.ts for the full self-service flow.
+    // forgot-password always answers the same way regardless of the account.
     assert.equal(
       (await call('POST', '/api/auth/forgot-password', { body: { email: 'x@example.com' } })).status,
-      404
+      200
     );
-    assert.equal(
-      (await call('POST', '/api/auth/reset-password', { body: { token: 'x', password: NEW_PASSWORD } })).status,
-      404
-    );
+    // reset-password exists, but a bogus token is rejected rather than applied.
+    const res = await call('POST', '/api/auth/reset-password', {
+      body: { token: 'x', newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /invalid or has expired/i);
   });
 });
 
@@ -480,15 +484,17 @@ describe('Super Admin administrative password reset', () => {
   const resetPath = (id: string, type: 'Admin' | 'User') =>
     `/api/admin/users/${id}/reset-password?type=${type}`;
 
-  test('there is no unauthenticated public reset or forgot endpoint', async () => {
-    // The recovery design is deliberately Super Admin mediated. A public
-    // "email + new password" endpoint would be a one-request account takeover.
-    for (const path of ['/api/auth/reset-password', '/api/auth/forgot-password']) {
-      const res = await call('POST', path, {
-        body: { email: 'victim@example.com', newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
-      });
-      assert.equal(res.status, 404, `${path} must not exist`);
-    }
+  test('reset-password is not a public "email + new password" endpoint', async () => {
+    // Self-service reset now exists (see forgotPassword.integration.test.ts),
+    // but identity must still be proven by a verified single-use token, never
+    // by the email address alone — that would be a one-request takeover of
+    // any account. Supplying only an email and a new password, with no token,
+    // must be rejected rather than accepted.
+    const res = await call('POST', '/api/auth/reset-password', {
+      body: { email: 'victim@example.com', token: '', newPassword: NEW_PASSWORD, confirmPassword: NEW_PASSWORD },
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /token/i);
   });
 
   test('requires authentication', async () => {
