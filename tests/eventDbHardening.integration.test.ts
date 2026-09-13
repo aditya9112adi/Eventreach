@@ -184,7 +184,7 @@ describe('Event ID generation', () => {
         eventId: dupId,
         organizerName: 'X', organizerMobile: '9000000000',
         eventName: 'Dup', eventType: 'Dup',
-        eventDate: new Date(), eventTime: 600, eventVenue: 'V',
+        eventDate: new Date(), eventTime: new Date(), eventVenue: 'V',
         eventStatus: 'Upcoming', createdAt: new Date(), updatedAt: new Date(),
       }),
       /duplicate key/i
@@ -221,7 +221,7 @@ describe('MongoDB is the second validation layer (UI bypassed, API called direct
         organizerName: 'x'.repeat(51),
         organizerMobile: '9112472833',
         eventName: 'Wedding', eventType: 'Wedding',
-        eventDate: new Date(), eventTime: 600, eventVenue: 'Hall',
+        eventDate: new Date(), eventTime: new Date(), eventVenue: 'Hall',
         eventStatus: 'Upcoming',
       }),
       /is longer than the maximum allowed length|maxlength/i
@@ -230,23 +230,30 @@ describe('MongoDB is the second validation layer (UI bypassed, API called direct
 });
 
 describe('Correct BSON types on stored documents', () => {
-  test('organizerMobile is BSON Int64 and eventTime is an integer in the raw document', async () => {
+  test('organizerMobile is BSON Int64 and eventTime is BSON Date in the raw document', async () => {
+    const date = futureDate();
     const res = await call('POST', '/api/events', {
       token: adminToken,
-      body: validEvent({ organizerMobile: '9766813161', eventTime: '18:15' }),
+      body: validEvent({ eventDate: date, organizerMobile: '9766813161', eventTime: '18:15' }),
     });
     const _id = new mongoose.Types.ObjectId(res.body._id);
 
     // $type reports the actual BSON type on the server, not the driver's
-    // JS representation — this is what proves it is a long and not a double.
-    const [{ t }] = await mongoose.connection.db.collection('events')
-      .aggregate([{ $match: { _id } }, { $project: { t: { $type: '$organizerMobile' } } }]).toArray();
-    assert.equal(t, 'long', 'organizerMobile must be BSON Int64');
+    // JS representation — this is what proves organizerMobile is a long
+    // (not a double) and eventTime a date (not an Int32 minute count).
+    const [{ mobileType, timeType }] = await mongoose.connection.db.collection('events')
+      .aggregate([{ $match: { _id } }, { $project: {
+        mobileType: { $type: '$organizerMobile' }, timeType: { $type: '$eventTime' },
+      } }]).toArray();
+    assert.equal(mobileType, 'long', 'organizerMobile must be BSON Int64');
+    assert.equal(timeType, 'date', 'eventTime must be BSON Date');
 
     const raw = await mongoose.connection.db.collection('events').findOne({ _id });
     assert.equal(String(raw.organizerMobile), '9766813161');
-    assert.equal(Number.isInteger(raw.eventTime), true);
-    assert.equal(raw.eventTime, 18 * 60 + 15); // 1095, matches the screenshot value
+    assert.ok(raw.eventTime instanceof Date);
+    // eventTime is the complete event instant (IST, UTC+5:30) — 18:15 on the
+    // submitted date, not just the 18:15 time-of-day in isolation.
+    assert.equal(raw.eventTime.toISOString(), new Date(`${date}T18:15:00+05:30`).toISOString());
     assert.ok(raw.eventDate instanceof Date);
   });
 

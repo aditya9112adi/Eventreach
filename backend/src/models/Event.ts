@@ -8,8 +8,8 @@ export interface IEvent extends Document {
   organizerMobile: bigint;         // BSON Int64, exactly 10 digits (1000000000–9999999999)
   eventName: string;               // 1–20 chars
   eventType: string;               // 1–20 chars, free text
-  eventDate: Date;                 // BSON Date (date component; time is eventTime)
-  eventTime: number;               // minutes since midnight, 0–1439 (see note in migrateEventDbHardening.ts)
+  eventDate: Date;                 // BSON Date, calendar date only (UTC midnight of the chosen day)
+  eventTime: Date;                 // BSON Date, the complete event date+time (India Standard Time, UTC+5:30)
   eventVenue: string;              // 1–50 chars
   eventDescription?: string;       // 0–256 chars
   eventStatus: EventStatus;        // Upcoming | Completed | Cancelled
@@ -57,7 +57,10 @@ const EventSchema: Schema = new Schema(
     eventName:        { type: String,  required: true, trim: true, minlength: 1, maxlength: 20 },
     eventType:        { type: String,  required: true, trim: true, minlength: 1, maxlength: 20 },
     eventDate:        { type: Date,    required: true },
-    eventTime:        { type: Number,  required: true, min: 0, max: 1439 },   // minutes since midnight
+    // The complete event instant (IST). Combined from eventDate + a "HH:MM" time
+    // of day by the controller (see combineISTDateTime in eventController.ts) —
+    // eventDate remains the independent calendar-date field used for filtering.
+    eventTime:        { type: Date,    required: true },
     eventVenue:       { type: String,  required: true, trim: true, minlength: 1, maxlength: 50 },
     eventDescription: { type: String,  trim: true, maxlength: 256 },
     eventStatus: {

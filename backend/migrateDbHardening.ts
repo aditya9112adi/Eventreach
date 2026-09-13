@@ -24,21 +24,35 @@
  *   takes it from the uploaded file.
  * - No silent rounding, truncation, guessing or deletion. A value that cannot
  *   be converted deterministically aborts the migration and is reported.
- * - eventTime stays Int32 minutes-since-midnight (the event's date lives in
- *   eventDate); it is constrained to 0..1439 rather than converted to a Date.
+ * - eventTime is converted to BSON Date — the complete event date+time in
+ *   India Standard Time (UTC+5:30, no DST) — computed by combining the
+ *   existing eventDate (calendar date) with the existing eventTime (minutes
+ *   since midnight). eventDate is left untouched; it stays the independent
+ *   calendar-date field used for date-only filtering.
  * - ObjectId references stay ObjectId. eventId is a separate human-readable
  *   identifier and never replaces _id.
  * - auditlogs gets a loose validator only: changes.before / changes.after /
  *   metadata are Schema.Types.Mixed by design and must keep accepting arbitrary
  *   snapshots. A validator must never make audit logging itself fail.
+ * - Index creation is idempotent and name-independent: MongoDB refuses to
+ *   create a second index on a key pattern that already has one, even under a
+ *   different name (autoIndex on app startup gets there first, under an
+ *   auto-generated name like "eventId_1"). This script inspects existing
+ *   indexes by key pattern, reuses one whose options already match, and
+ *   raises a blocking problem — never a crash — if an existing index on the
+ *   same keys has different options that need a human decision.
+ * - The whole script is safe to re-run, including after a run that aborted
+ *   partway through: every conversion and index step first checks whether its
+ *   target is already in the desired state and skips it if so.
  *
  * BACKUP (run this first — non-negotiable)
- *   mongodump --uri="$MONGODB_URI" --out=./backup-$(date +%Y%m%d-%H%M%S)
+ *   npm run backup-db
  *
  * ROLLBACK
- *   Validators: db.runCommand({ collMod: "<name>", validator: {}, validationLevel: "off" })
- *   Data:       mongorestore --uri="$MONGODB_URI" --drop ./backup-<stamp>
- *   eventId and the counters collection are additive; dropping them is safe.
+ *   npm run restore-db -- backend/backups/<timestamp>            # dry run
+ *   npm run restore-db -- backend/backups/<timestamp> --confirm  # restore
+ *   See restoreDb.ts. eventId and the counters collection are additive to a
+ *   restore; a restored dump missing them is still a full, valid rollback.
  */
 
 import 'dotenv/config';
@@ -65,6 +79,24 @@ const CONTACT_FULLNAME_MAX = 50;
 const MOBILE_10 = /^[0-9]{10}$/;
 const EVENT_ID_RE = /^EVT-\d{6,}$/;
 
+/** minutes since midnight -> "HH:MM" */
+const minutesToHHMM = (mins: number): string => {
+  const h = Math.floor(mins / 60).toString().padStart(2, '0');
+  const m = (mins % 60).toString().padStart(2, '0');
+  return `${h}:${m}`;
+};
+
+/**
+ * Combine a calendar Date (its date component) and a time-of-day (minutes
+ * since midnight) into the absolute instant that time represents in India
+ * Standard Time (UTC+5:30, no DST) — the same interpretation the application
+ * itself uses (see combineISTDateTime in eventController.ts).
+ */
+const combineIST = (date: Date, minutesSinceMidnight: number): Date => {
+  const dateStr = date.toISOString().split('T')[0];
+  return new Date(`${dateStr}T${minutesToHHMM(minutesSinceMidnight)}:00+05:30`);
+};
+
 type Problem = { collection: string; _id: string; field: string; detail: string; blocking: boolean };
 const problems: Problem[] = [];
 const note = (collection: string, _id: any, field: string, detail: string, blocking = true) =>
@@ -74,6 +106,14 @@ const isObjectId = (v: any) => v instanceof mongoose.Types.ObjectId;
 const isDate = (v: any) => v instanceof Date && !isNaN(v.getTime());
 const isStr = (v: any) => typeof v === 'string';
 const isInt = (v: any) => typeof v === 'number' && Number.isInteger(v);
+// The driver promotes a stored BSON Long back to a plain JS number on read
+// whenever it fits a safe integer (which every 10-digit mobile does) unless
+// asked not to — so an already-converted field is fetched with
+// { promoteLongs: false } below and checked with isLong, never `typeof
+// m === 'bigint'` alone. Skipping that would make "already Int64" never
+// match on a second run, and the migration would re-convert every time.
+const isLong = (v: any): boolean => !!v && typeof v === 'object' && mongoose.mongo.Long.isLong(v);
+const isAlreadyInt64 = (v: any) => typeof v === 'bigint' || isLong(v);
 
 /** Longest string seen for a field — used to report where no limit exists yet. */
 const maxLen: Record<string, number> = {};
@@ -97,9 +137,11 @@ async function main() {
   console.log('══ Pre-flight audit ══════════════════════════════════════════\n');
 
   // ── events ───────────────────────────────────────────────────────────────
-  const events = has('events') ? await col('events').find({}).sort({ createdAt: 1, _id: 1 }).toArray() : [];
+  const events = has('events')
+    ? await col('events').find({}, { promoteLongs: false } as any).sort({ createdAt: 1, _id: 1 }).toArray()
+    : [];
   const seenEventIds = new Map<string, string>();
-  let needEventId = 0, needMobileConv = 0;
+  let needEventId = 0, needMobileConv = 0, needEventTimeConv = 0;
 
   for (const e of events) {
     const id = e._id;
@@ -113,19 +155,28 @@ async function main() {
     // between the code deploy and this migration) or already-correct Long.
     const m = e.organizerMobile;
     const asDigits =
-      typeof m === 'bigint' ? m.toString()
+      isAlreadyInt64(m) ? m.toString()
       : typeof m === 'number' && Number.isInteger(m) ? String(m)
       : isStr(m) ? m.trim()
       : null;
 
     if (asDigits === null || !MOBILE_10.test(asDigits)) {
       note('events', id, 'organizerMobile', `cannot form a 10-digit number from ${JSON.stringify(m)}`);
-    } else if (typeof m !== 'bigint') {
+    } else if (!isAlreadyInt64(m)) {
       needMobileConv++;
     }
 
-    if (!isInt(e.eventTime) || e.eventTime < 0 || e.eventTime > 1439)
-      note('events', id, 'eventTime', `not an integer in 0..1439: ${JSON.stringify(e.eventTime)}`);
+    // Target is BSON Date (the complete event date+time, IST). The collection
+    // can currently hold the legacy Int32 minutes-since-midnight or already-
+    // correct Date; converting the legacy form needs a valid eventDate too.
+    if (isDate(e.eventTime)) {
+      // already migrated
+    } else if (isInt(e.eventTime) && e.eventTime >= 0 && e.eventTime <= 1439) {
+      if (isDate(e.eventDate)) needEventTimeConv++;
+      else note('events', id, 'eventTime', 'cannot convert to Date: eventDate is not a valid Date');
+    } else {
+      note('events', id, 'eventTime', `not a Date and not a valid minutes-since-midnight integer: ${JSON.stringify(e.eventTime)}`);
+    }
     if (!isDate(e.eventDate)) note('events', id, 'eventDate', `not a Date: ${JSON.stringify(e.eventDate)}`);
     if (!EVENT_STATUSES.includes(e.eventStatus)) note('events', id, 'eventStatus', `invalid: ${JSON.stringify(e.eventStatus)}`);
 
@@ -137,6 +188,48 @@ async function main() {
     }
     for (const f of ['createdBy', 'adminId', 'assignedUserId']) {
       if (e[f] != null && !isObjectId(e[f])) note('events', id, f, `not an ObjectId: ${JSON.stringify(e[f])}`);
+    }
+  }
+
+  // ── indexes ──────────────────────────────────────────────────────────────
+  // MongoDB refuses to create a second index on a key pattern that already
+  // has one, even under a different name — and autoIndex on app startup
+  // already got there first, under an auto-generated name. So: look up
+  // existing indexes by KEY PATTERN (never by name), and decide once, here,
+  // whether each planned index already exists in a compatible form, needs to
+  // be created fresh, or conflicts and needs a human decision. The apply step
+  // below reuses this same classification rather than re-deriving it.
+  type IndexPlanItem = {
+    collection: string; key: Record<string, 1>; options: Record<string, any>; name: string;
+    status: 'create' | 'reuse' | 'conflict'; existingName?: string;
+  };
+  const INDEX_PLAN: Array<{ collection: string; key: Record<string, 1>; options: Record<string, any>; name: string }> = [
+    { collection: 'events', key: { eventId: 1 }, options: { unique: true, partialFilterExpression: { eventId: { $type: 'string' } } }, name: 'eventId_unique' },
+    { collection: 'events', key: { organizerMobile: 1 }, options: {}, name: 'organizerMobile_1' },
+  ];
+  const sameKey = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
+
+  const indexPlan: IndexPlanItem[] = [];
+  for (const plan of INDEX_PLAN) {
+    if (!has(plan.collection)) continue;
+    const existing = await col(plan.collection).indexes();
+    const match = existing.find((ix: any) => sameKey(ix.key, plan.key));
+
+    if (!match) { indexPlan.push({ ...plan, status: 'create' }); continue; }
+
+    const wantUnique = !!plan.options.unique;
+    const havePartial = JSON.stringify(match.partialFilterExpression ?? null);
+    const wantPartial = JSON.stringify(plan.options.partialFilterExpression ?? null);
+    const compatible = !!match.unique === wantUnique && havePartial === wantPartial;
+
+    if (compatible) {
+      indexPlan.push({ ...plan, status: 'reuse', existingName: match.name });
+    } else {
+      indexPlan.push({ ...plan, status: 'conflict', existingName: match.name });
+      note(plan.collection, '(index)', plan.name,
+        `an index on ${JSON.stringify(plan.key)} already exists as "${match.name}" with different options ` +
+        `(unique=${!!match.unique}, partialFilterExpression=${havePartial}) — wanted (unique=${wantUnique}, ` +
+        `partialFilterExpression=${wantPartial}). Resolve manually (e.g. drop "${match.name}" if it's safe to), then re-run.`);
     }
   }
 
@@ -268,7 +361,16 @@ async function main() {
   console.log('\nDeterministic conversions pending:');
   console.log(`  events.eventId to backfill            : ${needEventId}`);
   console.log(`  events.organizerMobile ->Int64        : ${needMobileConv}`);
+  console.log(`  events.eventTime ->Date               : ${needEventTimeConv}`);
   console.log(`  access duration Double->Int32         : ${needDurationConv}`);
+
+  console.log('\nIndexes:');
+  for (const r of indexPlan) {
+    const label = `${r.collection}.${r.name}`;
+    if (r.status === 'create') console.log(`  ${label.padEnd(30)} will be created`);
+    else if (r.status === 'reuse') console.log(`  ${label.padEnd(30)} existing index "${r.existingName}" already satisfies this — will be reused`);
+    else console.log(`  ${label.padEnd(30)} CONFLICT with existing index "${r.existingName}" — see problems above`);
+  }
 
   console.log('\nLongest stored value (fields with no limit today — informational):');
   for (const [k, v] of Object.entries(maxLen).sort()) console.log(`  ${k.padEnd(26)} ${v}`);
@@ -318,7 +420,7 @@ async function main() {
   let mob = 0;
   for (const e of events) {
     const m = e.organizerMobile;
-    if (typeof m === 'bigint') continue;                       // already Int64
+    if (isAlreadyInt64(m)) continue;                           // already Int64
     const digits = typeof m === 'number' ? String(m) : String(m).trim();
     if (!MOBILE_10.test(digits)) continue;                     // blocked in the audit above
     await col('events').updateOne(
@@ -328,6 +430,18 @@ async function main() {
     mob++;
   }
   console.log(`✓ events.organizerMobile -> Int64    : ${mob}`);
+
+  let evtTime = 0;
+  for (const e of events) {
+    if (isDate(e.eventTime)) continue;                          // already Date
+    if (!(isInt(e.eventTime) && e.eventTime >= 0 && e.eventTime <= 1439 && isDate(e.eventDate))) continue; // blocked in the audit above
+    await col('events').updateOne(
+      { _id: e._id },
+      { $set: { eventTime: combineIST(e.eventDate, e.eventTime) } }
+    );
+    evtTime++;
+  }
+  console.log(`✓ events.eventTime -> Date           : ${evtTime}`);
 
   let dur = 0;
   for (const name of ['admins', 'users']) {
@@ -341,9 +455,17 @@ async function main() {
   console.log(`✓ accessDurationValue -> Int32       : ${dur}`);
 
   // ══ 3. INDEXES ════════════════════════════════════════════════════════════
-  await col('events').createIndex({ eventId: 1 }, { unique: true, partialFilterExpression: { eventId: { $type: 'string' } }, name: 'eventId_unique' });
-  await col('events').createIndex({ organizerMobile: 1 }, { name: 'organizerMobile_1' });
-  console.log('✓ indexes ensured                    : eventId_unique (unique, partial), organizerMobile_1');
+  // Uses the classification computed during the audit above — a 'conflict'
+  // entry can never reach here, since it was a blocking problem that already
+  // aborted the run.
+  for (const r of indexPlan) {
+    if (r.status === 'reuse') {
+      console.log(`· index reused                       : ${r.collection}.${r.existingName} (already satisfies requirements)`);
+      continue;
+    }
+    await col(r.collection).createIndex(r.key, { name: r.name, ...r.options });
+    console.log(`✓ index created                       : ${r.collection}.${r.name}`);
+  }
 
   // ══ 4. VALIDATORS — safest collections first, auth last ═══════════════════
   const str = (extra: Record<string, any> = {}) => ({ bsonType: 'string', ...extra });
@@ -435,7 +557,7 @@ async function main() {
         eventName: str({ minLength: 1, maxLength: EVENT_LIMITS.eventName }),
         eventType: str({ minLength: 1, maxLength: EVENT_LIMITS.eventType }),
         eventDate: { bsonType: 'date' },
-        eventTime: { bsonType: 'int', minimum: 0, maximum: 1439 },
+        eventTime: { bsonType: 'date' },
         eventVenue: str({ minLength: 1, maxLength: EVENT_LIMITS.eventVenue }),
         eventDescription: strOrNull({ maxLength: EVENT_LIMITS.eventDescription }),
         eventStatus: { enum: EVENT_STATUSES },
@@ -506,7 +628,7 @@ async function main() {
   const mobileTypes = await col('events').aggregate([{ $group: { _id: { $type: '$organizerMobile' }, n: { $sum: 1 } } }]).toArray();
   console.log(`  organizerMobile BSON types      : ${mobileTypes.map((t: any) => `${t._id}=${t.n}`).join(', ')}`);
   console.log(`  organizerMobile all Int64       : ${mobileTypes.length === 1 && mobileTypes[0]._id === 'long'}`);
-  console.log(`  eventTime all int 0..1439       : ${post.every((e) => isInt(e.eventTime) && e.eventTime >= 0 && e.eventTime <= 1439)}`);
+  console.log(`  eventTime all BSON Date         : ${post.every((e) => isDate(e.eventTime))}`);
   const withValidators = (await db.listCollections().toArray()).filter((c: any) => c.options?.validator).map((c: any) => c.name);
   console.log(`  collections with a validator    : ${withValidators.sort().join(', ')}`);
 

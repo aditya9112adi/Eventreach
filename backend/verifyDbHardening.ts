@@ -44,7 +44,7 @@ async function main() {
   const total = await col('events').countDocuments({});
   const withId = await col('events').countDocuments({ eventId: { $type: 'string' } });
   const distinctIds = (await col('events').distinct('eventId')).filter((v) => typeof v === 'string').length;
-  const goodTime = await col('events').countDocuments({ eventTime: { $type: 'int', $gte: 0, $lte: 1439 } });
+  const goodTime = await col('events').countDocuments({ eventTime: { $type: 'date' } });
   const goodMobile = await col('events').countDocuments({
     organizerMobile: { $type: 'long', $gte: 1000000000, $lte: 9999999999 },
   });
@@ -59,7 +59,7 @@ async function main() {
   console.log(`  ${ok(has && distinctIds === withId)} eventId values unique       : ${distinctIds} distinct`);
   console.log(`  ${ok(has && goodMobile === total)} organizerMobile Int64 10dig : ${goodMobile}/${total}`);
   console.log(`      BSON types seen           : ${await typesOf('events', 'organizerMobile')}`);
-  console.log(`  ${ok(has && goodTime === total)} eventTime int 0..1439       : ${goodTime}/${total}`);
+  console.log(`  ${ok(has && goodTime === total)} eventTime is BSON Date      : ${goodTime}/${total}`);
   console.log(`      BSON types seen           : ${await typesOf('events', 'eventTime')}`);
 
   // ── accounts ─────────────────────────────────────────────────────────────

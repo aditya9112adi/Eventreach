@@ -12,6 +12,13 @@ import { execFileSync } from 'node:child_process';
  * and Mongoose entirely by writing through the raw driver to prove MongoDB
  * itself rejects invalid documents.
  *
+ * A second describe block below reproduces an actual production incident: a
+ * migration that converted eventId and organizerMobile but then crashed
+ * trying to create an index that already existed under a different name
+ * (Mongoose's own autoIndex got there first). It re-runs the fixed migration
+ * against that exact partial state and against its own already-migrated
+ * output, to prove both the recovery and the idempotency.
+ *
  * Requires a mongod on 127.0.0.1:27017.
  */
 
@@ -30,10 +37,17 @@ const rejects = async (fn: () => Promise<any>) => {
   await assert.rejects(fn, (err: any) => /validation|duplicate key/i.test(String(err?.message)));
 };
 
+/** Combine a "YYYY-MM-DD" date string and minutes-since-midnight into the IST instant. */
+const combineIST = (dateStr: string, mins: number): Date => {
+  const h = String(Math.floor(mins / 60)).padStart(2, '0');
+  const m = String(mins % 60).padStart(2, '0');
+  return new Date(`${dateStr}T${h}:${m}:00+05:30`);
+};
+
 const baseEvent = (o: Record<string, any> = {}) => ({
   eventId: `EVT-9${String(Math.floor(Math.random() * 99999)).padStart(5, '0')}`,
   organizerName: 'A', organizerMobile: Long.fromString('9112472833'), eventName: 'N', eventType: 'T',
-  eventDate: new Date(), eventTime: 600, eventVenue: 'V', eventStatus: 'Upcoming',
+  eventDate: new Date(), eventTime: new Date(), eventVenue: 'V', eventStatus: 'Upcoming',
   createdAt: new Date(), updatedAt: new Date(), ...o,
 });
 
@@ -83,9 +97,15 @@ describe('Migration outcome', () => {
     assert.ok(events.every((e: any) => /^EVT-\d{6,}$/.test(e.eventId)), 'all have an eventId');
     assert.equal(new Set(events.map((e: any) => e.eventId)).size, events.length, 'ids unique');
     assert.ok(events.some((e: any) => e.eventId === 'EVT-000002'), 'existing id preserved');
-    const types = await db.collection('events').aggregate([{ $group: { _id: { $type: '$organizerMobile' }, n: { $sum: 1 } } }]).toArray();
-    assert.deepEqual(types.map((t: any) => t._id), ['long'], 'every organizerMobile is BSON Int64');
-    assert.ok(events.every((e: any) => Number.isInteger(e.eventTime) && e.eventTime >= 0 && e.eventTime <= 1439));
+    const mobileTypes = await db.collection('events').aggregate([{ $group: { _id: { $type: '$organizerMobile' }, n: { $sum: 1 } } }]).toArray();
+    assert.deepEqual(mobileTypes.map((t: any) => t._id), ['long'], 'every organizerMobile is BSON Int64');
+    const timeTypes = await db.collection('events').aggregate([{ $group: { _id: { $type: '$eventTime' }, n: { $sum: 1 } } }]).toArray();
+    assert.deepEqual(timeTypes.map((t: any) => t._id), ['date'], 'every eventTime is BSON Date');
+
+    // The 1119-minute seed (18:39) on 2026-08-23 must convert losslessly.
+    const withId = await db.collection('events').findOne({ eventId: 'EVT-000002' });
+    assert.equal(withId.eventTime.getTime(), combineIST('2026-08-23', 1119).getTime(),
+      'eventTime combines the original date + minutes exactly, in IST');
   });
 
   test('every collection has a validator', async () => {
@@ -103,9 +123,8 @@ describe('MongoDB rejects invalid direct writes (UI, API and Mongoose all bypass
     await rejects(() => db.collection('events').insertOne(baseEvent({ organizerMobile: Long.fromString('99999999999') })));  // 11 digits
     await rejects(() => db.collection('events').insertOne(baseEvent({ organizerMobile: '9112472833' })));                   // String, not Int64
     await rejects(() => db.collection('events').insertOne(baseEvent({ organizerMobile: 9112472833 })));                     // Double, not Int64
-    await rejects(() => db.collection('events').insertOne(baseEvent({ eventTime: 1440 })));
-    await rejects(() => db.collection('events').insertOne(baseEvent({ eventTime: -1 })));
-    await rejects(() => db.collection('events').insertOne(baseEvent({ eventTime: 600.5 })));
+    await rejects(() => db.collection('events').insertOne(baseEvent({ eventTime: 600 })));       // Int32, not Date
+    await rejects(() => db.collection('events').insertOne(baseEvent({ eventTime: '18:39' })));   // string, not Date
     await rejects(() => db.collection('events').insertOne(baseEvent({ eventStatus: 'Nope' })));
     await rejects(() => db.collection('events').insertOne(baseEvent({ eventName: 'x'.repeat(21) })));
     await rejects(() => db.collection('events').insertOne(baseEvent({ eventId: 'EVT-000002' })));  // duplicate
@@ -157,5 +176,85 @@ describe('MongoDB rejects invalid direct writes (UI, API and Mongoose all bypass
       changes: { before: { a: [1, 2, { b: null }] }, after: 'a plain string', changedFields: [] },
       metadata: { deeply: { nested: { arbitrary: [1, 'two', { three: true }] } } },
     });
+  });
+});
+
+describe('Recovers from a partial prior run and is safe to re-run', () => {
+  // Reproduces the actual incident: eventId and organizerMobile already
+  // converted, an index already sitting on {eventId:1} under the
+  // auto-generated name Mongoose's own autoIndex would give it (not the
+  // migration's own "eventId_unique"), eventTime not yet touched, and no
+  // validators installed — i.e. the script crashed mid-way through ══ 3.
+  // INDEXES ══ on a previous run, before ══ 4. VALIDATORS ══ ever started.
+  const RDB = `mongodb://127.0.0.1:27017/eventreach_hard_rerun_${Date.now()}`;
+  let rdb: any;
+
+  before(async () => {
+    const conn = await mongoose.createConnection(RDB).asPromise();
+    rdb = conn.db;
+
+    await rdb.collection('events').insertMany([
+      { organizerName: 'Asha', organizerMobile: Long.fromString('9112472833'), eventName: 'Wedding',
+        eventType: 'Wedding', eventDate: new Date('2026-08-23'), eventTime: 762, eventVenue: 'Hall',
+        eventStatus: 'Upcoming', eventId: 'EVT-000001', createdAt: new Date(1), updatedAt: new Date() },
+      { organizerName: 'Prior', organizerMobile: Long.fromString('9112477076'), eventName: 'Birthday',
+        eventType: 'Birthday', eventDate: new Date('2026-08-23'), eventTime: 1119, eventVenue: 'Cafe',
+        eventStatus: 'Upcoming', eventId: 'EVT-000002', createdAt: new Date(3), updatedAt: new Date() },
+    ]);
+    await rdb.collection('counters').insertOne({ _id: 'events', seq: 2 });
+    // The index Mongoose's autoIndex would already have created on app
+    // startup, under its own auto-generated name — this is what the
+    // migration's blind createIndex(..., { name: 'eventId_unique' }) collided
+    // with in production.
+    await rdb.collection('events').createIndex(
+      { eventId: 1 }, { unique: true, partialFilterExpression: { eventId: { $type: 'string' } } }
+    );
+    await conn.close();
+  });
+
+  after(async () => {
+    const conn = await mongoose.createConnection(RDB).asPromise();
+    await conn.db.dropDatabase();
+    await conn.close();
+  });
+
+  test('completes without error, converts eventTime, and reuses the existing index', () => {
+    const out = execFileSync(process.execPath, [TSNODE, 'migrateDbHardening.ts', '--apply'],
+      { cwd: 'backend', env: { ...process.env, MONGODB_URI: RDB }, encoding: 'utf8' });
+    assert.match(out, /existing index "eventId_1" already satisfies this — will be reused/);
+    assert.match(out, /index reused\s*: events\.eventId_1/);
+    assert.match(out, /events\.eventTime -> Date\s*: 2/);
+    assert.doesNotMatch(out, /CONFLICT/);
+  });
+
+  test('re-running again is a clean no-op (idempotent)', async () => {
+    const out = execFileSync(process.execPath, [TSNODE, 'migrateDbHardening.ts', '--apply'],
+      { cwd: 'backend', env: { ...process.env, MONGODB_URI: RDB }, encoding: 'utf8' });
+    assert.match(out, /events\.eventId backfilled\s*: 0/);
+    assert.match(out, /events\.organizerMobile -> Int64\s*: 0/);
+    assert.match(out, /events\.eventTime -> Date\s*: 0/);
+    assert.match(out, /index reused\s*: events\.eventId_1/);
+    assert.match(out, /index reused\s*: events\.organizerMobile_1/);
+  });
+
+  test('exactly one index exists on {eventId: 1}, still named eventId_1', async () => {
+    const conn = await mongoose.createConnection(RDB).asPromise();
+    const idx = await conn.db.collection('events').indexes();
+    const onEventId = idx.filter((i: any) => JSON.stringify(i.key) === JSON.stringify({ eventId: 1 }));
+    assert.equal(onEventId.length, 1, 'no duplicate index was created alongside the original');
+    assert.equal(onEventId[0].name, 'eventId_1');
+    assert.equal(onEventId[0].unique, true);
+    await conn.close();
+  });
+
+  test('data matches the fully-migrated shape', async () => {
+    const conn = await mongoose.createConnection(RDB).asPromise();
+    const events = await conn.db.collection('events').find({}).toArray();
+    assert.ok(events.every((e: any) => e.eventTime instanceof Date), 'eventTime is BSON Date');
+    const withId = events.find((e: any) => e.eventId === 'EVT-000002');
+    assert.equal(withId.eventTime.getTime(), combineIST('2026-08-23', 1119).getTime());
+    const withValidator = (await conn.db.listCollections().toArray()).filter((c: any) => c.options?.validator).map((c: any) => c.name);
+    assert.ok(withValidator.includes('events'), 'the validator step still ran after the index step recovered');
+    await conn.close();
   });
 });

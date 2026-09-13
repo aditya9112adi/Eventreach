@@ -17,18 +17,32 @@ const todayIST = () => {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().split('T')[0];
 };
 
-/** "HH:MM" → minutes since midnight */
-const timeToMinutes = (t: string): number => {
-  const [h, m] = t.split(':').map(Number);
-  return h * 60 + m;
-};
-
-/** minutes since midnight → "HH:MM" */
+/** minutes since midnight → "HH:MM" (legacy representation, see below) */
 const minutesToTime = (mins: number): string => {
   const h = Math.floor(mins / 60).toString().padStart(2, '0');
   const m = (mins % 60).toString().padStart(2, '0');
   return `${h}:${m}`;
 };
+
+/**
+ * Combine a "YYYY-MM-DD" date and a "HH:MM" time into the absolute instant
+ * that time represents in India Standard Time (UTC+5:30, no DST). This is
+ * what gets stored directly in eventTime, and mirrors the interpretation the
+ * app has always used when comparing an event's date+time to "now" (see
+ * runExpirySweep below).
+ */
+const combineISTDateTime = (dateStr: string, timeStr: string): Date =>
+  new Date(`${dateStr}T${timeStr}:00+05:30`);
+
+/**
+ * The reverse of combineISTDateTime: extract the IST wall-clock "HH:MM" from
+ * an absolute instant. India has a fixed UTC+5:30 offset with no DST, so
+ * shifting the instant forward by that amount and reading the UTC time-of-day
+ * back off it gives the correct IST wall-clock time.
+ */
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const istTimeOfDay = (d: Date): string =>
+  new Date(d.getTime() + IST_OFFSET_MS).toISOString().slice(11, 16);
 
 const formatDate = (d: Date): string =>
   d instanceof Date ? d.toISOString().split('T')[0] : String(d);
@@ -37,7 +51,14 @@ const formatDate = (d: Date): string =>
 const serialize = (ev: any) => {
   const obj = ev.toObject ? ev.toObject() : { ...ev };
   if (obj.eventDate instanceof Date) obj.eventDate = formatDate(obj.eventDate);
-  if (typeof obj.eventTime === 'number') obj.eventTime = minutesToTime(obj.eventTime);
+  /**
+   * eventTime is BSON Date (the complete event date+time, IST) since the
+   * hardening migration. A document created before that migration ran still
+   * legitimately holds the old representation (minutes since midnight) — both
+   * are handled here during that transition window.
+   */
+  if (obj.eventTime instanceof Date) obj.eventTime = istTimeOfDay(obj.eventTime);
+  else if (typeof obj.eventTime === 'number') obj.eventTime = minutesToTime(obj.eventTime);
   /**
    * organizerMobile is BSON Int64 (a JS bigint once hydrated). The API has
    * always exposed it as a string, so it is rendered back here.
@@ -115,7 +136,7 @@ export const createEvent = async (req: RequestWithId, res: Response) => {
       // Zod already proved this is exactly ten digits; store it as BSON Int64.
       organizerMobile: BigInt(organizerMobile),
       eventDate: new Date(eventDate + 'T00:00:00.000Z'),
-      eventTime: timeToMinutes(eventTime),
+      eventTime: combineISTDateTime(eventDate, eventTime),
       createdBy: currentUser?.id,
       creatorModel: currentUser?.role === 'User' ? 'User' : 'Admin',
       adminId,
@@ -171,9 +192,12 @@ const runExpirySweep = async (): Promise<void> => {
     const now = new Date();
 
     const expired = events.filter((event) => {
+      if (event.eventTime instanceof Date) return event.eventTime < now;
+      // Legacy fallback for a document the hardening migration hasn't reached
+      // yet (eventTime still minutes-since-midnight, Int32).
       const dateStr = event.eventDate instanceof Date ? formatDate(event.eventDate) : String(event.eventDate);
       const timeStr = typeof event.eventTime === 'number' ? minutesToTime(event.eventTime) : String(event.eventTime);
-      return new Date(`${dateStr}T${timeStr}:00+05:30`) < now;
+      return combineISTDateTime(dateStr, timeStr) < now;
     });
 
     if (expired.length === 0) return;
@@ -299,7 +323,7 @@ export const updateEvent = async (req: RequestWithId, res: Response) => {
       // Zod already proved this is exactly ten digits; store it as BSON Int64.
       organizerMobile: BigInt(organizerMobile),
       eventDate: new Date(eventDate + 'T00:00:00.000Z'),
-      eventTime: timeToMinutes(eventTime),
+      eventTime: combineISTDateTime(eventDate, eventTime),
     };
 
     if (assignedUserId !== undefined) {
