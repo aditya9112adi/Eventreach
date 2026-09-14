@@ -20,6 +20,7 @@ import reportRoutes from './routes/reportRoutes';
 import settingsRoutes from './routes/settingsRoutes';
 import adminRoutes from './routes/adminRoutes';
 import auditRoutes from './routes/auditRoutes';
+import webhookRoutes from './routes/webhookRoutes';
 import { requestMiddleware } from './middleware/requestMiddleware';
 import { globalLimiter } from './middleware/rateLimitMiddleware';
 import { getAllowedOrigins, getFrontendBaseUrl, isFrontendUrlConfigured } from './config/appUrls';
@@ -51,6 +52,15 @@ app.use(cors({
   origin: allowedOrigins,
   credentials: true
 }));
+
+// WhatsApp delivery callbacks are mounted FIRST, deliberately, ahead of both
+// the global rate limiter and express.json():
+//   - the X-Hub-Signature-256 HMAC is computed over the raw bytes, so this
+//     route needs express.raw() rather than a parsed body;
+//   - a campaign produces one callback per recipient per milestone (sent,
+//     delivered, read), which would trip the 200-per-15-minutes global limit
+//     and make Meta retry a flood it had already delivered.
+app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);
 
 app.use('/api/', globalLimiter); // Apply global rate limiting before body parsing
 app.use(express.json());

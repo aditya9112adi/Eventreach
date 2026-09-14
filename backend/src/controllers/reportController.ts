@@ -43,21 +43,77 @@ export const getCampaignStats = async (req: Request, res: Response) => {
       breakdown[s._id] = s.count;
     });
 
-    const successCount = breakdown.Sent + breakdown.Delivered;
-    const successRate = total > 0 ? Math.round((successCount / total) * 100) : 0;
+    /**
+     * Delivery milestones counted from timestamps rather than from `status`,
+     * because they are not mutually exclusive: a read message is also a
+     * delivered message, and a delivered message was also accepted. Counting
+     * them off the single status field would make each milestone erase the
+     * previous one. See the note in models/MessageLog.ts.
+     *
+     * `accepted` is deliberately NOT called "sent": it means WhatsApp took
+     * the message, not that any handset received it.
+     */
+    const [delivered, read, accepted] = await Promise.all([
+      MessageLog.countDocuments({ campaignId: campaign._id, deliveredAt: { $ne: null } }),
+      MessageLog.countDocuments({ campaignId: campaign._id, readAt: { $ne: null } }),
+      MessageLog.countDocuments({ campaignId: campaign._id, sentAt: { $ne: null } }),
+    ]);
+
+    const summary = {
+      total,
+      pending: breakdown.Pending,
+      accepted,                 // handed to WhatsApp and acknowledged
+      delivered,                // confirmed on the device by the webhook
+      read,                     // opened by the recipient
+      failed: breakdown.Failed,
+      awaitingConfirmation: Math.max(accepted - delivered - breakdown.Failed, 0),
+    };
+
+    // "Success" means WhatsApp accepted it — the honest ceiling on what the
+    // send call alone can tell us. Delivery confirmation is reported
+    // separately rather than being folded in here.
+    const successRate = total > 0 ? Math.round((accepted / total) * 100) : 0;
+    const deliveryRate = total > 0 ? Math.round((delivered / total) * 100) : 0;
 
     const historyLen = campaign.history?.length || 0;
     const latestMessage = historyLen > 0 ? campaign.history[historyLen - 1].messageText : campaign.messageText;
 
+    /**
+     * Only the event fields the report actually renders.
+     *
+     * This previously returned the whole populated Event document, which
+     * broke the endpoint outright: Event.organizerMobile is BSON Int64 and
+     * hydrates as a JS bigint, and res.json() -> JSON.stringify throws on a
+     * bigint. Every call to this endpoint answered 500 once that migration
+     * landed, which is what surfaced in the UI as "Report data not
+     * available." Trimming the payload also stops the organiser's personal
+     * mobile number travelling to anyone who can read a campaign report.
+     */
+    const event = campaign.eventId as any;
+    const eventDetails = event && event._id
+      ? {
+          _id: String(event._id),
+          eventName: event.eventName,
+          eventVenue: event.eventVenue,
+          eventDate: event.eventDate,
+        }
+      : null;
+
     res.json({
       campaignId,
       campaignStatus: campaign.status,
-      eventName: (campaign.eventId as any)?.eventName,
-      eventDetails: campaign.eventId,
+      eventName: event?.eventName,
+      eventDetails,
       messageContent: latestMessage,
       total,
       breakdown,
-      successRate
+      summary,
+      successRate,
+      deliveryRate,
+      // True once the webhook has told us anything at all. When false, the
+      // report explains that delivery confirmation is not being received
+      // rather than implying every message merely "sent".
+      hasDeliveryData: delivered > 0 || read > 0,
     });
   } catch (error) {
     console.error('Get campaign stats error:', error);
@@ -86,7 +142,11 @@ export const getCampaignLogs = async (req: Request, res: Response) => {
 
     const query: any = { campaignId };
     if (statusFilter && statusFilter !== 'All') {
-      query.status = statusFilter;
+      // "Read" is a milestone timestamp rather than a status value (see
+      // models/MessageLog.ts), so it filters on readAt; everything else is a
+      // plain status match.
+      if (statusFilter === 'Read') query.readAt = { $ne: null };
+      else query.status = statusFilter;
     }
 
     const logs = await MessageLog.find(query)

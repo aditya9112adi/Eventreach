@@ -34,6 +34,13 @@ services:
         sync: false
       - key: WHATSAPP_API_VERSION
         sync: false
+      # Delivery-status webhook. VERIFY_TOKEN is a value you choose and paste
+      # into the Meta dashboard; APP_SECRET comes from Meta (App settings >
+      # Basic) and authenticates incoming callbacks.
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
       - key: FRONTEND_URL
         sync: false
       - key: PASSWORD_RESET_TOKEN_TTL_MINUTES

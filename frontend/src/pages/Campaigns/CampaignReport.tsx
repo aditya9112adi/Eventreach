@@ -22,17 +22,63 @@ interface CampaignStats {
     Delivered: number;
     Failed: number;
   };
+  /**
+   * Milestone counts. `accepted` means WhatsApp took the message — not that
+   * any handset received it. Delivery and read are only known once the
+   * webhook reports them, which is why they are counted separately rather
+   * than folded into one "sent" number.
+   */
+  summary: {
+    total: number;
+    pending: number;
+    accepted: number;
+    delivered: number;
+    read: number;
+    failed: number;
+    awaitingConfirmation: number;
+  };
   successRate: number;
+  deliveryRate: number;
+  hasDeliveryData: boolean;
 }
 
 interface LogEntry {
   _id: string;
   contactId: { fullName: string; phoneNumber: string } | null;
+  contactName?: string;
   phoneNumber: string;
   status: string;
+  errorCode?: number;
   errorReason?: string;
+  sentAt?: string;
+  deliveredAt?: string;
+  readAt?: string;
+  failedAt?: string;
   createdAt: string;
 }
+
+/**
+ * What to actually show for one recipient.
+ *
+ * The stored `status` alone would be misleading: 'Sent' means "WhatsApp
+ * accepted it", and a read message is stored as Delivered plus a readAt
+ * timestamp. This resolves the milestones, newest first, into the single
+ * honest label for that row.
+ */
+const describeLog = (log: LogEntry): { label: string; variant: 'success' | 'error' | 'warning' | 'info' } => {
+  if (log.status === 'Failed') return { label: 'Failed', variant: 'error' };
+  if (log.readAt) return { label: 'Read', variant: 'success' };
+  if (log.deliveredAt) return { label: 'Delivered', variant: 'info' };
+  if (log.status === 'Sent' || log.sentAt) return { label: 'Accepted by WhatsApp', variant: 'info' };
+  return { label: 'Waiting to be processed', variant: 'warning' };
+};
+
+/** Local time, or an em dash when the milestone has not happened. */
+const stamp = (value?: string): string => {
+  if (!value) return '—';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+};
 
 const STATUS_COLORS: Record<string, string> = {
   Sent: '#22c55e',
@@ -64,12 +110,20 @@ export const CampaignReportContent = ({
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [statusFilter, setStatusFilter] = useState('All');
   const [isLoading, setIsLoading] = useState(true);
+  // The failure used to be swallowed into console.error, leaving only a bare
+  // "Report data not available." on screen with no way to tell a permission
+  // problem from a missing campaign.
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Authorization check
   const hasReportAccess = user?.role === 'SuperAdmin' || (user?.accessExpiryDate && new Date(user.accessExpiryDate) > new Date() && !user?.isAccessCancelled);
 
   const fetchReport = useCallback(async (isSilent = false) => {
-    if (!campaignId) return;
+    if (!campaignId) {
+      setLoadError('No campaign has been sent for this event yet.');
+      setIsLoading(false);
+      return;
+    }
     if (!isSilent) setIsLoading(true);
     try {
       const [statsRes, logsRes] = await Promise.all([
@@ -78,8 +132,15 @@ export const CampaignReportContent = ({
       ]);
       setStats(statsRes.data);
       setLogs(logsRes.data.logs);
-    } catch (error) {
+      setLoadError(null);
+    } catch (error: any) {
       console.error('Failed to fetch report', error);
+      const status = error?.response?.status;
+      setLoadError(
+        status === 403 ? 'You do not have access to this event\'s report.'
+        : status === 404 ? 'This campaign no longer exists.'
+        : error?.response?.data?.error || 'The report could not be loaded. Please try again.'
+      );
     } finally {
       if (!isSilent) setIsLoading(false);
     }
@@ -122,7 +183,18 @@ export const CampaignReportContent = ({
   }
 
   if (!stats) {
-    return <div className="p-8 text-center text-destructive">Report data not available.</div>;
+    return (
+      <div className="p-8 text-center space-y-3">
+        <AlertTriangle className="w-10 h-10 text-destructive/60 mx-auto" />
+        <p className="text-destructive font-medium">{loadError || 'Report data not available.'}</p>
+        <button
+          onClick={() => fetchReport()}
+          className="text-accent hover:text-accent/80 font-medium text-sm transition-colors"
+        >
+          Try again
+        </button>
+      </div>
+    );
   }
 
   const chartData = Object.entries(stats.breakdown)
@@ -132,16 +204,6 @@ export const CampaignReportContent = ({
       value: count,
       color: STATUS_COLORS[status]
     }));
-
-  const statusBadgeVariant = (status: string): 'success' | 'error' | 'warning' | 'info' => {
-    switch (status) {
-      case 'Sent': return 'success';
-      case 'Delivered': return 'info';
-      case 'Failed': return 'error';
-      case 'Pending': return 'warning';
-      default: return 'info';
-    }
-  };
 
   const handleDownloadPDF = () => {
     if (!stats) return;
@@ -172,13 +234,20 @@ export const CampaignReportContent = ({
     // Calculate Y position for the table based on message length
     const nextY = 58 + (messageLines.length * 5) + 10;
     
-    // Create Table Data
-    const tableColumn = ["Contact Name", "Mobile Number", "Status", "Details"];
+    // Create Table Data. Status is the resolved milestone, not the raw stored
+    // value — "Sent" in the database means WhatsApp accepted the message, and
+    // printing that as "Delivered" (as this once did) overstates what is known.
+    const tableColumn = ["Contact Name", "Mobile Number", "Status", "Accepted", "Delivered", "Read", "Failure"];
     const tableRows = logs.map(log => [
-      log.contactId?.fullName || 'Unknown',
+      log.contactId?.fullName || log.contactName || 'Unknown',
       log.contactId?.phoneNumber || log.phoneNumber || 'Unknown',
-      log.status,
-      log.errorReason || (log.status === 'Pending' ? 'Queued' : 'Delivered')
+      describeLog(log).label,
+      stamp(log.sentAt),
+      stamp(log.deliveredAt),
+      stamp(log.readAt),
+      log.status === 'Failed'
+        ? `${log.errorCode ? `[${log.errorCode}] ` : ''}${log.errorReason || 'Unknown error'}`
+        : '—',
     ]);
 
     autoTable(doc, {
@@ -275,28 +344,37 @@ export const CampaignReportContent = ({
 
         <div className="bg-surface rounded-xl border border-border p-5 group hover:border-success/50 transition-colors">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-sm font-sans font-medium text-foreground/50 uppercase tracking-wide">Success Rate</span>
+            <span className="text-sm font-sans font-medium text-foreground/50 uppercase tracking-wide">Accepted by WhatsApp</span>
             <div className="w-10 h-10 rounded-full bg-success/10 flex items-center justify-center group-hover:scale-110 transition-transform">
               <TrendingUp className="w-5 h-5 text-success" />
             </div>
           </div>
-          <p className="text-3xl font-sans font-bold text-success">{stats.successRate}%</p>
+          <p className="text-3xl font-sans font-bold text-success">{stats.summary.accepted}</p>
           <div className="mt-2 w-full bg-surfaceHover rounded-full h-2">
             <div
               className="bg-success h-2 rounded-full transition-all duration-500"
               style={{ width: `${stats.successRate}%` }}
             ></div>
           </div>
+          <p className="mt-2 text-xs text-foreground/40">{stats.successRate}% handed to WhatsApp</p>
         </div>
 
         <div className="bg-surface rounded-xl border border-border p-5 group hover:border-info/50 transition-colors">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-sm font-sans font-medium text-foreground/50 uppercase tracking-wide">Sent / Delivered</span>
+            <span className="text-sm font-sans font-medium text-foreground/50 uppercase tracking-wide">Delivered / Read</span>
             <div className="w-10 h-10 rounded-full bg-info/10 flex items-center justify-center group-hover:scale-110 transition-transform">
               <CheckCircle className="w-5 h-5 text-info" />
             </div>
           </div>
-          <p className="text-3xl font-sans font-bold text-info">{stats.breakdown.Sent + stats.breakdown.Delivered}</p>
+          <p className="text-3xl font-sans font-bold text-info">
+            {stats.summary.delivered}
+            <span className="text-base text-foreground/40 font-medium"> / {stats.summary.read} read</span>
+          </p>
+          {!stats.hasDeliveryData && stats.summary.accepted > 0 && (
+            <p className="mt-2 text-xs text-foreground/40">
+              No delivery confirmations received yet — these arrive on the WhatsApp webhook.
+            </p>
+          )}
         </div>
 
         <div className="bg-surface rounded-xl border border-border p-5 group hover:border-destructive/50 transition-colors">
@@ -361,8 +439,9 @@ export const CampaignReportContent = ({
               onChange={(e) => setStatusFilter(e.target.value)}
             >
               <option value="All">All Statuses</option>
-              <option value="Sent">Sent</option>
+              <option value="Sent">Accepted by WhatsApp</option>
               <option value="Delivered">Delivered</option>
+              <option value="Read">Read</option>
               <option value="Failed">Failed</option>
               <option value="Pending">Pending</option>
             </select>
@@ -375,46 +454,65 @@ export const CampaignReportContent = ({
                   <th className="pb-3 font-semibold">Contact</th>
                   <th className="pb-3 font-semibold">Phone</th>
                   <th className="pb-3 font-semibold">Status</th>
+                  <th className="pb-3 font-semibold whitespace-nowrap">Accepted</th>
+                  <th className="pb-3 font-semibold whitespace-nowrap">Delivered</th>
+                  <th className="pb-3 font-semibold whitespace-nowrap">Read</th>
+                  <th className="pb-3 font-semibold whitespace-nowrap">Failed</th>
                   <th className="pb-3 font-semibold">Details</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {logs.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="py-8 text-center text-foreground/40">
+                    <td colSpan={8} className="py-8 text-center text-foreground/40">
                       No message logs found.
                     </td>
                   </tr>
                 ) : (
-                  logs.map((log) => (
-                    <tr key={log._id} className="hover:bg-surfaceHover transition-colors">
-                      <td className="py-3 font-medium text-foreground">
-                        {log.contactId?.fullName || 'Unknown'}
-                      </td>
-                      <td className="py-3 text-foreground/80 font-mono text-xs">
-                        {log.contactId?.phoneNumber || log.phoneNumber}
-                      </td>
-                      <td className="py-3">
-                        <Badge variant={statusBadgeVariant(log.status)}>{log.status}</Badge>
-                      </td>
-                      <td className="py-3 text-foreground/50 text-xs max-w-[200px] truncate" title={log.errorReason}>
-                        {log.status === 'Failed' ? (
-                          <span className="flex items-center text-destructive">
-                            <AlertTriangle className="w-3 h-3 mr-1 flex-shrink-0" />
-                            {log.errorReason || 'Unknown error'}
-                          </span>
-                        ) : log.status === 'Pending' ? (
-                          <span className="flex items-center text-amber-500">
-                            <Clock className="w-3 h-3 mr-1" /> Queued
-                          </span>
-                        ) : (
-                          <span className="flex items-center text-success">
-                            <Send className="w-3 h-3 mr-1" /> Delivered
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+                  logs.map((log) => {
+                    const state = describeLog(log);
+                    return (
+                      <tr key={log._id} className="hover:bg-surfaceHover transition-colors">
+                        <td className="py-3 font-medium text-foreground whitespace-nowrap">
+                          {log.contactId?.fullName || log.contactName || 'Unknown'}
+                        </td>
+                        <td className="py-3 text-foreground/80 font-mono text-xs whitespace-nowrap">
+                          {log.contactId?.phoneNumber || log.phoneNumber}
+                        </td>
+                        <td className="py-3 whitespace-nowrap">
+                          <Badge variant={state.variant}>{state.label}</Badge>
+                        </td>
+                        <td className="py-3 text-foreground/50 text-xs whitespace-nowrap">{stamp(log.sentAt)}</td>
+                        <td className="py-3 text-foreground/50 text-xs whitespace-nowrap">{stamp(log.deliveredAt)}</td>
+                        <td className="py-3 text-foreground/50 text-xs whitespace-nowrap">{stamp(log.readAt)}</td>
+                        <td className="py-3 text-foreground/50 text-xs whitespace-nowrap">{stamp(log.failedAt)}</td>
+                        <td className="py-3 text-foreground/50 text-xs max-w-[220px] truncate" title={log.errorReason}>
+                          {log.status === 'Failed' ? (
+                            <span className="flex items-center text-destructive">
+                              <AlertTriangle className="w-3 h-3 mr-1 flex-shrink-0" />
+                              {log.errorCode ? `[${log.errorCode}] ` : ''}{log.errorReason || 'Unknown error'}
+                            </span>
+                          ) : log.readAt ? (
+                            <span className="flex items-center text-success">
+                              <CheckCircle className="w-3 h-3 mr-1" /> Opened by recipient
+                            </span>
+                          ) : log.deliveredAt ? (
+                            <span className="flex items-center text-info">
+                              <CheckCircle className="w-3 h-3 mr-1" /> Delivered to device
+                            </span>
+                          ) : log.status === 'Sent' ? (
+                            <span className="flex items-center text-info">
+                              <Send className="w-3 h-3 mr-1" /> Accepted by WhatsApp
+                            </span>
+                          ) : (
+                            <span className="flex items-center text-amber-500">
+                              <Clock className="w-3 h-3 mr-1" /> Waiting to be processed
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

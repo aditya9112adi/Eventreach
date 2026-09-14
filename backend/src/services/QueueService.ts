@@ -36,6 +36,9 @@ export class QueueService {
       const logsToInsert = contacts.map(c => ({
         campaignId,
         contactId: c._id,
+        // Denormalised so the report still names the recipient even if the
+        // contact is later deleted.
+        contactName: c.fullName,
         phoneNumber: c.phoneNumber,
         status: 'Pending'
       }));
@@ -85,15 +88,31 @@ export class QueueService {
         personalizedMsg = personalizedMsg.replace(/{{venue}}/g, venue);
 
         try {
-          await whatsappService.sendMessage(contact.phoneNumber, personalizedMsg, mediaAttachments);
-          await MessageLog.findByIdAndUpdate(logId, { status: 'Sent' });
+          const result = await whatsappService.sendMessage(contact.phoneNumber, personalizedMsg, mediaAttachments);
+          // 'Sent' here means ACCEPTED BY WHATSAPP, not received by the
+          // handset. The wamid is what lets the delivery webhook find this
+          // row again when the real outcome arrives.
+          await MessageLog.findByIdAndUpdate(logId, {
+            status: 'Sent',
+            wamid: result.wamid,
+            messageText: personalizedMsg,
+            sentAt: new Date(),
+          });
           successfulRecords++;
           try {
             getIO().emit('message-log-updated', { logId, status: 'Sent', campaignId });
             getIO().emit('dashboard-updated');
           } catch (e) {}
         } catch (err: any) {
-          await MessageLog.findByIdAndUpdate(logId, { status: 'Failed', errorReason: err.message });
+          // A synchronous rejection from Meta carries its own numeric code
+          // (e.g. 131047), which is far more actionable than the message text.
+          await MessageLog.findByIdAndUpdate(logId, {
+            status: 'Failed',
+            messageText: personalizedMsg,
+            errorCode: typeof err?.code === 'number' ? err.code : undefined,
+            errorReason: err?.message,
+            failedAt: new Date(),
+          });
           failedRecords++;
           try {
             getIO().emit('message-log-updated', { logId, status: 'Failed', campaignId, errorReason: err.message });

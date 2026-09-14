@@ -101,13 +101,18 @@ const SendPreview = () => {
 
 
     setIsSending(true);
-    showLoader(`Sending to ${selectedIds.size} recipients...`);
+    showLoader(`Queueing ${selectedIds.size} recipients...`);
     try {
-      await api.post(`/campaigns/event/${eventId}/send`, {
+      const res = await api.post(`/campaigns/event/${eventId}/send`, {
         recipientIds: Array.from(selectedIds)
       });
-      await showSuccess(`Campaign queued for ${selectedIds.size} recipients!`);
-      navigate(`/events/${eventId}`);
+      // Deliberately "queued", not "sent": this response only means the
+      // campaign was accepted for processing. Whether WhatsApp accepted each
+      // message — and whether any of them were delivered — is what the report
+      // shows, so go straight there rather than back to the event page.
+      await showSuccess(`Campaign queued for ${selectedIds.size} recipients. Opening the delivery report…`);
+      const newCampaignId = res.data?.campaign?._id;
+      navigate(newCampaignId ? `/campaigns/${newCampaignId}/report` : `/events/${eventId}`);
     } catch (err) {
       console.error('Failed to send', err);
       await showError('Failed to send campaign');
