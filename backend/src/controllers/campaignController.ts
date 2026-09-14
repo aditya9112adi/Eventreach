@@ -6,6 +6,9 @@ import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { isEventAuthorized, getAuthorizedEventIds } from '../services/eventAuthService';
 import crypto from 'crypto';
+import fs from 'fs';
+import { sniffMimeFromFile } from '../utils/mediaSniff';
+import { validateWhatsAppMedia, WHATSAPP_MEDIA_RULES } from '@eventreach/shared';
 
 /** One media attachment, matching mediaAttachmentSchema in the Campaign model. */
 const mediaAttachmentBody = z.object({
@@ -29,29 +32,74 @@ const saveCampaignSchema = z.object({
   status: z.enum(['Draft', 'Scheduled', 'Sending', 'Completed']).optional().default('Draft'),
 });
 
+/** Removes a rejected upload so a refused file never lingers on disk. */
+const discardUpload = async (filePath?: string) => {
+  if (!filePath) return;
+  await fs.promises.unlink(filePath).catch(() => {});
+};
+
 export const uploadMedia = async (req: Request, res: Response) => {
+  const file = req.file;
   try {
-    const file = req.file;
     if (!file) {
       return res.status(400).json({ error: 'No file provided' });
     }
 
-    // Determine type
-    let type: 'image' | 'video' | 'audio' | 'document' = 'document';
-    if (file.mimetype.startsWith('image/')) type = 'image';
-    else if (file.mimetype.startsWith('video/')) type = 'video';
-    else if (file.mimetype.startsWith('audio/')) type = 'audio';
+    /**
+     * Second gate, and the one that matters. The middleware only saw the
+     * browser-declared MIME and the claimed extension; both are supplied by
+     * the caller. Here the file exists on disk, so its real size and its
+     * actual magic bytes can be checked — a renamed executable declaring
+     * image/png is rejected at this point, not sent to WhatsApp.
+     */
+    const stat = await fs.promises.stat(file.path);
+    const sniffed = await sniffMimeFromFile(file.path);
 
-    // Construct local URL
+    const problem = validateWhatsAppMedia({
+      declaredMime: file.mimetype,
+      filename: file.originalname,
+      sizeBytes: stat.size,
+      sniffedMime: sniffed,
+    });
+
+    if (problem) {
+      await discardUpload(file.path);
+      return res.status(400).json({ error: problem });
+    }
+
+    /**
+     * The contents must POSITIVELY identify as the declared type. Requiring a
+     * match rather than merely the absence of a mismatch is the difference
+     * that matters: an executable's header matches none of the five supported
+     * signatures, so the sniffer returns null — and treating "unrecognised"
+     * as acceptable would let evil.exe renamed to photo.png and declared
+     * image/png straight through, which is exactly what it did before this
+     * check. Only five types are supported, so anything unidentifiable is
+     * refused rather than guessed at.
+     */
+    if (sniffed !== file.mimetype) {
+      await discardUpload(file.path);
+      return res.status(400).json({
+        error: 'The file contents do not match its type. It may be renamed, corrupted, or not a real media file.',
+      });
+    }
+
+    const rule = WHATSAPP_MEDIA_RULES[file.mimetype];
     const url = `/uploads/${file.filename}`;
 
     res.json({
       url,
-      type,
-      filename: file.originalname
+      type: rule.kind,
+      filename: file.originalname,
+      // Carried so the sender knows how to hand this to WhatsApp without
+      // re-inspecting the file, and so the report can show what was attached.
+      mimeType: file.mimetype,
+      sizeBytes: stat.size,
     });
   } catch (error) {
-    console.error('Media upload error:', error);
+    // Never log the file's contents — only that handling it failed.
+    console.error('Media upload error:', error instanceof Error ? error.message : error);
+    await discardUpload(file?.path);
     res.status(500).json({ error: 'Failed to upload media' });
   }
 };

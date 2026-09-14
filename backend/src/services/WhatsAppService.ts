@@ -1,4 +1,5 @@
 import axios from 'axios';
+import fs from 'fs';
 
 /**
  * Outcome of handing one message to WhatsApp.
@@ -26,6 +27,91 @@ export class WhatsAppSendError extends Error {
   }
 }
 
+/** An attachment that has already been uploaded to Meta and has a media ID. */
+export interface PreparedMedia {
+  metaMediaId: string;
+  kind: 'image' | 'video' | 'audio' | 'document';
+  filename: string;
+  supportsCaption: boolean;
+}
+
+const prepared = (a: any): PreparedMedia | null =>
+  a && typeof a.metaMediaId === 'string' && a.metaMediaId
+    ? {
+        metaMediaId: a.metaMediaId,
+        kind: a.type,
+        filename: a.filename,
+        supportsCaption: a.supportsCaption !== false && a.type !== 'audio',
+      }
+    : null;
+
+const textPayload = (to: string, body: string) => ({
+  messaging_product: 'whatsapp',
+  recipient_type: 'individual',
+  to: to.replace('+', ''),
+  type: 'text',
+  text: { preview_url: false, body },
+});
+
+/**
+ * The media object for one attachment. `document` additionally carries the
+ * original filename, which is what the recipient sees and downloads as —
+ * without it WhatsApp shows the opaque media ID.
+ */
+const mediaObject = (media: PreparedMedia, caption?: string) => {
+  const body: any = { id: media.metaMediaId };
+  if (media.kind === 'document') body.filename = media.filename;
+  if (caption && media.supportsCaption) body.caption = caption;
+  return body;
+};
+
+/**
+ * The single message that represents this campaign to one recipient.
+ *
+ * With no media it is the campaign text. With media it is the first
+ * attachment, carrying the text as a caption where the type allows one.
+ */
+export const buildPrimaryPayload = (to: string, messageText: string, attachments: any[] = []) => {
+  const first = (attachments || []).map(prepared).find(Boolean) as PreparedMedia | undefined;
+  if (!first) return textPayload(to, messageText || '');
+
+  return {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: to.replace('+', ''),
+    type: first.kind,
+    [first.kind]: mediaObject(first, messageText || undefined),
+  };
+};
+
+/**
+ * Messages the primary could not absorb: the campaign text when the primary
+ * was an audio file (WhatsApp accepts no caption there), plus any attachments
+ * beyond the first. Empty for the common text-only or single-image campaign.
+ */
+export const buildFollowUpPayloads = (to: string, messageText: string, attachments: any[] = []) => {
+  const all = (attachments || []).map(prepared).filter(Boolean) as PreparedMedia[];
+  if (all.length === 0) return [];
+
+  const payloads: any[] = [];
+  const [first, ...rest] = all;
+
+  // Text was not carried as a caption, so it needs its own message.
+  if (messageText && !first.supportsCaption) payloads.push(textPayload(to, messageText));
+
+  for (const media of rest) {
+    payloads.push({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to.replace('+', ''),
+      type: media.kind,
+      [media.kind]: mediaObject(media),
+    });
+  }
+
+  return payloads;
+};
+
 export class WhatsAppService {
   private isMockMode: boolean;
   private token: string | undefined;
@@ -45,6 +131,77 @@ export class WhatsAppService {
     );
   }
 
+  /** One POST to the messages endpoint. The token never leaves this method. */
+  private postMessage(payload: any) {
+    return axios.post(
+      `https://graph.facebook.com/${this.apiVersion}/${this.phoneId}/messages`,
+      payload,
+      {
+        headers: {
+          'Authorization': `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+        },
+        // Without a cap, one wedged socket stalls the whole campaign batch
+        // indefinitely. Generous enough that a merely slow Graph API call
+        // still succeeds.
+        timeout: 30_000,
+      }
+    );
+  }
+
+  /**
+   * Upload one file to WhatsApp and return its media ID.
+   *
+   * Done once per campaign, not once per recipient: the ID is reusable for
+   * every message in the send, and re-uploading the same file hundreds of
+   * times would be slow and wasteful. Meta keeps an uploaded media ID usable
+   * for roughly 30 days, far longer than a campaign takes to go out.
+   *
+   * Returns the ID only — the Authorization header and the file's bytes are
+   * never logged.
+   */
+  async uploadMediaToMeta(filePath: string, mimeType: string, filename: string): Promise<string> {
+    if (this.isMockMode) {
+      return `mock-media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    try {
+      const bytes = await fs.promises.readFile(filePath);
+      const form = new FormData();
+      form.append('messaging_product', 'whatsapp');
+      form.append('type', mimeType);
+      form.append('file', new Blob([bytes], { type: mimeType }), filename);
+
+      const response = await axios.post(
+        `https://graph.facebook.com/${this.apiVersion}/${this.phoneId}/media`,
+        form,
+        {
+          headers: { 'Authorization': `Bearer ${this.token}` },
+          // A 100 MB PDF needs longer than a message post.
+          timeout: 120_000,
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+        }
+      );
+
+      const mediaId = response.data?.id;
+      if (!mediaId) {
+        throw new WhatsAppSendError('WhatsApp accepted the upload but returned no media id.');
+      }
+      return mediaId;
+    } catch (error: any) {
+      if (error instanceof WhatsAppSendError) throw error;
+      const metaError = error.response?.data?.error;
+      // Meta's own error only — never the token, the header or the file bytes.
+      console.error('WhatsApp media upload error:', metaError || error.message);
+      throw new WhatsAppSendError(
+        metaError?.message || error.message || 'Failed to upload media to WhatsApp',
+        typeof metaError?.code === 'number' ? metaError.code : undefined,
+        metaError?.error_data?.details
+      );
+    }
+  }
+
   /**
    * Hand one message to WhatsApp.
    *
@@ -61,41 +218,42 @@ export class WhatsAppService {
     // WhatsApp Cloud API: POST https://graph.facebook.com/<version>/<Phone-Number-ID>/messages
     // where <version> is configurable via WHATSAPP_API_VERSION (default v22.0).
     try {
-      const payload: any = {
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: to.replace('+', ''), // WhatsApp API expects number without +
-        type: "text",
-        text: {
-          preview_url: false,
-          body: messageText
-        }
-      };
+      /**
+       * Media is sent by media ID, never by URL. WhatsApp would have to fetch
+       * a URL itself, and this application's /uploads route is authenticated
+       * and sits on an ephemeral disk, so no link it could follow exists.
+       * Uploading to Meta first (see uploadMediaToMeta) avoids needing public
+       * storage at all and keeps campaign media private.
+       *
+       * Exactly one message is sent here, so one recipient still maps to one
+       * MessageLog with one wamid. Where WhatsApp allows a caption, the
+       * campaign text rides along on the media message rather than being sent
+       * again as its own message — sending both would deliver the text twice.
+       */
+      const primary = buildPrimaryPayload(to, messageText, mediaAttachments);
 
-      // If there are media attachments, the API handles them slightly differently.
-      // Usually, you send media via a template or separate media message.
-      // For MVP text messages with simple media, if it's not a pre-approved template,
-      // you would send an image message type. We'll stick to text-only payload for now in Real mode
-      // unless we implement full template management.
-      
-      const response = await axios.post(
-        `https://graph.facebook.com/${this.apiVersion}/${this.phoneId}/messages`,
-        payload,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.token}`,
-            'Content-Type': 'application/json'
-          },
-          // Without a cap, one wedged socket stalls the whole campaign batch
-          // indefinitely. Generous enough that a merely slow Graph API call
-          // still succeeds.
-          timeout: 30_000,
-        }
-      );
+      const response = await this.postMessage(primary);
 
       // Meta answers with { messages: [{ id: "wamid.…" }] }. That id is the
       // only handle the delivery webhook will refer to later.
       const wamid = response.data?.messages?.[0]?.id ?? null;
+
+      /**
+       * Anything the primary message could not carry: audio takes no caption,
+       * so campaign text follows as its own message, and any further
+       * attachments are sent after the first. These are best-effort — the
+       * recipient's reporting row tracks the primary wamid, so a follow-up
+       * failing is logged but does not turn a delivered campaign into a
+       * failed one.
+       */
+      for (const followUp of buildFollowUpPayloads(to, messageText, mediaAttachments)) {
+        try {
+          await this.postMessage(followUp);
+        } catch (err: any) {
+          console.error('WhatsApp follow-up message failed:', err?.response?.data?.error || err?.message);
+        }
+      }
+
       return { wamid, raw: response.data };
     } catch (error: any) {
       const metaError = error.response?.data?.error;

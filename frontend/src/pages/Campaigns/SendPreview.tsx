@@ -236,6 +236,22 @@ const SendPreview = () => {
         {/* Message Preview Panel */}
         <div className="lg:col-span-1 animate-fade-up stagger-2">
           <div className="bg-surface rounded-xl border border-border p-6 sticky top-6">
+            {/* Whether media will be sent is stated up front — it changes what
+                every recipient receives, and used to be visible only inside
+                the per-contact bubble. */}
+            <div className="mb-4 rounded-lg border border-border bg-background/50 p-3 text-xs">
+              {campaign.mediaAttachments?.length > 0 ? (
+                <span className="text-foreground/70">
+                  <span className="font-bold text-accent">Text + media</span> — {campaign.mediaAttachments.length}{' '}
+                  attachment{campaign.mediaAttachments.length === 1 ? '' : 's'} will be uploaded to WhatsApp and sent with this campaign.
+                </span>
+              ) : (
+                <span className="text-foreground/50">
+                  <span className="font-bold text-foreground/70">Text only</span> — no media attached.
+                </span>
+              )}
+            </div>
+
             <div className="flex items-center space-x-2 mb-4">
               <MessageSquare className="w-5 h-5 text-accent" />
               <h3 className="font-sans font-bold text-foreground uppercase tracking-wider text-sm">Message Preview</h3>
@@ -261,6 +277,7 @@ const SendPreview = () => {
                       {campaign.mediaAttachments.map((att: MediaAttachment, idx: number) => (
                         <div key={idx} className="bg-surface p-2 rounded-lg border border-border shadow-sm text-xs text-foreground/50 truncate w-[85%] rounded-tl-none">
                           📎 {att.filename}
+                          <span className="ml-1 text-foreground/30 uppercase">({att.type})</span>
                         </div>
                       ))}
                     </div>

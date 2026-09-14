@@ -161,3 +161,98 @@ export const COUNTRY_OPTIONS: CountryOption[] = [
  * same digits would resolve to two different countries.
  */
 export const DEFAULT_COUNTRY_CODE = 'IN';
+
+/**
+ * WhatsApp Cloud API media rules.
+ *
+ * One definition used by the browser, the upload endpoint and the sender, so
+ * the UI can never advertise a limit the backend will not accept — the UI
+ * previously offered 100 MB for every type, which is 20x what WhatsApp
+ * accepts for an image.
+ *
+ * Sizes are the per-type ceilings the Cloud API documents for the /media
+ * upload endpoint. They are deliberately gathered here so a change to Meta's
+ * published limits is a one-line edit rather than a hunt through validators.
+ */
+export type WhatsAppMediaKind = 'image' | 'video' | 'audio' | 'document';
+
+export interface WhatsAppMediaRule {
+  /** WhatsApp message type this MIME maps to. */
+  kind: WhatsAppMediaKind;
+  /** Ceiling Meta enforces for this MIME on /media. */
+  maxBytes: number;
+  /** Extensions the UI offers, and the only ones the backend accepts. */
+  extensions: string[];
+  /** Whether WhatsApp lets this type carry a caption alongside the file. */
+  supportsCaption: boolean;
+}
+
+const MB = 1024 * 1024;
+
+export const WHATSAPP_MEDIA_RULES: Record<string, WhatsAppMediaRule> = {
+  'image/jpeg':      { kind: 'image',    maxBytes: 5 * MB,   extensions: ['.jpg', '.jpeg'], supportsCaption: true },
+  'image/png':       { kind: 'image',    maxBytes: 5 * MB,   extensions: ['.png'],          supportsCaption: true },
+  'video/mp4':       { kind: 'video',    maxBytes: 16 * MB,  extensions: ['.mp4'],          supportsCaption: true },
+  // Audio is the one type WhatsApp does NOT accept a caption for, so campaign
+  // text has to travel as its own message rather than being dropped.
+  'audio/mpeg':      { kind: 'audio',    maxBytes: 16 * MB,  extensions: ['.mp3'],          supportsCaption: false },
+  'application/pdf': { kind: 'document', maxBytes: 100 * MB, extensions: ['.pdf'],          supportsCaption: true },
+};
+
+export const WHATSAPP_ALLOWED_MIME_TYPES = Object.keys(WHATSAPP_MEDIA_RULES);
+
+/** Largest file any type permits — the ceiling the upload middleware applies. */
+export const WHATSAPP_MAX_ANY_BYTES = Math.max(
+  ...Object.values(WHATSAPP_MEDIA_RULES).map((r) => r.maxBytes)
+);
+
+export const formatMediaSize = (bytes: number): string =>
+  bytes >= MB ? `${Math.round(bytes / MB)} MB` : `${Math.round(bytes / 1024)} KB`;
+
+/** Human-readable per-type limits for the upload UI, e.g. "Images (.jpg, .jpeg, .png) — 5 MB". */
+export const whatsAppMediaLimitSummary = (): string[] => {
+  const byKind = new Map<WhatsAppMediaKind, { exts: string[]; maxBytes: number }>();
+  for (const rule of Object.values(WHATSAPP_MEDIA_RULES)) {
+    const entry = byKind.get(rule.kind) ?? { exts: [], maxBytes: rule.maxBytes };
+    entry.exts.push(...rule.extensions);
+    entry.maxBytes = Math.max(entry.maxBytes, rule.maxBytes);
+    byKind.set(rule.kind, entry);
+  }
+  const label: Record<WhatsAppMediaKind, string> = {
+    image: 'Images', video: 'Video', audio: 'Audio', document: 'Documents',
+  };
+  return [...byKind.entries()].map(
+    ([kind, e]) => `${label[kind]} (${e.exts.join(', ')}) — ${formatMediaSize(e.maxBytes)}`
+  );
+};
+
+/**
+ * Validate a file against the rules. `sniffedMime` is the type detected from
+ * the file's own bytes; when supplied it must agree with the declared type,
+ * since a browser-supplied MIME is caller-controlled and trivially forged.
+ */
+export const validateWhatsAppMedia = (input: {
+  declaredMime: string;
+  filename: string;
+  sizeBytes: number;
+  sniffedMime?: string | null;
+}): string | null => {
+  const rule = WHATSAPP_MEDIA_RULES[input.declaredMime];
+  if (!rule) return `Unsupported file type. Allowed: ${WHATSAPP_ALLOWED_MIME_TYPES.join(', ')}`;
+
+  const ext = (input.filename.match(/\.[^.]+$/)?.[0] || '').toLowerCase();
+  if (!rule.extensions.includes(ext)) {
+    return `File extension "${ext || '(none)'}" does not match its type. Expected: ${rule.extensions.join(', ')}`;
+  }
+
+  if (input.sizeBytes <= 0) return 'The file is empty.';
+  if (input.sizeBytes > rule.maxBytes) {
+    return `File is ${formatMediaSize(input.sizeBytes)}. WhatsApp accepts at most ${formatMediaSize(rule.maxBytes)} for this type.`;
+  }
+
+  if (input.sniffedMime && input.sniffedMime !== input.declaredMime) {
+    return 'The file contents do not match its type. It may be renamed or corrupted.';
+  }
+
+  return null;
+};

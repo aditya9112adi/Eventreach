@@ -3,6 +3,16 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, Send, Image, FileText, Plus, X, AlertTriangle } from 'lucide-react';
 import api from '../../services/api';
 import type { Event, MediaAttachment } from '@eventreach/shared';
+import {
+  WHATSAPP_MAX_ANY_BYTES,
+  WHATSAPP_MEDIA_RULES,
+  whatsAppMediaLimitSummary,
+} from '@eventreach/shared';
+
+/** MIME -> byte ceiling, derived from the shared rules the backend enforces. */
+const WHATSAPP_MEDIA_MAX_BYTES: Record<string, number> = Object.fromEntries(
+  Object.entries(WHATSAPP_MEDIA_RULES).map(([mime, rule]) => [mime, rule.maxBytes])
+);
 import { Button } from '../../components/ui/Button';
 import { EventSearch } from '../../components/ui/EventSearch';
 import { FileUpload } from '../../components/ui/FileUpload';
@@ -96,7 +106,10 @@ const Composer = () => {
         showToast('info', 'Upload cancelled');
       } else {
         console.error('Upload failed', error);
-        showToast('error', 'Failed to upload file');
+        // The backend explains exactly why (wrong type, too large for this
+        // media type, contents not matching the extension); a generic
+        // "Failed to upload file" hid all of it.
+        showToast('error', error?.response?.data?.error || 'Failed to upload file');
       }
     } finally {
       setIsUploading(false);
@@ -285,6 +298,12 @@ const Composer = () => {
                       'audio/mpeg': ['.mp3'],
                       'video/mp4': ['.mp4']
                     }}
+                    // The real WhatsApp ceilings, from the same definition the
+                    // upload endpoint enforces — so the UI can never promise a
+                    // size the backend will refuse.
+                    maxSize={WHATSAPP_MAX_ANY_BYTES}
+                    perTypeMaxBytes={WHATSAPP_MEDIA_MAX_BYTES}
+                    limitSummary={whatsAppMediaLimitSummary()}
                   />
                   {isUploading && (
                     <div className="mt-4 bg-surface border border-border rounded-lg p-4 animate-fade-in shadow-sm">
