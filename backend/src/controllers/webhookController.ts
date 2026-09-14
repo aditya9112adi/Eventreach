@@ -62,7 +62,28 @@ export const verifyWhatsAppWebhook = (req: Request, res: Response) => {
     return res.status(200).send(String(challenge ?? ''));
   }
 
-  console.warn('WhatsApp webhook: verification rejected (token mismatch or bad mode).');
+  /**
+   * Both rejections used to share one message, which made them
+   * indistinguishable in the logs — a real token mismatch looked exactly like
+   * a browser tab, uptime monitor or scanner hitting the URL with no query
+   * string at all. Same status and same conditions as before; only the
+   * wording differs, so the log now says which of the two actually happened.
+   *
+   * hub.mode is echoed because it is not a secret. The token never is: only
+   * whether it matched.
+   */
+  if (mode !== 'subscribe') {
+    console.warn(
+      `WhatsApp webhook: GET ignored — hub.mode was ${JSON.stringify(mode ?? null)}, expected "subscribe". ` +
+      'A bare GET (browser, uptime monitor, scanner) looks like this; it is not Meta failing verification.'
+    );
+    return res.sendStatus(403);
+  }
+
+  console.warn(
+    'WhatsApp webhook: verification rejected — hub.verify_token did not match WHATSAPP_VERIFY_TOKEN. ' +
+    'The same string must be set in Render and in the Meta dashboard.'
+  );
   return res.sendStatus(403);
 };
 
