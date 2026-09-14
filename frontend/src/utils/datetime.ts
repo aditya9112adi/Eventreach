@@ -43,6 +43,22 @@ export const formatTime = (value?: string | Date | null, fallback = 'N/A'): stri
   return `${pad(hours12)}:${pad(d.getMinutes())} ${suffix}`;
 };
 
+/**
+ * Chat-bubble time, e.g. "3:27 PM".
+ *
+ * Same 12-hour clock and local timezone as formatTime, but without the
+ * leading zero on the hour, matching how WhatsApp itself stamps a message.
+ * Defaults to now, since that is what a live message preview represents.
+ */
+export const formatChatTime = (value: string | Date = new Date(), fallback = ''): string => {
+  const d = toDate(value);
+  if (!d) return fallback;
+  const hours24 = d.getHours();
+  const suffix = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
+  return `${hours12}:${pad(d.getMinutes())} ${suffix}`;
+};
+
 /** e.g. "05 Sep 2026, 07:30 PM" */
 export const formatDateTime = (value?: string | Date | null, fallback = 'N/A'): string => {
   const d = toDate(value);

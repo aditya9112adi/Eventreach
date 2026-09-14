@@ -7,6 +7,7 @@ import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
 import { useLoader } from '../../components/ui/FullScreenLoader';
+import { formatChatTime } from '../../utils/datetime';
 
 const SendPreview = () => {
   const navigate = useNavigate();
@@ -22,6 +23,12 @@ const SendPreview = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [previewContact, setPreviewContact] = useState<Contact | null>(null);
+  // Stamped on the preview bubble the way WhatsApp stamps a message: the
+  // moment it is shown, in the viewer's own timezone. Held in state rather
+  // than read during render so it stays put while the page re-renders for
+  // unrelated reasons (selecting recipients, for instance), and is refreshed
+  // by the effect below whenever the preview actually changes.
+  const [previewTime, setPreviewTime] = useState(() => formatChatTime());
 
   useEffect(() => {
     const fetchData = async () => {
@@ -47,6 +54,14 @@ const SendPreview = () => {
     };
     fetchData();
   }, [eventId]);
+
+  // Refresh the bubble timestamp whenever a preview is opened, switched to
+  // another contact, or its content changes — so it always reads as the time
+  // the message is being previewed, never a stale one from an earlier look.
+  useEffect(() => {
+    if (!previewContact) return;
+    setPreviewTime(formatChatTime());
+  }, [previewContact, campaign?.messageText, event?.eventName, event?.eventVenue]);
 
   const toggleContact = (id: string) => {
     setSelectedIds(prev => {
@@ -233,7 +248,7 @@ const SendPreview = () => {
                   <div className="absolute inset-0 bg-[#075E54]/5 z-0" style={{ backgroundImage: "url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')", backgroundSize: '200px' }}></div>
                   <div className="bg-surface p-3 rounded-lg border border-border shadow-sm text-sm text-foreground whitespace-pre-wrap relative pb-6 z-10 w-[85%] float-left rounded-tl-none">
                     {getPreviewText(previewContact)}
-                    <span className="absolute bottom-1 right-2 text-[10px] text-foreground/40">12:00 PM</span>
+                    <span className="absolute bottom-1 right-2 text-[10px] text-foreground/40">{previewTime}</span>
                   </div>
 
                   {campaign.mediaAttachments?.length > 0 && (
