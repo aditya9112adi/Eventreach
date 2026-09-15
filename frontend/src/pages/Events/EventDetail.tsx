@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Users, Calendar, MapPin, Edit3, Megaphone, UserCircle, Phone, ShieldAlert } from 'lucide-react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Calendar, MapPin, Edit3, UserCircle, Phone, ShieldAlert } from 'lucide-react';
 import api from '../../services/api';
-import type { Event, Campaign } from '@eventreach/shared';
+import type { Event } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { formatEventType } from '../../utils/eventType';
@@ -10,8 +10,9 @@ import { formatEventType } from '../../utils/eventType';
 const EventDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [event, setEvent] = useState<(Event & { contactCount: number }) | null>(null);
-  const [campaign, setCampaign] = useState<Campaign | null>(null);
+  // contactCount is still returned by GET /events/:id, but this page no longer
+  // renders it — the guest-list card that used it lives on the Contacts page.
+  const [event, setEvent] = useState<Event | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [accessDenied, setAccessDenied] = useState(false);
 
@@ -20,15 +21,6 @@ const EventDetail = () => {
       try {
         const eventRes = await api.get(`/events/${id}`);
         setEvent(eventRes.data);
-        
-        try {
-          const campRes = await api.get(`/campaigns/event/${id}`);
-          if (campRes.data && campRes.data._id) {
-            setCampaign(campRes.data);
-          }
-        } catch (e) {
-          // Campaign might not exist yet, ignore
-        }
       } catch (error: any) {
         console.error('Failed to fetch event', error);
         if (error.response?.status === 403) {
@@ -81,7 +73,10 @@ const EventDetail = () => {
       </div>
 
       <div className="bg-surface rounded-xl border border-border overflow-hidden animate-fade-up stagger-1">
-        <div className="p-6 md:p-8 border-b border-border">
+        {/* The `border-b` here divided these details from the guest-list and
+            campaign cards that used to sit below. With those gone it would
+            draw a line along the bottom edge of the card, so it is dropped. */}
+        <div className="p-6 md:p-8">
           <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-3 mb-2">
@@ -144,45 +139,6 @@ const EventDetail = () => {
               <p className="text-foreground/70 whitespace-pre-wrap">{event.eventDescription}</p>
             </div>
           )}
-        </div>
-        
-        <div className="bg-surface/50 p-6 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-up stagger-2">
-          <div className="bg-surface p-6 rounded-lg border border-border flex flex-col items-center text-center group hover:border-accent/50 transition-colors">
-            <div className="w-12 h-12 bg-accent/10 text-accent rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-              <Users className="w-6 h-6" />
-            </div>
-            <h3 className="text-lg font-sans font-bold text-foreground uppercase tracking-wider">Guest List</h3>
-            <p className="text-foreground/50 mb-4">{event.contactCount} contacts loaded</p>
-            <Link to={`/contacts?eventId=${event._id}`} className="mt-auto">
-              <Button variant="primary">Manage Contacts</Button>
-            </Link>
-          </div>
-          
-          <div className="bg-surface p-6 rounded-lg border border-border flex flex-col items-center text-center group hover:border-accent/50 transition-colors">
-            <div className="w-12 h-12 bg-purple-500/10 text-purple-400 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-              <Megaphone className="w-6 h-6" />
-            </div>
-            <h3 className="text-lg font-sans font-bold text-foreground mb-2 uppercase tracking-wider">Campaigns</h3>
-            <p className="text-sm text-foreground/50 mb-4">
-              {campaign ? `Status: ${campaign.status}` : 'Create a WhatsApp campaign to send to this event.'}
-            </p>
-            
-            {campaign && (campaign.status === 'Sending' || campaign.status === 'Completed') ? (
-              <Link to={`/campaigns/${campaign._id}/report`} className="mt-auto w-full">
-                <Button className="w-full" variant="primary">
-                  <Megaphone className="w-4 h-4 mr-2" />
-                  View Report
-                </Button>
-              </Link>
-            ) : (
-              <Link to={`/campaigns?eventId=${event._id}`} className="mt-auto w-full">
-                <Button className="w-full">
-                  <Megaphone className="w-4 h-4 mr-2" />
-                  {campaign && campaign._id ? 'Edit Campaign' : 'Create Campaign'}
-                </Button>
-              </Link>
-            )}
-          </div>
         </div>
       </div>
     </div>
