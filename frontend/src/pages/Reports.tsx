@@ -486,8 +486,8 @@ const Reports = () => {
                 : 'No records match this filter.'}
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+            <div className="table-scroll">
+              <table className="w-full min-w-[820px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-left">
                     {definition.columns.map((column) => (

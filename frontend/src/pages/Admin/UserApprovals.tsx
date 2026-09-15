@@ -139,8 +139,8 @@ const UserApprovals = () => {
             No pending registration requests.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
+          <div className="table-scroll">
+            <table className="w-full min-w-[900px] text-sm text-left">
               <thead className="text-xs uppercase bg-white/5 border-b border-white/10">
                 <tr>
                   <th className="px-6 py-4">Name</th>

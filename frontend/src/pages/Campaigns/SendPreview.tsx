@@ -178,8 +178,8 @@ const SendPreview = () => {
                 No valid contacts in this event. Import contacts first.
               </div>
             ) : (
-              <div className="max-h-[500px] overflow-y-auto">
-                <table className="w-full text-sm">
+              <div className="max-h-[500px] overflow-y-auto table-scroll">
+                <table className="w-full min-w-[560px] text-sm">
                   <thead>
                     <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border sticky top-0 uppercase tracking-wide text-xs">
                       <th className="py-3 px-4 w-12">

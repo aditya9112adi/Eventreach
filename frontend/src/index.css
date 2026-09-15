@@ -84,6 +84,45 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  /*
+   * Horizontal scrolling for a table wider than its container.
+   *
+   * The scroll has to belong to the table, not the page: <main> scrolls
+   * vertically only, so a wide table that is not wrapped in this would be
+   * clipped at the edge of the content area with no way to reach the columns
+   * past it.
+   *
+   * The scrollbar is deliberately visible — unlike .no-scrollbar used for the
+   * page chrome — because here it is the only affordance telling anyone there
+   * are more columns to the right. Hiding it is what made a wide table look
+   * simply cut off.
+   */
+  .table-scroll {
+    width: 100%;
+    overflow-x: auto;
+    /* Reaching the end of the table must not start scrolling the page behind it. */
+    overscroll-behavior-x: contain;
+    /* Firefox */
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--color-border)) transparent;
+  }
+  .table-scroll::-webkit-scrollbar {
+    height: 8px;
+  }
+  .table-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .table-scroll::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--color-border));
+    border-radius: 9999px;
+  }
+  /* --color-muted, not --color-surface-hover: in dark mode surface-hover (#111)
+     is darker than the border (#222), so hovering would have made the thumb
+     harder to see. muted has the higher contrast in both themes. */
+  .table-scroll:hover::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--color-muted));
+  }
 }
 
 @keyframes slide-in {

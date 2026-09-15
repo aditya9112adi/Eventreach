@@ -288,7 +288,15 @@ const DashboardLayout = () => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto no-scrollbar">
+        {/*
+          Vertical scrolling only. With overflow-auto this absorbed horizontal
+          overflow too, so a wide table scrolled the whole page sideways —
+          and because no-scrollbar hides the bar, there was no visible hint
+          that anything lay beyond the edge, making the table look clipped.
+          Horizontal overflow now belongs to each table's own .table-scroll
+          wrapper, where the scrollbar is visible.
+        */}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar">
           <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
             <Outlet />
           </div>

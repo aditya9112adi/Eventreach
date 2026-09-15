@@ -226,12 +226,16 @@ const EventList = () => {
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto">
-              {/* min-w-full rather than w-full: with nine columns, w-full forced
-                  the browser to compress every column to fit the container,
-                  which wrapped the Event ID and crowded the date/time column.
-                  Sizing to content instead lets the wrapper scroll as intended. */}
-              <table className="min-w-full text-left border-collapse">
+            <div className="table-scroll">
+              {/*
+                min-w-[1100px] rather than min-w-full: "at least the container"
+                still let the browser compress nine columns down to whatever
+                space it had, wrapping the Event ID and crowding the date. A
+                real minimum makes the table genuinely wider than a narrow
+                viewport, which is what gives .table-scroll something to
+                scroll — every column stays reachable and readable.
+              */}
+              <table className="w-full min-w-[1100px] text-left border-collapse">
               <thead>
                 <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border uppercase tracking-wide text-xs">
                   <SortTh field="eventId"         label="Event ID" />

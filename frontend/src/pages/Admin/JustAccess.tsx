@@ -347,8 +347,8 @@ const JustAccess = () => {
             <p className="text-sm mt-1">Try adjusting your search or filter criteria.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
+          <div className="table-scroll">
+            <table className="w-full min-w-[1100px] text-sm text-left">
               <thead className="text-[10px] font-bold uppercase tracking-widest bg-white/5 border-b border-white/10 text-foreground/60">
                 <tr>
                   <th className="px-6 py-4">User</th>

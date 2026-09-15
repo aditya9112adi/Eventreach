@@ -342,8 +342,8 @@ const ContactList = () => {
             </Button>
           </div>
         ) : (
-          <div className="overflow-x-auto flex-1">
-            <table className="w-full text-left border-collapse min-w-[800px]">
+          <div className="table-scroll flex-1">
+            <table className="w-full text-left border-collapse min-w-[900px]">
               <thead>
                 <tr className="bg-black/5 dark:bg-white/5 text-foreground/60 text-xs uppercase tracking-wider font-medium border-b border-border">
                   <th className="py-3 px-4 w-12"></th>

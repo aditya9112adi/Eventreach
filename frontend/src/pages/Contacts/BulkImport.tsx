@@ -228,8 +228,8 @@ const BulkImport = () => {
               </div>
             )}
 
-            <div className="flex-1 overflow-auto border border-border rounded-md">
-              <table className="w-full text-left border-collapse text-sm">
+            <div className="flex-1 overflow-y-auto table-scroll border border-border rounded-md">
+              <table className="w-full min-w-[720px] text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-black/5 dark:bg-white/5 text-foreground/60 text-xs uppercase tracking-wider font-medium sticky top-0 shadow-sm border-b border-border">
                     <th className="py-2 px-4 w-10"></th>

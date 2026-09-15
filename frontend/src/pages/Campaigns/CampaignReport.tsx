@@ -447,8 +447,8 @@ export const CampaignReportContent = ({
             </select>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div className="table-scroll">
+            <table className="w-full min-w-[1100px] text-sm">
               <thead>
                 <tr className="border-b border-border text-left uppercase tracking-wide text-xs text-foreground/60">
                   <th className="pb-3 font-semibold">Contact</th>

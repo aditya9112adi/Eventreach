@@ -190,8 +190,8 @@ export const AuditLogs = () => {
         </div>
 
         {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+        <div className="table-scroll">
+          <table className="w-full min-w-[900px] text-left border-collapse">
             <thead>
               <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border uppercase tracking-wide text-xs">
                 <th className="py-3 px-4">Timestamp</th>
@@ -342,8 +342,8 @@ export const AuditLogs = () => {
               {selectedLog.changes?.changedFields?.length > 0 && (
                 <div>
                   <h3 className="text-xs font-medium text-foreground/50 uppercase tracking-wider mb-2">Changed Fields</h3>
-                  <div className="border border-border rounded-lg overflow-hidden">
-                    <table className="w-full text-sm text-left">
+                  <div className="border border-border rounded-lg table-scroll">
+                    <table className="w-full min-w-[480px] text-sm text-left">
                       <thead>
                         <tr className="bg-surfaceHover text-foreground/60 text-xs uppercase tracking-wider">
                           <th className="px-4 py-2">Field</th>
