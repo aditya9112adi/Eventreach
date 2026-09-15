@@ -10,6 +10,7 @@ import { EventSearch } from '../components/ui/EventSearch';
 import { ReportFilterBar, type ReportFilterOption } from '../components/ui/ReportFilterBar';
 import { formatDate, formatDateTime } from '../utils/datetime';
 import { getAccessStatus } from '../utils/accessStatus';
+import { formatEventType } from '../utils/eventType';
 import {
   buildReportFileName,
   exportToExcel,
@@ -62,7 +63,7 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     columns: [
       { header: 'Event ID', value: (r) => value(r.eventId, '-'), width: 14 },
       { header: 'Event Name', value: (r) => value(r.eventName), width: 28 },
-      { header: 'Event Type', value: (r) => value(r.eventType, '-'), width: 18 },
+      { header: 'Event Type', value: (r) => value(formatEventType(r.eventType), '-'), width: 18 },
       { header: 'Organizer', value: (r) => value(r.organizerName, '-'), width: 22 },
       { header: 'Mobile', value: (r) => value(r.organizerMobile, '-'), width: 16 },
       { header: 'Date', value: (r) => formatDate(r.eventDate, '-'), width: 14 },

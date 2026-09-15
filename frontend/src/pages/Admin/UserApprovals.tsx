@@ -5,6 +5,7 @@ import api from '../../services/api';
 import { Check, X, Users, Calendar, AlertTriangle } from 'lucide-react';
 import { useLoader } from '../../components/ui/FullScreenLoader';
 import { formatDate, formatTime, formatDateTime } from '../../utils/datetime';
+import { formatEventType } from '../../utils/eventType';
 import { useSocket } from '../../contexts/SocketContext';
 
 // Shared formatters keep registration/approval timestamps consistent app-wide.
@@ -251,7 +252,7 @@ const UserApprovals = () => {
                         <option value="">No Event Assigned</option>
                         {events.map((ev) => (
                           <option key={ev._id} value={ev._id}>
-                            {ev.eventId ? `${ev.eventId} | ` : ''}{ev.eventName} ({ev.eventType} - {ev.eventDate})
+                            {ev.eventId ? `${ev.eventId} | ` : ''}{ev.eventName} ({formatEventType(ev.eventType)} - {ev.eventDate})
                           </option>
                         ))}
                       </select>

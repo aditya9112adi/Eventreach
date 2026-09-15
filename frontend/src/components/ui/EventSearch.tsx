@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, ChevronDown, X } from 'lucide-react';
 import type { Event } from '@eventreach/shared';
+import { formatEventType } from '../../utils/eventType';
 
 interface EventSearchProps {
   events: Event[];
@@ -122,7 +123,7 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
                         {evt.eventId ? <span className="text-foreground/50 font-mono font-normal">{evt.eventId} | </span> : null}
                         {evt.eventName}
                       </p>
-                      <p className="text-xs text-foreground/50 mt-0.5 truncate">{evt.eventType}</p>
+                      <p className="text-xs text-foreground/50 mt-0.5 truncate">{formatEventType(evt.eventType)}</p>
                     </div>
                     <span className="text-xs text-foreground/50 shrink-0 mt-0.5">{evt.eventDate}</span>
                   </div>

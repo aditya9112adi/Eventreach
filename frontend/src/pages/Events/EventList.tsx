@@ -10,6 +10,7 @@ import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { PaginationControls } from '../../components/ui/PaginationControls';
 import { getPaginatedData } from '../../utils/pagination';
+import { formatEventType } from '../../utils/eventType';
 
 type SortField = 'eventId' | 'eventName' | 'eventType' | 'eventDate' | 'eventVenue' | 'eventStatus' | 'organizerName' | 'organizerMobile';
 type SortDir = 'asc' | 'desc';
@@ -58,7 +59,13 @@ const EventList = () => {
     };
   }, [socket, fetchEvents]);
 
-  const eventTypes = useMemo(() => Array.from(new Set(events.map(e => e.eventType).filter(Boolean))).sort(), [events]);
+  // Built from the formatted value, not the raw one: the stored casing is
+  // inconsistent, so deduplicating the raw strings listed "farewell" and
+  // "Farewell" as two options that now render identically.
+  const eventTypes = useMemo(
+    () => Array.from(new Set(events.map(e => formatEventType(e.eventType)).filter(Boolean))).sort(),
+    [events]
+  );
   const eventStatuses = useMemo(() => Array.from(new Set(events.map(e => e.eventStatus).filter(Boolean))).sort(), [events]);
 
   const handleSort = (field: SortField) => {
@@ -82,7 +89,9 @@ const EventList = () => {
         e.eventType, e.eventDate, e.eventTime, e.eventVenue, e.eventStatus,
       ].some(v => (v || '').toLowerCase().includes(q));
 
-      const matchesType = !filterType || e.eventType === filterType;
+      // Compared on the formatted value so the single "Farewell" option still
+      // matches records stored as "farewell", "FAREWELL" or "Farewell".
+      const matchesType = !filterType || formatEventType(e.eventType) === filterType;
       const matchesStatus = !filterStatus || e.eventStatus === filterStatus;
 
       return matchesSearch && matchesType && matchesStatus;
@@ -94,7 +103,9 @@ const EventList = () => {
       switch (sortField) {
         case 'eventId':          aVal = a.eventId || ''; bVal = b.eventId || ''; break;
         case 'eventName':        aVal = a.eventName || ''; bVal = b.eventName || ''; break;
-        case 'eventType':        aVal = a.eventType || ''; bVal = b.eventType || ''; break;
+        // Sorted on the formatted value so the order matches what is shown
+        // rather than splitting on the stored casing.
+        case 'eventType':        aVal = formatEventType(a.eventType); bVal = formatEventType(b.eventType); break;
         case 'eventDate':        aVal = `${a.eventDate || ''}${a.eventTime || ''}`; bVal = `${b.eventDate || ''}${b.eventTime || ''}`; break;
         case 'eventVenue':       aVal = a.eventVenue || ''; bVal = b.eventVenue || ''; break;
         case 'eventStatus':      aVal = a.eventStatus || ''; bVal = b.eventStatus || ''; break;
@@ -269,7 +280,7 @@ const EventList = () => {
                     <td className="py-3 px-4 text-sm font-medium text-foreground">{event.organizerName || '—'}</td>
                     <td className="py-3 px-4 text-sm text-foreground/80 whitespace-nowrap">{event.organizerMobile || '—'}</td>
                     <td className="py-3 px-4 font-medium text-foreground">{event.eventName}</td>
-                    <td className="py-3 px-4 text-sm text-foreground/80">{event.eventType}</td>
+                    <td className="py-3 px-4 text-sm text-foreground/80">{formatEventType(event.eventType)}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center text-sm text-foreground/80 whitespace-nowrap">
                         <Calendar className="w-3.5 h-3.5 mr-1.5 text-foreground/40" />

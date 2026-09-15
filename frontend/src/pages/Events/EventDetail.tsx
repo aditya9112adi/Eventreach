@@ -5,6 +5,7 @@ import api from '../../services/api';
 import type { Event, Campaign } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
+import { formatEventType } from '../../utils/eventType';
 
 const EventDetail = () => {
   const { id } = useParams();
@@ -87,7 +88,10 @@ const EventDetail = () => {
                 <h1 className="text-4xl font-sans font-bold text-foreground">{event.eventName}</h1>
                 <Badge variant={event.eventStatus === 'Completed' ? 'success' : 'info'}>{event.eventStatus}</Badge>
               </div>
-              <p className="text-foreground/50 text-lg uppercase tracking-wider">{event.eventType}</p>
+              {/* The `uppercase` class rendered this as "FAREWELL", which is
+                  neither the stored value nor the capitalisation used for the
+                  event type everywhere else. The letter-spacing is kept. */}
+              <p className="text-foreground/50 text-lg tracking-wider">{formatEventType(event.eventType)}</p>
               {event.eventId && (
                 <p className="text-foreground/40 text-sm font-mono mt-1 whitespace-nowrap select-all">{event.eventId}</p>
               )}

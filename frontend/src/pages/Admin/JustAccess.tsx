@@ -7,6 +7,7 @@ import { useAuth } from '../../store/authStore';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getAccessStatus } from '../../utils/accessStatus';
+import { formatEventType } from '../../utils/eventType';
 import { PASSWORD_REQUIREMENTS, validatePassword } from '@eventreach/shared';
 import { meetsRequirement } from '../../utils/passwordRequirements';
 
@@ -629,7 +630,7 @@ const JustAccess = () => {
                 <option value="">None (Unassigned)</option>
                 {allEvents.map((ev) => (
                   <option key={ev._id} value={ev._id}>
-                    {ev.eventId ? `${ev.eventId} | ` : ''}{ev.eventName} ({ev.eventType} - {ev.eventDate})
+                    {ev.eventId ? `${ev.eventId} | ` : ''}{ev.eventName} ({formatEventType(ev.eventType)} - {ev.eventDate})
                   </option>
                 ))}
               </select>
