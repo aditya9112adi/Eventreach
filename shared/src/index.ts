@@ -145,20 +145,26 @@ export interface CountryOption {
   label: string;
 }
 
+/**
+ * India only, deliberately.
+ *
+ * This product messages Indian guests through the WhatsApp Cloud API, so a
+ * number from any other country is not a valid contact — it would be stored,
+ * counted, and then fail at send time. Keeping a single entry here means the
+ * picker, the manual form, bulk import and the API all agree, rather than the
+ * UI offering countries the rest of the system will refuse.
+ */
 export const COUNTRY_OPTIONS: CountryOption[] = [
   { code: 'IN', label: 'IN (+91)' },
-  { code: 'US', label: 'US (+1)' },
-  { code: 'GB', label: 'UK (+44)' },
-  { code: 'AU', label: 'AU (+61)' },
 ];
 
 /**
- * Region assumed when none is supplied.
+ * The only region this system accepts.
  *
- * This is not only the picker's initial value: the backend passes it to
- * libphonenumber-js when parsing a number that was typed without a country
- * prefix, so the frontend default and the server fallback must agree or the
- * same digits would resolve to two different countries.
+ * Every number is now parsed as Indian by normalizeIndianMobile regardless of
+ * what a caller supplies, so this no longer steers parsing — a client sending
+ * countryCode "US" cannot change how its number is read. It remains the value
+ * the form submits and the label the picker shows.
  */
 export const DEFAULT_COUNTRY_CODE = 'IN';
 
@@ -255,4 +261,118 @@ export const validateWhatsAppMedia = (input: {
   }
 
   return null;
+};
+
+/**
+ * Indian mobile numbers: one normaliser, used everywhere.
+ *
+ * The manual form, bulk import, the import preview and the update endpoint
+ * each used to parse numbers their own way, which is how a number could be
+ * accepted in one path and rejected in another. This is the single rule they
+ * all apply, and it is deliberately dependency-free so the browser and the
+ * server run the identical code.
+ *
+ * Accepts what a person actually types — 9876543210, +919876543210,
+ * 919876543210, with spaces, hyphens or brackets — and always produces the
+ * same stored form: +91 followed by ten digits, exactly 13 characters.
+ */
+export const INDIA_DIAL_CODE = '+91';
+export const INDIA_MOBILE_DIGITS = 10;
+/** "+91" + 10 digits. */
+export const INDIA_E164_LENGTH = 13;
+
+export type IndianMobileResult =
+  | { ok: true; e164: string; subscriber: string }
+  | { ok: false; reason: string };
+
+export const normalizeIndianMobile = (raw: unknown): IndianMobileResult => {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return { ok: false, reason: 'Enter a WhatsApp number.' };
+  }
+
+  const trimmed = raw.trim();
+
+  // Letters or symbols are never part of a number. Checked before anything is
+  // stripped so "98765abcde" fails as bad input rather than as a length error.
+  if (/[^\d+\s()\-.]/.test(trimmed)) {
+    return { ok: false, reason: 'A WhatsApp number can contain only digits.' };
+  }
+
+  const compact = trimmed.replace(/[\s()\-.]/g, '');
+
+  /**
+   * A "+" may appear once, at the front. This is what catches the doubled
+   * country code (+91+919876543210 and +9191...), which would otherwise be
+   * silently truncated into a plausible-looking wrong number.
+   */
+  const plusCount = (compact.match(/\+/g) || []).length;
+  if (plusCount > 1 || (plusCount === 1 && !compact.startsWith('+'))) {
+    return { ok: false, reason: 'This number has a repeated or misplaced country code. Enter it once, e.g. 9876543210.' };
+  }
+
+  const hadExplicitPlus = compact.startsWith('+');
+  let digits = compact.replace(/^\+/, '');
+  if (!/^\d+$/.test(digits) || digits.length === 0) {
+    return { ok: false, reason: 'A WhatsApp number can contain only digits.' };
+  }
+
+  /**
+   * Decide whether a leading "91" is the country code or the start of the
+   * number itself.
+   *
+   * With an explicit "+" the intent is unambiguous — "+91…" is always the
+   * country code — so it is stripped whatever the length. Without one, it is
+   * only a prefix when digits remain afterwards, which is what keeps a
+   * genuine ten-digit number beginning 91 (9198765432) from being mangled
+   * into eight. Treating both the same way would either corrupt that number
+   * or silently accept "+9198765432" — eight subscriber digits — as a
+   * different, valid-looking one.
+   */
+  if (digits.startsWith('91') && (hadExplicitPlus || digits.length > INDIA_MOBILE_DIGITS)) {
+    digits = digits.slice(2);
+  } else if (digits.startsWith('0') && digits.length === INDIA_MOBILE_DIGITS + 1) {
+    // Domestic trunk prefix, e.g. 09876543210.
+    digits = digits.slice(1);
+  }
+
+  if (digits.length !== INDIA_MOBILE_DIGITS) {
+    return {
+      ok: false,
+      reason:
+        digits.length < INDIA_MOBILE_DIGITS
+          ? `An Indian mobile number has ${INDIA_MOBILE_DIGITS} digits — this one has ${digits.length}.`
+          : `An Indian mobile number has ${INDIA_MOBILE_DIGITS} digits — this one has ${digits.length}. Check for an extra digit or a non-Indian country code.`,
+    };
+  }
+
+  // Indian mobile ranges begin 6, 7, 8 or 9; landlines and short codes do not.
+  if (!/^[6-9]/.test(digits)) {
+    return { ok: false, reason: 'An Indian mobile number starts with 6, 7, 8 or 9.' };
+  }
+
+  return { ok: true, e164: `${INDIA_DIAL_CODE}${digits}`, subscriber: digits };
+};
+
+/** True when the value already is a correctly normalised Indian number. */
+export const isNormalizedIndianMobile = (value: unknown): boolean => {
+  const result = normalizeIndianMobile(value);
+  return result.ok && result.e164 === value;
+};
+
+/**
+ * Digits the person actually has to type, ignoring any country code they
+ * included. The contact form's counter uses this: counting the raw string
+ * against a limit of ten reported "13/10 — limit reached" for the perfectly
+ * valid +919876543210.
+ */
+export const indianSubscriberLength = (raw: unknown): number => {
+  if (typeof raw !== 'string') return 0;
+  const compact = raw.replace(/[^\d+]/g, '');
+  const hadExplicitPlus = compact.startsWith('+');
+  let digits = compact.replace(/^\+/, '');
+  // Same prefix rule as normalizeIndianMobile, so the counter and the
+  // validation always agree about which digits belong to the subscriber.
+  if (digits.startsWith('91') && (hadExplicitPlus || digits.length > INDIA_MOBILE_DIGITS)) digits = digits.slice(2);
+  else if (digits.startsWith('0') && digits.length === INDIA_MOBILE_DIGITS + 1) digits = digits.slice(1);
+  return Math.min(digits.length, INDIA_MOBILE_DIGITS);
 };

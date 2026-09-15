@@ -114,7 +114,9 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
       { header: 'Full Name', value: (r) => value(r.fullName, '-'), width: 26 },
       {
         header: 'Phone',
-        value: (r) => `${value(r.countryCode)}${value(r.phoneNumber, '-')}`,
+        // phoneNumber is already stored in E.164 (+919876543210), so prefixing
+        // the country code produced "IN+919876543210" in every export.
+        value: (r) => value(r.phoneNumber, '-'),
         width: 18,
       },
       { header: 'Email', value: (r) => value(r.email, '-'), width: 30 },

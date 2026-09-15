@@ -5,7 +5,14 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { Search, Plus, Phone, CheckCircle2, XCircle, AlertTriangle, Users, Trash2, Edit3, X, ChevronRight, ChevronLeft } from 'lucide-react';
 import api from '../../services/api';
 import type { Contact, Event } from '@eventreach/shared';
-import { COUNTRY_OPTIONS, DEFAULT_COUNTRY_CODE } from '@eventreach/shared';
+import {
+  COUNTRY_OPTIONS,
+  DEFAULT_COUNTRY_CODE,
+  INDIA_E164_LENGTH,
+  INDIA_MOBILE_DIGITS,
+  indianSubscriberLength,
+  normalizeIndianMobile,
+} from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
@@ -18,7 +25,12 @@ import { EventSearch } from '../../components/ui/EventSearch';
 
 const contactSchema = z.object({
   fullName: z.string().min(1, 'Name is required').max(50, 'Full name must be at most 50 characters'),
-  phoneNumber: z.string().regex(/^\d{10}$/, 'WhatsApp number must be exactly 10 digits'),
+  // Accepts 9876543210, +919876543210 or 919876543210 and rejects a doubled
+  // country code or a non-Indian number — the same rule the server applies.
+  phoneNumber: z.string().superRefine((value, ctx) => {
+    const result = normalizeIndianMobile(value);
+    if (!result.ok) ctx.addIssue({ code: z.ZodIssueCode.custom, message: result.reason });
+  }),
   countryCode: z.string().min(1, 'Code required'),
   email: z.string()
     .optional()
@@ -30,8 +42,10 @@ const contactSchema = z.object({
 });
 type ContactForm = z.infer<typeof contactSchema>;
 
-const CharCount = ({ value, max }: { value: string | undefined; max: number }) => {
-  const len = value?.length ?? 0;
+/** `value` may be the raw text, or a pre-computed count where the visible
+ *  characters and the countable ones differ (a phone number's country code). */
+const CharCount = ({ value, max }: { value: string | number | undefined; max: number }) => {
+  const len = typeof value === 'number' ? value : value?.length ?? 0;
   const atLimit = len >= max;
   return (
     <p className={`mt-1 text-xs text-right ${atLimit ? 'text-destructive font-semibold' : 'text-foreground/40'}`}>
@@ -446,26 +460,32 @@ const ContactList = () => {
                 <div className="flex gap-2">
                   <div className="w-1/3">
                     <label className="block text-sm font-sans text-foreground/80 mb-2">Country</label>
-                    <select 
-                      className="w-full rounded-md border border-border bg-surface/50 text-foreground px-3 py-2.5 text-sm focus:ring-2 focus:ring-white/20 outline-none transition-all duration-200"
-                      {...register('countryCode')}
+                    {/* India-only system: fixed rather than a one-item dropdown
+                        that looks like a choice. The value still travels with
+                        the form via the registered hidden input below. */}
+                    <div
+                      className="w-full rounded-md border border-border bg-surface/30 text-foreground/70 px-3 py-2.5 text-sm cursor-not-allowed select-none"
+                      aria-label="Country"
+                      title="This application sends only to Indian numbers"
                     >
-                      {COUNTRY_OPTIONS.map((country) => (
-                        <option key={country.code} value={country.code}>
-                          {country.label}
-                        </option>
-                      ))}
-                    </select>
+                      {COUNTRY_OPTIONS[0].label}
+                    </div>
+                    <input type="hidden" {...register('countryCode')} value={DEFAULT_COUNTRY_CODE} />
                   </div>
                   <div className="w-2/3">
                     <Input
                       label="WhatsApp Number"
-                      placeholder="e.g. 555 123 4567"
-                      maxLength={10}
+                      placeholder="9876543210"
+                      /* 13 so "+919876543210" can actually be typed. It used to
+                         be 10, which silently truncated a pasted +91 number. */
+                      maxLength={INDIA_E164_LENGTH}
                       {...register('phoneNumber')}
                       error={errors.phoneNumber?.message}
                     />
-                    <CharCount value={wPhone} max={10} />
+                    {/* Counts the subscriber digits, not the raw string: with
+                        the country code included the old counter read
+                        "13/10 — limit reached" for a perfectly valid number. */}
+                    <CharCount value={indianSubscriberLength(wPhone)} max={INDIA_MOBILE_DIGITS} />
                   </div>
                 </div>
 

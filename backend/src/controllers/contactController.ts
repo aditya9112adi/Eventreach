@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
-import { parsePhoneNumberWithError } from 'libphonenumber-js';
+import { normalizeIndianPhone } from '../utils/indianPhone';
 import { Contact } from '../models/Contact';
 import { extractFromExcel, extractFromPDF, RawContact } from '../utils/fileExtractors';
 import type { ExtractedContact } from '@eventreach/shared';
@@ -93,11 +93,13 @@ import crypto from 'crypto';
  * malformed e-mail could be written straight to the database.
  *
  * `fullName` mirrors the 50-character limit the contact form already enforces.
- * `phoneNumber` is deliberately only checked for presence: the controller runs
- * it through libphonenumber and, when it cannot be parsed, stores it as typed
- * with status 'Invalid' so the import flow can surface the bad row instead of
- * discarding it. `email` uses a generic address check rather than the form's
- * @gmail.com rule, because imported contacts legitimately carry other domains.
+ * `phoneNumber` is deliberately only checked for presence here; the real rule
+ * is normalizeIndianPhone, applied per endpoint because the two paths differ:
+ * the manual form rejects an unusable number outright, while bulk import
+ * keeps the row flagged 'Invalid' so the uploader can see which lines failed
+ * instead of having them silently dropped. `email` uses a generic address
+ * check rather than the form's @gmail.com rule, because imported contacts
+ * legitimately carry other domains.
  */
 const contactFieldsSchema = z.object({
   fullName: z.string().min(1, 'Full name is required').max(50, 'Full name max 50 characters'),
@@ -119,7 +121,10 @@ export const addContact = async (req: RequestWithId, res: Response) => {
       return res.status(400).json({ error: parsed.error.errors[0].message });
     }
 
-    const { fullName, phoneNumber, countryCode, email, eventId } = parsed.data;
+    // countryCode is accepted by the schema for backward compatibility but is
+    // deliberately not read: this system is India-only, so the stored value is
+    // always IN regardless of what a caller sends.
+    const { fullName, phoneNumber, email, eventId } = parsed.data;
 
     const currentUser = (req as any).user;
     const authorized = await isEventAuthorized(currentUser, eventId);
@@ -127,22 +132,21 @@ export const addContact = async (req: RequestWithId, res: Response) => {
       return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
     }
 
+    /**
+     * A number typed into the form has to be valid before it is stored: an
+     * unusable contact in a campaign list is worse than a rejected save,
+     * because it is only discovered when the send fails. (Bulk import still
+     * keeps unusable rows, flagged Invalid, so an upload is not silently
+     * thinned out — those are never messaged.)
+     */
+    const phone = normalizeIndianPhone(phoneNumber);
+    if (!phone.ok) {
+      return res.status(400).json({ error: phone.reason });
+    }
+
     let status = 'Valid';
     let validationReason = undefined;
-    let normalizedPhone = phoneNumber;
-
-    try {
-      const phoneNumberObj = parsePhoneNumberWithError(phoneNumber, countryCode as any);
-      if (!phoneNumberObj.isValid()) {
-        status = 'Invalid';
-        validationReason = 'Invalid phone number format for country';
-      } else {
-        normalizedPhone = phoneNumberObj.format('E.164');
-      }
-    } catch (error: any) {
-      status = 'Invalid';
-      validationReason = error.message || 'Error parsing phone number';
-    }
+    const normalizedPhone = phone.e164;
 
     const existing = await Contact.findOne({ eventId, phoneNumber: normalizedPhone });
     if (existing) {
@@ -153,7 +157,9 @@ export const addContact = async (req: RequestWithId, res: Response) => {
     const contact = await Contact.create({
       fullName,
       phoneNumber: normalizedPhone,
-      countryCode,
+      // Always IN. The number itself is already enforced as Indian, so
+      // storing a caller-supplied country would only let the two disagree.
+      countryCode: DEFAULT_COUNTRY_CODE,
       email: email || undefined,
       eventId,
       status,
@@ -204,7 +210,6 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
     }
 
     const file = req.file;
-    const countryCode = req.body.countryCode || DEFAULT_COUNTRY_CODE;
 
     if (!file) {
       return res.status(400).json({ error: 'No file provided' });
@@ -229,17 +234,15 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
       let validationReason = undefined;
       let normalizedPhone = raw.phoneNumber;
 
-      try {
-        const phoneNumberObj = parsePhoneNumberWithError(raw.phoneNumber, countryCode as any);
-        if (!phoneNumberObj.isValid()) {
-          status = 'Invalid';
-          validationReason = 'Invalid format';
-        } else {
-          normalizedPhone = phoneNumberObj.format('E.164');
-        }
-      } catch (error: any) {
+      // Imported rows are kept even when unusable, flagged Invalid, so the
+      // uploader can see exactly which lines were rejected and why. Only
+      // Valid contacts are ever messaged.
+      const imported = normalizeIndianPhone(raw.phoneNumber);
+      if (imported.ok) {
+        normalizedPhone = imported.e164;
+      } else {
         status = 'Invalid';
-        validationReason = 'Error parsing';
+        validationReason = imported.reason;
       }
 
       if (status === 'Valid' && existingNumbers.has(normalizedPhone)) {
@@ -261,7 +264,7 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
         id: `temp_${Date.now()}_${i}`,
         fullName: raw.fullName,
         phoneNumber: normalizedPhone,
-        countryCode,
+        countryCode: DEFAULT_COUNTRY_CODE,
         email: raw.email,
         status,
         validationReason
@@ -303,22 +306,13 @@ export const bulkImportContacts = async (req: RequestWithId, res: Response) => {
     for (const candidate of contacts) {
       const fullName = typeof candidate?.fullName === 'string' ? candidate.fullName.trim() : '';
       const rawPhone = typeof candidate?.phoneNumber === 'string' ? candidate.phoneNumber.trim() : '';
-      const countryCode =
-        typeof candidate?.countryCode === 'string' && candidate.countryCode.trim()
-          ? candidate.countryCode.trim()
-          : DEFAULT_COUNTRY_CODE;
       const email = typeof candidate?.email === 'string' ? candidate.email.trim() : '';
 
       if (!fullName || fullName.length > 200 || !rawPhone) continue;
 
-      let normalizedPhone: string;
-      try {
-        const phoneNumberObj = parsePhoneNumberWithError(rawPhone, countryCode as any);
-        if (!phoneNumberObj.isValid()) continue;
-        normalizedPhone = phoneNumberObj.format('E.164');
-      } catch {
-        continue;
-      }
+      const confirmed = normalizeIndianPhone(rawPhone);
+      if (!confirmed.ok) continue;
+      const normalizedPhone = confirmed.e164;
 
       // Reject duplicates already stored for this event and repeats within the batch.
       if (seenNumbers.has(normalizedPhone)) continue;
@@ -327,7 +321,7 @@ export const bulkImportContacts = async (req: RequestWithId, res: Response) => {
       documentsToInsert.push({
         fullName,
         phoneNumber: normalizedPhone,
-        countryCode,
+        countryCode: DEFAULT_COUNTRY_CODE,
         email: email || undefined,
         eventId,
         status: 'Valid',
@@ -434,7 +428,8 @@ export const updateContact = async (req: RequestWithId, res: Response) => {
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.errors[0].message });
     }
-    const { fullName, phoneNumber, countryCode, email } = parsed.data;
+    // countryCode intentionally unread — see addContact.
+    const { fullName, phoneNumber, email } = parsed.data;
 
     const beforeContact = await Contact.findById(id);
     if (!beforeContact) {
@@ -447,29 +442,24 @@ export const updateContact = async (req: RequestWithId, res: Response) => {
       return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
     }
 
-    let status = 'Valid';
-    let validationReason = undefined;
-    let normalizedPhone = phoneNumber;
-
-    try {
-      const phoneNumberObj = parsePhoneNumberWithError(phoneNumber, countryCode as any);
-      if (!phoneNumberObj.isValid()) {
-        status = 'Invalid';
-        validationReason = 'Invalid phone number format';
-      } else {
-        normalizedPhone = phoneNumberObj.format('E.164');
-      }
-    } catch (error: any) {
-      status = 'Invalid';
-      validationReason = error.message || 'Error parsing phone number';
+    // Same rule as creating one: an edit must not turn a working contact into
+    // an unusable one.
+    const phone = normalizeIndianPhone(phoneNumber);
+    if (!phone.ok) {
+      return res.status(400).json({ error: phone.reason });
     }
+
+    const status = 'Valid';
+    const validationReason = undefined;
+    const normalizedPhone = phone.e164;
 
     const afterContact = await Contact.findByIdAndUpdate(
       id,
       {
         fullName,
         phoneNumber: normalizedPhone,
-        countryCode,
+        // Always IN, for the same reason as on create.
+        countryCode: DEFAULT_COUNTRY_CODE,
         email: email || undefined,
         status,
         validationReason
