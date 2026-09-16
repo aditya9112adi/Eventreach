@@ -11,6 +11,7 @@ import { ReportFilterBar, type ReportFilterOption } from '../components/ui/Repor
 import { formatDate, formatDateTime } from '../utils/datetime';
 import { getAccessStatus } from '../utils/accessStatus';
 import { formatEventType } from '../utils/eventType';
+import { getSerialNumber } from '../utils/pagination';
 import {
   buildReportFileName,
   exportToExcel,
@@ -488,9 +489,12 @@ const Reports = () => {
             </p>
           ) : (
             <div className="table-scroll">
-              <table className="w-full min-w-[820px] text-sm">
+              <table className="w-full min-w-[870px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-left">
+                    {/* On screen only. The column definitions also drive the Excel
+                        and PDF exports and are untouched, so exports are unchanged. */}
+                    <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs whitespace-nowrap pr-4 w-12">#</th>
                     {definition.columns.map((column) => (
                       <th
                         key={column.header}
@@ -505,8 +509,9 @@ const Reports = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {filteredRows.map((row: any) => (
+                  {filteredRows.map((row: any, index: number) => (
                     <tr key={row._id} className="hover:bg-surfaceHover transition-colors group">
+                      <td className="py-4 pr-4 text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(1, filteredRows.length, index)}</td>
                       {definition.columns.map((column) => {
                         const cell = String(column.value(row));
                         return (

@@ -7,6 +7,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Input } from '../../components/ui/Input';
 import { PaginationControls } from '../../components/ui/PaginationControls';
 import { resolveAuditEventId } from '../../utils/auditEventId';
+import { getSerialNumber } from '../../utils/pagination';
 
 interface AuditLog {
   _id: string;
@@ -192,9 +193,10 @@ export const AuditLogs = () => {
 
         {/* Table */}
         <div className="table-scroll">
-          <table className="w-full min-w-[1050px] text-left border-collapse">
+          <table className="w-full min-w-[1100px] text-left border-collapse">
             <thead>
               <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border uppercase tracking-wide text-xs">
+                <th className="py-3 px-4 w-12 whitespace-nowrap">#</th>
                 {/* Event ID is a separate column rather than a rename of
                     Collection: Collection is generic and shows contacts,
                     users and campaigns too, so renaming it would mislabel
@@ -211,7 +213,7 @@ export const AuditLogs = () => {
             {loading ? (
               <tbody>
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-foreground/50">
+                  <td colSpan={8} className="py-12 text-center text-foreground/50">
                     <div className="flex items-center justify-center gap-2">
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-accent" />
                       Loading audit logs...
@@ -222,7 +224,7 @@ export const AuditLogs = () => {
             ) : logs.length === 0 ? (
               <tbody>
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-foreground/50">
+                  <td colSpan={8} className="py-12 text-center text-foreground/50">
                     No audit logs found.
                   </td>
                 </tr>
@@ -234,7 +236,7 @@ export const AuditLogs = () => {
                 animate="visible"
                 variants={{ visible: { transition: { staggerChildren: 0.05 } } }}
               >
-                {logs.map((log) => (
+                {logs.map((log, index) => (
                   <motion.tr
                     key={log._id}
                     variants={{
@@ -243,6 +245,8 @@ export const AuditLogs = () => {
                     }}
                     className="hover:bg-surfaceHover transition-colors"
                   >
+                    {/* Server-paginated: this page arrives already filtered and sorted. */}
+                    <td className="py-3 px-4 text-sm text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(currentPage, rowsPerPage, index)}</td>
                     <td className="py-3 px-4 text-sm font-mono text-foreground whitespace-nowrap">
                       {resolveAuditEventId(log) ?? <span className="text-foreground/30 font-sans">—</span>}
                     </td>

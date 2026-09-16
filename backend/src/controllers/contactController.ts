@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import { z } from 'zod';
 import { normalizeIndianPhone } from '../utils/indianPhone';
 import { Contact } from '../models/Contact';
@@ -386,9 +387,48 @@ export const bulkImportContacts = async (req: RequestWithId, res: Response) => {
   }
 };
 
+/**
+ * Deletes one guest and records it in the audit log.
+ *
+ * Shared by the single and bulk endpoints so a bulk deletion leaves exactly the
+ * same per-guest CONTACT_DELETED trail as deleting them one at a time.
+ *
+ * Message logs are deliberately left in place. They are the delivery history
+ * behind campaign reports, and MessageLog keeps its own contactName and
+ * phoneNumber precisely so a report still names the recipient after the guest
+ * is gone (the report falls back to those when contactId no longer resolves).
+ * Removing them would silently rewrite past campaign results.
+ *
+ * The caller is responsible for authorizing the guest's event first.
+ */
+const performContactDeletion = async (
+  contact: any,
+  req: RequestWithId,
+  bulkContext?: { bulkOperationId: string }
+): Promise<void> => {
+  await Contact.findByIdAndDelete(contact._id);
+
+  await AuditService.log({
+    action: 'CONTACT_DELETED',
+    collectionName: 'contacts',
+    documentId: contact._id.toString(),
+    actor: AuditService.getActorFromReq(req),
+    request: AuditService.getRequestInfo(req),
+    before: contact,
+    description: `Deleted contact ${contact.fullName}`,
+    ...(bulkContext ? { bulkOperationId: bulkContext.bulkOperationId } : {}),
+  });
+};
+
 export const deleteContact = async (req: RequestWithId, res: Response) => {
   try {
     const { id } = req.params;
+    // A malformed id used to reach Contact.findById and throw a CastError,
+    // which surfaced as a 500. The request is simply bad, so it is rejected as one.
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid contact id' });
+    }
+
     const contact = await Contact.findById(id);
     if (!contact) {
       return res.status(404).json({ error: 'Contact not found' });
@@ -399,23 +439,100 @@ export const deleteContact = async (req: RequestWithId, res: Response) => {
     if (!authorized) {
       return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
     }
-    
-    await Contact.findByIdAndDelete(id);
 
-    await AuditService.log({
-      action: 'CONTACT_DELETED',
-      collectionName: 'contacts',
-      documentId: id,
-      actor: AuditService.getActorFromReq(req),
-      request: AuditService.getRequestInfo(req),
-      before: contact,
-      description: `Deleted contact ${contact.fullName}`
-    });
+    await performContactDeletion(contact, req);
 
     res.json({ message: 'Contact deleted' });
   } catch (error) {
     console.error('Delete contact error:', error);
     res.status(500).json({ error: 'Failed to delete contact' });
+  }
+};
+
+/** Same bounds as event bulk delete: one full page at the largest page size. */
+const bulkDeleteContactsBody = z.object({
+  ids: z
+    .array(z.string())
+    .min(1, 'Select at least one guest to delete')
+    .max(100, 'Cannot delete more than 100 guests in one request'),
+});
+
+/**
+ * Deletes several guests in one request.
+ *
+ * Authorization follows deleteContact exactly: each guest is checked against
+ * its own event's scope, so batching can never reach a guest the caller could
+ * not delete individually. Failures are reported per id, and the response is
+ * 207 only when the outcome is genuinely mixed.
+ */
+export const bulkDeleteContacts = async (req: RequestWithId, res: Response) => {
+  try {
+    const parsed = bulkDeleteContactsBody.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0].message });
+    }
+
+    // Duplicates would otherwise read as a "not found" failure the second time.
+    const ids = Array.from(new Set(parsed.data.ids));
+    const currentUser = (req as any).user;
+    const bulkOperationId = `BULK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+
+    const deletedIds: string[] = [];
+    const failed: { id: string; reason: string }[] = [];
+
+    for (const id of ids) {
+      try {
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+          failed.push({ id, reason: 'Invalid contact id' });
+          continue;
+        }
+        const contact = await Contact.findById(id);
+        if (!contact) {
+          failed.push({ id, reason: 'Contact not found' });
+          continue;
+        }
+        if (!(await isEventAuthorized(currentUser, contact.eventId))) {
+          failed.push({ id, reason: 'Access denied' });
+          continue;
+        }
+
+        await performContactDeletion(contact, req, { bulkOperationId });
+        deletedIds.push(id);
+      } catch (err) {
+        // One bad guest must not abort the rest of the batch.
+        console.error(`Bulk delete failed for contact ${id}:`, err);
+        failed.push({ id, reason: 'Failed to delete contact' });
+      }
+    }
+
+    // Summary alongside the per-guest records, as bulk contact import does.
+    await AuditService.log({
+      action: 'BULK_CONTACT_DELETED',
+      collectionName: 'contacts',
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      bulkOperationId,
+      bulk: {
+        isBulk: true,
+        operationType: 'DELETE',
+        totalRecords: ids.length,
+        successfulRecords: deletedIds.length,
+        failedRecords: failed.length,
+      },
+      description: `Bulk deleted ${deletedIds.length} of ${ids.length} contacts`,
+      success: failed.length === 0,
+    });
+
+    // 207 only for a genuinely mixed outcome. When nothing was deleted, a batch
+    // refused purely on access is a 403 like the single endpoint; any other
+    // all-failed batch (bad or missing ids) is a 400.
+    const allDenied = failed.length > 0 && failed.every((f) => f.reason === 'Access denied');
+    const status =
+      failed.length === 0 ? 200 : deletedIds.length > 0 ? 207 : allDenied ? 403 : 400;
+    res.status(status).json({ deletedCount: deletedIds.length, deletedIds, failed });
+  } catch (error) {
+    console.error('Bulk delete contacts error:', error);
+    res.status(500).json({ error: 'Failed to delete contacts' });
   }
 };
 

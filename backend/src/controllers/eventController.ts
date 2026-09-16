@@ -526,8 +526,13 @@ export const bulkDeleteEvents = async (req: RequestWithId, res: Response) => {
     });
 
     // 207 only when the outcome is genuinely mixed; an all-failed batch is a
-    // plain failure and should not be dressed up as a partial success.
-    const status = failed.length === 0 ? 200 : deletedIds.length === 0 ? 400 : 207;
+    // plain failure and should not be dressed up as a partial success. When
+    // nothing was deleted, a batch refused purely on access is a 403 like the
+    // single endpoint (matching guest bulk delete); any other all-failed batch
+    // (bad or missing ids) stays a 400.
+    const allDenied = failed.length > 0 && failed.every((f) => f.reason === 'Access denied');
+    const status =
+      failed.length === 0 ? 200 : deletedIds.length > 0 ? 207 : allDenied ? 403 : 400;
     res.status(status).json({
       deletedCount: deletedIds.length,
       deletedIds,

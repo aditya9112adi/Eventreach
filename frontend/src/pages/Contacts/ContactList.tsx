@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { motion } from 'framer-motion';
 import { useSearchParams, Link } from 'react-router-dom';
-import { Search, Plus, Phone, CheckCircle2, XCircle, AlertTriangle, Users, Trash2, Edit3, X, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Search, Plus, Phone, CheckCircle2, XCircle, AlertTriangle, Users, Edit3, X, ChevronRight, ChevronLeft } from 'lucide-react';
 import api from '../../services/api';
 import type { Contact, Event } from '@eventreach/shared';
 import {
@@ -17,7 +17,17 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
+import { useAuth } from '../../store/authStore';
 import { PaginationControls } from '../../components/ui/PaginationControls';
+import {
+  SelectAllCheckbox,
+  RowSelectCheckbox,
+  DeleteIconButton,
+  BulkDeleteBar,
+  ConfirmDeleteDialog,
+} from '../../components/ui/DeleteControls';
+import { getSerialNumber } from '../../utils/pagination';
+import { getPageSelectionState, toggleSelectAllOnPage, toggleSelection } from '../../utils/selection';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -59,6 +69,13 @@ const ContactList = () => {
   const initialEventId = searchParams.get('eventId');
   const openAddModal = searchParams.get('add') === 'true';
   const { showToast } = useToast();
+  const { user } = useAuth();
+  /**
+   * Deleting guests is administrative, matching the Events list. The server
+   * refuses a User with 403 on both delete endpoints regardless; this only
+   * avoids offering controls that could never succeed.
+   */
+  const canDelete = user?.role !== 'User';
   
   const [events, setEvents] = useState<Event[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -80,6 +97,14 @@ const ContactList = () => {
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [addError, setAddError] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Selection is scoped to the page on screen, as on the Events list, and
+  // cleared whenever that page changes (see the effect below).
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmBulk, setConfirmBulk] = useState(false);
+  // Disables the confirm buttons while a request is in flight, so a double
+  // click cannot send a second deletion.
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const activeEvent = events.find(e => e._id === activeEventId) || null;
 
@@ -189,15 +214,55 @@ const ContactList = () => {
   };
 
   const confirmDelete = async () => {
-    if (!confirmDeleteId) return;
+    if (!confirmDeleteId || isDeleting) return;
+    const id = confirmDeleteId;
+    setIsDeleting(true);
     try {
-      await api.delete(`/contacts/${confirmDeleteId}`);
+      await api.delete(`/contacts/${id}`);
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      // The list is re-fetched from the server rather than edited locally, so
+      // the row only disappears once the server has confirmed it is gone.
       setRefreshToken((t) => t + 1);
-      showToast('success', 'Contact deleted');
-    } catch (err) {
-      showToast('error', 'Failed to delete contact');
-    } finally {
+      showToast('success', 'Guest deleted successfully.');
       setConfirmDeleteId(null);
+    } catch (err: any) {
+      // The dialog stays open on failure so the user can retry or cancel.
+      showToast('error', err?.response?.data?.error || 'Failed to delete guest.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const confirmBulkDelete = async () => {
+    if (isDeleting) return;
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+
+    setIsDeleting(true);
+    try {
+      const res = await api.post('/contacts/bulk-delete', { ids });
+      const deletedCount: number = res.data?.deletedCount ?? 0;
+      const failedCount: number = res.data?.failed?.length ?? 0;
+
+      setSelectedIds(new Set());
+      setConfirmBulk(false);
+      setRefreshToken((t) => t + 1);
+
+      // Reported from what the server actually deleted, never from what was
+      // selected, so a partial failure is not announced as a clean success.
+      if (failedCount > 0) {
+        showToast('warning', `${deletedCount} guest${deletedCount === 1 ? '' : 's'} deleted, ${failedCount} could not be deleted.`);
+      } else {
+        showToast('success', `${deletedCount} guest${deletedCount === 1 ? '' : 's'} deleted successfully.`);
+      }
+    } catch (err: any) {
+      showToast('error', err?.response?.data?.error || 'Failed to delete the selected guests.');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -227,6 +292,25 @@ const ContactList = () => {
       setCurrentPage(totalPages);
     }
   }, [totalContacts, currentPage, rowsPerPage]);
+
+  // ── Selection ──────────────────────────────────────────────────────────────
+
+  // Any change to which guests are on screen clears the selection, so it can
+  // never include a guest the user is no longer looking at.
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [activeEventId, currentPage, rowsPerPage, debouncedSearch]);
+
+  const pageIds = useMemo(() => paginatedContacts.map((c) => c._id), [paginatedContacts]);
+  const { allSelected: allPageSelected, someSelected: somePageSelected } = useMemo(
+    () => getPageSelectionState(selectedIds, pageIds),
+    [selectedIds, pageIds]
+  );
+  const toggleSelectAll = () => setSelectedIds((prev) => toggleSelectAllOnPage(prev, pageIds));
+  const toggleOne = (id: string) => setSelectedIds((prev) => toggleSelection(prev, id));
+
+  // Looked up so the confirmation names the guest rather than saying "this contact".
+  const contactToDelete = confirmDeleteId ? contacts.find((c) => c._id === confirmDeleteId) ?? null : null;
 
   const getStatusIcon = (status: string, reason?: string) => {
     if (status === 'Valid') return <span title="Valid Number"><CheckCircle2 className="w-5 h-5 text-emerald-500" /></span>;
@@ -319,6 +403,12 @@ const ContactList = () => {
           </div>
         </div>
 
+        {canDelete && selectedIds.size > 0 && (
+          <div className="px-4 pt-4">
+            <BulkDeleteBar count={selectedIds.size} noun="guest" onDelete={() => setConfirmBulk(true)} />
+          </div>
+        )}
+
         {isLoading ? (
           <div className="flex-1 flex items-center justify-center p-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
@@ -343,9 +433,20 @@ const ContactList = () => {
           </div>
         ) : (
           <div className="table-scroll flex-1">
-            <table className="w-full text-left border-collapse min-w-[900px]">
+            <table className="w-full text-left border-collapse min-w-[1000px]">
               <thead>
                 <tr className="bg-black/5 dark:bg-white/5 text-foreground/60 text-xs uppercase tracking-wider font-medium border-b border-border">
+                  {canDelete && (
+                    <th className="py-3 px-4 w-10">
+                      <SelectAllCheckbox
+                        checked={allPageSelected}
+                        indeterminate={somePageSelected}
+                        onChange={toggleSelectAll}
+                        label="Select all guests"
+                      />
+                    </th>
+                  )}
+                  <th className="py-3 px-4 w-12 whitespace-nowrap">#</th>
                   <th className="py-3 px-4 w-12"></th>
                   <th className="py-3 px-4">Name</th>
                   <th className="py-3 px-4">WhatsApp Number</th>
@@ -360,7 +461,7 @@ const ContactList = () => {
                 animate="visible"
                 variants={{ visible: { transition: { staggerChildren: 0.06 } } }}
               >
-                {paginatedContacts.map((contact) => (
+                {paginatedContacts.map((contact, index) => (
                   <motion.tr
                     key={contact._id}
                     variants={{
@@ -369,6 +470,21 @@ const ContactList = () => {
                     }}
                     className="hover:bg-surfaceHover transition-colors group"
                   >
+                    {canDelete && (
+                      <td className="py-3 px-4">
+                        <RowSelectCheckbox
+                          checked={selectedIds.has(contact._id)}
+                          onChange={() => toggleOne(contact._id)}
+                          label={`Select guest ${contact.fullName}`}
+                        />
+                      </td>
+                    )}
+                    {/* The server returns this page already searched and
+                        ordered, so its index plus the page offset is the
+                        guest's position in the whole result. */}
+                    <td className="py-3 px-4 text-sm text-foreground/50 tabular-nums whitespace-nowrap">
+                      {getSerialNumber(currentPage, rowsPerPage, index)}
+                    </td>
                     <td className="py-3 px-4 text-center">
                       {getStatusIcon(contact.status, contact.validationReason)}
                     </td>
@@ -399,13 +515,13 @@ const ContactList = () => {
                         >
                           <Edit3 className="w-4 h-4" />
                         </button>
-                        <button
-                          onClick={() => handleDelete(contact._id)}
-                          className="p-1.5 text-foreground/40 hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {canDelete && (
+                          <DeleteIconButton
+                            onClick={() => handleDelete(contact._id)}
+                            title="Delete Guest"
+                            label={`Delete guest ${contact.fullName}`}
+                          />
+                        )}
                       </div>
                     </td>
                   </motion.tr>
@@ -515,42 +631,39 @@ const ContactList = () => {
         document.body
       )}
 
-      {/* Delete Confirmation Modal */}
-      {confirmDeleteId && ReactDOM.createPortal(
-        <div className="fixed top-0 left-0 w-screen h-screen bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.92, y: 12 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.92, y: 12 }}
-            transition={{ duration: 0.22, ease: 'easeOut' }}
-            className="bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-sm p-7 flex flex-col items-center text-center"
-          >
-            {/* Icon */}
-            <div className="w-14 h-14 rounded-full bg-destructive/10 flex items-center justify-center mb-5">
-              <Trash2 className="w-6 h-6 text-destructive" />
-            </div>
-            <h3 className="text-lg font-bold text-foreground mb-2">Delete Contact?</h3>
-            <p className="text-sm text-foreground/60 mb-7">
-              This action cannot be undone. The contact will be permanently removed from this event.
-            </p>
-            <div className="flex gap-3 w-full">
-              <Button
-                variant="ghost"
-                className="flex-1"
-                onClick={() => setConfirmDeleteId(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                className="flex-1"
-                onClick={confirmDelete}
-              >
-                Delete
-              </Button>
-            </div>
-          </motion.div>
-        </div>,
+      {/* Same dialog as the Events list. Portalled because this page's panel
+          establishes its own stacking context. */}
+      {ReactDOM.createPortal(
+        <>
+          <ConfirmDeleteDialog
+            open={Boolean(confirmDeleteId)}
+            title="Delete Guest?"
+            message={
+              <>
+                Are you sure you want to delete{' '}
+                {contactToDelete ? (
+                  <span className="font-semibold text-foreground">
+                    {contactToDelete.fullName} ({contactToDelete.phoneNumber})
+                  </span>
+                ) : 'this guest'}
+                ? They will be permanently removed from this event. This action cannot be undone.
+              </>
+            }
+            confirmLabel="Delete"
+            isDeleting={isDeleting}
+            onConfirm={confirmDelete}
+            onCancel={() => setConfirmDeleteId(null)}
+          />
+          <ConfirmDeleteDialog
+            open={confirmBulk && selectedIds.size > 0}
+            title="Delete Selected Guests?"
+            message={`You are about to delete ${selectedIds.size} guest${selectedIds.size === 1 ? '' : 's'}. This action cannot be undone.`}
+            confirmLabel={`Delete ${selectedIds.size} Guest${selectedIds.size === 1 ? '' : 's'}`}
+            isDeleting={isDeleting}
+            onConfirm={confirmBulkDelete}
+            onCancel={() => setConfirmBulk(false)}
+          />
+        </>,
         document.body
       )}
     </div>

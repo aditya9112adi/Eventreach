@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle, XCircle, Clock, Send, Users, TrendingUp, AlertT
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import api from '../../services/api';
 import { Badge } from '../../components/ui/Badge';
+import { getSerialNumber } from '../../utils/pagination';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useToast } from '../../components/ui/Toast';
@@ -448,9 +449,10 @@ export const CampaignReportContent = ({
           </div>
 
           <div className="table-scroll">
-            <table className="w-full min-w-[1100px] text-sm">
+            <table className="w-full min-w-[1150px] text-sm">
               <thead>
                 <tr className="border-b border-border text-left uppercase tracking-wide text-xs text-foreground/60">
+                  <th className="pb-3 pr-4 font-semibold w-12 whitespace-nowrap">#</th>
                   <th className="pb-3 font-semibold">Contact</th>
                   <th className="pb-3 font-semibold">Phone</th>
                   <th className="pb-3 font-semibold">Status</th>
@@ -464,15 +466,17 @@ export const CampaignReportContent = ({
               <tbody className="divide-y divide-border">
                 {logs.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-8 text-center text-foreground/40">
+                    <td colSpan={9} className="py-8 text-center text-foreground/40">
                       No message logs found.
                     </td>
                   </tr>
                 ) : (
-                  logs.map((log) => {
+                  logs.map((log, index) => {
                     const state = describeLog(log);
                     return (
                       <tr key={log._id} className="hover:bg-surfaceHover transition-colors">
+                        {/* The report loads only the first page of logs, so this is page 1. */}
+                        <td className="py-3 pr-4 text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(1, logs.length, index)}</td>
                         <td className="py-3 font-medium text-foreground whitespace-nowrap">
                           {log.contactId?.fullName || log.contactName || 'Unknown'}
                         </td>

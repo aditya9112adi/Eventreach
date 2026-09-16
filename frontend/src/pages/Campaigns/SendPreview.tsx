@@ -8,6 +8,7 @@ import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
 import { useLoader } from '../../components/ui/FullScreenLoader';
 import { formatChatTime } from '../../utils/datetime';
+import { getSerialNumber } from '../../utils/pagination';
 
 const SendPreview = () => {
   const navigate = useNavigate();
@@ -179,7 +180,7 @@ const SendPreview = () => {
               </div>
             ) : (
               <div className="max-h-[500px] overflow-y-auto table-scroll">
-                <table className="w-full min-w-[560px] text-sm">
+                <table className="w-full min-w-[610px] text-sm">
                   <thead>
                     <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border sticky top-0 uppercase tracking-wide text-xs">
                       <th className="py-3 px-4 w-12">
@@ -190,6 +191,7 @@ const SendPreview = () => {
                           className="rounded border-border bg-background text-accent focus:ring-accent/20"
                         />
                       </th>
+                      <th className="py-3 px-4 w-12 text-left whitespace-nowrap">#</th>
                       <th className="py-3 px-4 text-left">Name</th>
                       <th className="py-3 px-4 text-left">Phone</th>
                       <th className="py-3 px-4 w-20">Preview</th>
@@ -210,6 +212,7 @@ const SendPreview = () => {
                             className="rounded border-border bg-background text-accent focus:ring-accent/20"
                           />
                         </td>
+                        <td className="py-3 px-4 text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(1, contacts.length, idx)}</td>
                         <td className="py-3 px-4">
                           <div className="font-medium text-foreground">{contact.fullName}</div>
                           {contact.email && <div className="text-xs text-foreground/50">{contact.email}</div>}

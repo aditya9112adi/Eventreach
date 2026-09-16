@@ -7,6 +7,7 @@ import { DEFAULT_COUNTRY_CODE } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
 import { EventSearch } from '../../components/ui/EventSearch';
 import { Badge } from '../../components/ui/Badge';
+import { getSerialNumber } from '../../utils/pagination';
 import { FileUpload } from '../../components/ui/FileUpload';
 import { useLoader } from '../../components/ui/FullScreenLoader';
 
@@ -229,9 +230,10 @@ const BulkImport = () => {
             )}
 
             <div className="flex-1 overflow-y-auto table-scroll border border-border rounded-md">
-              <table className="w-full min-w-[720px] text-left border-collapse text-sm">
+              <table className="w-full min-w-[770px] text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-black/5 dark:bg-white/5 text-foreground/60 text-xs uppercase tracking-wider font-medium sticky top-0 shadow-sm border-b border-border">
+                    <th className="py-2 px-4 w-12 whitespace-nowrap">#</th>
                     <th className="py-2 px-4 w-10"></th>
                     <th className="py-2 px-4">Name</th>
                     <th className="py-2 px-4">Phone Number</th>
@@ -242,6 +244,7 @@ const BulkImport = () => {
                 <tbody className="divide-y divide-border">
                   {previewData.map((contact, idx) => (
                     <tr key={idx} className={contact.status !== 'Valid' ? 'bg-surface/50 opacity-80' : 'hover:bg-surfaceHover transition-colors'}>
+                      <td className="py-2 px-4 text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(1, previewData.length, idx)}</td>
                       <td className="py-2 px-4 text-center">
                         {getStatusIcon(contact.status, contact.validationReason)}
                       </td>

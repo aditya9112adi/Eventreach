@@ -1,16 +1,23 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSocket } from '../../contexts/SocketContext';
 import { useAuth } from '../../store/authStore';
 import { Link } from 'react-router-dom';
-import { Plus, Search, Calendar, MapPin, ChevronUp, ChevronDown, ChevronsUpDown, X, ShieldAlert, Trash2 } from 'lucide-react';
+import { Plus, Search, Calendar, MapPin, ChevronUp, ChevronDown, ChevronsUpDown, X, ShieldAlert } from 'lucide-react';
 import api from '../../services/api';
 import type { Event } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
 import { PaginationControls } from '../../components/ui/PaginationControls';
-import { getPaginatedData } from '../../utils/pagination';
+import {
+  SelectAllCheckbox,
+  RowSelectCheckbox,
+  DeleteIconButton,
+  BulkDeleteBar,
+  ConfirmDeleteDialog,
+} from '../../components/ui/DeleteControls';
+import { getPaginatedData, getSerialNumber } from '../../utils/pagination';
 import { formatEventType } from '../../utils/eventType';
 import { getPageSelectionState, toggleSelectAllOnPage, toggleSelection } from '../../utils/selection';
 
@@ -169,12 +176,8 @@ const EventList = () => {
     [selectedIds, pageIds]
   );
 
-  // `indeterminate` is a DOM property with no HTML attribute, so it has to be
-  // assigned imperatively.
-  const selectAllRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (selectAllRef.current) selectAllRef.current.indeterminate = somePageSelected;
-  }, [somePageSelected]);
+  // Looked up so the confirmation can name the event rather than say "this event".
+  const eventToDelete = confirmDeleteId ? events.find(e => e._id === confirmDeleteId) ?? null : null;
 
   const toggleSelectAll = () => setSelectedIds(prev => toggleSelectAllOnPage(prev, pageIds));
   const toggleOne = (id: string) => setSelectedIds(prev => toggleSelection(prev, id));
@@ -317,21 +320,8 @@ const EventList = () => {
             </div>
           )}
 
-          {/* Only present while something is selected, so the destructive
-              action is never sitting there inert waiting to be misread. */}
-          {canDelete && selectedIds.size > 0 && (
-            <div className="flex items-center justify-between gap-3 flex-wrap rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2">
-              <span className="text-xs text-foreground/70">
-                {selectedIds.size} event{selectedIds.size === 1 ? '' : 's'} selected on this page
-              </span>
-              <button
-                onClick={() => setConfirmBulk(true)}
-                className="flex items-center gap-2 rounded-lg bg-red-500 px-3 py-1.5 text-xs font-medium text-white shadow-lg shadow-red-500/20 transition-colors hover:bg-red-600"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Delete Selected ({selectedIds.size})
-              </button>
-            </div>
+          {canDelete && (
+            <BulkDeleteBar count={selectedIds.size} noun="event" onDelete={() => setConfirmBulk(true)} />
           )}
         </div>
 
@@ -364,21 +354,20 @@ const EventList = () => {
                 viewport, which is what gives .table-scroll something to
                 scroll — every column stays reachable and readable.
               */}
-              <table className="w-full min-w-[1180px] text-left border-collapse">
+              <table className="w-full min-w-[1240px] text-left border-collapse">
               <thead>
                 <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border uppercase tracking-wide text-xs">
                   {canDelete && (
                     <th className="py-3 px-4 w-10">
-                      <input
-                        ref={selectAllRef}
-                        type="checkbox"
+                      <SelectAllCheckbox
                         checked={allPageSelected}
+                        indeterminate={somePageSelected}
                         onChange={toggleSelectAll}
-                        aria-label="Select all events"
-                        className="rounded border-border bg-background text-accent focus:ring-accent/20 cursor-pointer"
+                        label="Select all events"
                       />
                     </th>
                   )}
+                  <th className="py-3 px-4 w-12 whitespace-nowrap">#</th>
                   <SortTh field="eventId"         label="Event ID" />
                   <SortTh field="organizerName"   label="Event Organizer" />
                   <SortTh field="organizerMobile" label="Mobile No" />
@@ -396,7 +385,7 @@ const EventList = () => {
                 animate="visible"
                 variants={{ visible: { transition: { staggerChildren: 0.06 } } }}
               >
-                {paginatedEvents.map((event) => (
+                {paginatedEvents.map((event, index) => (
                   <motion.tr
                     key={event._id}
                     variants={{
@@ -407,15 +396,19 @@ const EventList = () => {
                   >
                     {canDelete && (
                       <td className="py-3 px-4">
-                        <input
-                          type="checkbox"
+                        <RowSelectCheckbox
                           checked={selectedIds.has(event._id)}
                           onChange={() => toggleOne(event._id)}
-                          aria-label={`Select event ${event.eventId || event.eventName}`}
-                          className="rounded border-border bg-background text-accent focus:ring-accent/20 cursor-pointer"
+                          label={`Select event ${event.eventId || event.eventName}`}
                         />
                       </td>
                     )}
+                    {/* paginatedEvents is already filtered, sorted and sliced,
+                        so the index within it plus the page offset is the row's
+                        position in the whole result. */}
+                    <td className="py-3 px-4 text-sm text-foreground/50 tabular-nums whitespace-nowrap">
+                      {getSerialNumber(currentPage, rowsPerPage, index)}
+                    </td>
                     {/* select-all makes the id easy to copy in one click. */}
                     <td className="py-3 px-4 text-sm font-mono text-foreground/70 whitespace-nowrap select-all">{event.eventId || '—'}</td>
                     <td className="py-3 px-4 text-sm font-medium text-foreground">{event.organizerName || '—'}</td>
@@ -441,14 +434,11 @@ const EventList = () => {
                           <Button variant="secondary" className="text-xs py-1.5 px-3">View</Button>
                         </Link>
                         {canDelete && (
-                          <button
+                          <DeleteIconButton
                             onClick={() => setConfirmDeleteId(event._id)}
                             title="Delete Event"
-                            aria-label={`Delete event ${event.eventId || event.eventName}`}
-                            className="p-1.5 rounded-md text-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                            label={`Delete event ${event.eventId || event.eventName}`}
+                          />
                         )}
                       </div>
                     </td>
@@ -469,67 +459,35 @@ const EventList = () => {
         )}
       </div>
 
-      {/* Confirmation dialogs follow the pattern already used for destructive
-          actions elsewhere in the app (see Just Access). Nothing is deleted
-          until one of these is confirmed. */}
-      {confirmDeleteId && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-surface border border-border p-6 rounded-xl shadow-2xl max-w-md w-full mx-4 animate-spring-up">
-            <h3 className="text-xl font-bold mb-3 text-foreground flex items-center">
-              <Trash2 className="w-5 h-5 mr-2 text-red-500" /> Delete Event?
-            </h3>
-            <p className="text-foreground/70 mb-8 leading-relaxed">
-              Are you sure you want to delete this event? This action cannot be undone.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setConfirmDeleteId(null)}
-                disabled={isDeleting}
-                className="px-5 py-2.5 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-foreground font-medium transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmSingleDelete}
-                disabled={isDeleting}
-                className="px-5 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 shadow-lg shadow-red-500/20 transition-colors flex items-center disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                <Trash2 className="w-4 h-4 mr-2" /> {isDeleting ? 'Deleting…' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDeleteDialog
+        open={Boolean(confirmDeleteId)}
+        title="Delete Event?"
+        message={
+          <>
+            Are you sure you want to delete{' '}
+            {eventToDelete ? (
+              <span className="font-semibold text-foreground">
+                {eventToDelete.eventName}{eventToDelete.eventId ? ` (${eventToDelete.eventId})` : ''}
+              </span>
+            ) : 'this event'}
+            ? This action cannot be undone.
+          </>
+        }
+        confirmLabel="Delete"
+        isDeleting={isDeleting}
+        onConfirm={confirmSingleDelete}
+        onCancel={() => setConfirmDeleteId(null)}
+      />
 
-      {confirmBulk && selectedIds.size > 0 && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-surface border border-border p-6 rounded-xl shadow-2xl max-w-md w-full mx-4 animate-spring-up">
-            <h3 className="text-xl font-bold mb-3 text-foreground flex items-center">
-              <Trash2 className="w-5 h-5 mr-2 text-red-500" /> Delete Selected Events?
-            </h3>
-            <p className="text-foreground/70 mb-8 leading-relaxed">
-              You are about to delete {selectedIds.size} event{selectedIds.size === 1 ? '' : 's'}. This action cannot be undone.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setConfirmBulk(false)}
-                disabled={isDeleting}
-                className="px-5 py-2.5 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-foreground font-medium transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmBulkDelete}
-                disabled={isDeleting}
-                className="px-5 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 shadow-lg shadow-red-500/20 transition-colors flex items-center disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                {isDeleting ? 'Deleting…' : `Delete ${selectedIds.size} Event${selectedIds.size === 1 ? '' : 's'}`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDeleteDialog
+        open={confirmBulk && selectedIds.size > 0}
+        title="Delete Selected Events?"
+        message={`You are about to delete ${selectedIds.size} event${selectedIds.size === 1 ? '' : 's'}. This action cannot be undone.`}
+        confirmLabel={`Delete ${selectedIds.size} Event${selectedIds.size === 1 ? '' : 's'}`}
+        isDeleting={isDeleting}
+        onConfirm={confirmBulkDelete}
+        onCancel={() => setConfirmBulk(false)}
+      />
     </div>
   );
 };

@@ -8,6 +8,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getAccessStatus } from '../../utils/accessStatus';
 import { formatEventType } from '../../utils/eventType';
+import { getSerialNumber } from '../../utils/pagination';
 import { PASSWORD_REQUIREMENTS, validatePassword } from '@eventreach/shared';
 import { meetsRequirement } from '../../utils/passwordRequirements';
 
@@ -349,9 +350,10 @@ const JustAccess = () => {
           </div>
         ) : (
           <div className="table-scroll">
-            <table className="w-full min-w-[1100px] text-sm text-left">
+            <table className="w-full min-w-[1150px] text-sm text-left">
               <thead className="text-[10px] font-bold uppercase tracking-widest bg-white/5 border-b border-white/10 text-foreground/60">
                 <tr>
+                  <th className="px-6 py-4 w-12 whitespace-nowrap">#</th>
                   <th className="px-6 py-4">User</th>
                   <th className="px-6 py-4">Assigned Event</th>
                   <th className="px-6 py-4">Granted On</th>
@@ -363,11 +365,13 @@ const JustAccess = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {filteredRecords.map((record: any) => {
+                {filteredRecords.map((record: any, index: number) => {
                   const status = getStatus(record);
                   const isUserRole = record.role === 'User';
                   return (
                     <tr key={record._id} className="hover:bg-white/5 transition-colors">
+                      {/* Not paginated: the whole filtered list is one page. */}
+                      <td className="px-6 py-4 text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(1, filteredRecords.length, index)}</td>
                       <td className="px-6 py-4">
                         <div className="font-bold text-foreground">{record.name}</div>
                         <div className="text-xs text-foreground/60">{record.email}</div>

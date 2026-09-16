@@ -6,6 +6,7 @@ import { Check, X, Users, Calendar, AlertTriangle } from 'lucide-react';
 import { useLoader } from '../../components/ui/FullScreenLoader';
 import { formatDate, formatTime, formatDateTime } from '../../utils/datetime';
 import { formatEventType } from '../../utils/eventType';
+import { getSerialNumber } from '../../utils/pagination';
 import { useSocket } from '../../contexts/SocketContext';
 
 // Shared formatters keep registration/approval timestamps consistent app-wide.
@@ -141,9 +142,10 @@ const UserApprovals = () => {
           </div>
         ) : (
           <div className="table-scroll">
-            <table className="w-full min-w-[900px] text-sm text-left">
+            <table className="w-full min-w-[950px] text-sm text-left">
               <thead className="text-xs uppercase bg-white/5 border-b border-white/10">
                 <tr>
+                  <th className="px-6 py-4 w-12 whitespace-nowrap">#</th>
                   <th className="px-6 py-4">Name</th>
                   <th className="px-6 py-4">Email</th>
                   <th className="px-6 py-4">Requested Role</th>
@@ -153,8 +155,10 @@ const UserApprovals = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {users.map((user: any) => (
+                {users.map((user: any, index: number) => (
                   <tr key={user._id} className="hover:bg-white/5 transition-colors">
+                    {/* Not paginated: every pending request is one page. */}
+                    <td className="px-6 py-4 text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(1, users.length, index)}</td>
                     <td className="px-6 py-4 font-medium">{user.name}</td>
                     <td className="px-6 py-4 text-foreground/80">{user.email}</td>
                     <td className="px-6 py-4">
