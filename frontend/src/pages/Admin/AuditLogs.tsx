@@ -305,15 +305,18 @@ export const AuditLogs = () => {
             </div>
 
             <div className="p-6 space-y-6">
-              {/* Order is Event ID, Action, Actor, Timestamp, Collection /
-                  Document. Event ID spans the full width so it reads as the
-                  heading of the record rather than sitting beside Action, and
-                  the remaining four keep the existing two-column grid. It is
-                  omitted entirely for records with no event to name, rather
-                  than shown empty. */}
-              <div className="grid grid-cols-2 gap-4">
+              {/* Order is Event ID, Action, Actor, Timestamp. Event ID spans
+                  the full width so it reads as the heading of the record
+                  rather than sitting beside Action. It is omitted entirely for
+                  records with no event to name, rather than shown empty.
+
+                  Three fields follow it, so the row is three across from sm
+                  up — in the old two-column grid the third would have sat
+                  alone with an empty cell beside it. Narrow screens keep the
+                  two-column layout they already had. */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 {resolveAuditEventId(selectedLog) && (
-                  <div className="col-span-2">
+                  <div className="col-span-2 sm:col-span-3">
                     <h3 className="text-xs font-medium text-foreground/50 uppercase tracking-wider mb-2">Event ID</h3>
                     <p className="text-base font-mono text-foreground select-all">{resolveAuditEventId(selectedLog)}</p>
                   </div>
@@ -332,11 +335,6 @@ export const AuditLogs = () => {
                 <div>
                   <h3 className="text-xs font-medium text-foreground/50 uppercase tracking-wider mb-2">Timestamp</h3>
                   <p className="text-sm text-foreground">{new Date(selectedLog.timestamp).toLocaleString()}</p>
-                </div>
-                <div>
-                  <h3 className="text-xs font-medium text-foreground/50 uppercase tracking-wider mb-2">Collection / Document</h3>
-                  <p className="text-sm text-foreground">{selectedLog.collectionName}</p>
-                  <p className="text-xs text-foreground/50">{selectedLog.documentId || 'N/A'}</p>
                 </div>
               </div>
 
