@@ -6,6 +6,7 @@ import { Search, Eye, Shield, Activity, Server, FileText } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Input } from '../../components/ui/Input';
 import { PaginationControls } from '../../components/ui/PaginationControls';
+import { resolveAuditEventId } from '../../utils/auditEventId';
 
 interface AuditLog {
   _id: string;
@@ -191,9 +192,14 @@ export const AuditLogs = () => {
 
         {/* Table */}
         <div className="table-scroll">
-          <table className="w-full min-w-[900px] text-left border-collapse">
+          <table className="w-full min-w-[1050px] text-left border-collapse">
             <thead>
               <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border uppercase tracking-wide text-xs">
+                {/* Event ID is a separate column rather than a rename of
+                    Collection: Collection is generic and shows contacts,
+                    users and campaigns too, so renaming it would mislabel
+                    every non-event row. */}
+                <th className="py-3 px-4">Event ID</th>
                 <th className="py-3 px-4">Timestamp</th>
                 <th className="py-3 px-4">User</th>
                 <th className="py-3 px-4">Action</th>
@@ -205,7 +211,7 @@ export const AuditLogs = () => {
             {loading ? (
               <tbody>
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-foreground/50">
+                  <td colSpan={7} className="py-12 text-center text-foreground/50">
                     <div className="flex items-center justify-center gap-2">
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-accent" />
                       Loading audit logs...
@@ -216,7 +222,7 @@ export const AuditLogs = () => {
             ) : logs.length === 0 ? (
               <tbody>
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-foreground/50">
+                  <td colSpan={7} className="py-12 text-center text-foreground/50">
                     No audit logs found.
                   </td>
                 </tr>
@@ -237,6 +243,9 @@ export const AuditLogs = () => {
                     }}
                     className="hover:bg-surfaceHover transition-colors"
                   >
+                    <td className="py-3 px-4 text-sm font-mono text-foreground whitespace-nowrap">
+                      {resolveAuditEventId(log) ?? <span className="text-foreground/30 font-sans">—</span>}
+                    </td>
                     <td className="py-3 px-4 text-sm text-foreground/60 whitespace-nowrap">
                       {new Date(log.timestamp).toLocaleString()}
                     </td>
@@ -296,7 +305,19 @@ export const AuditLogs = () => {
             </div>
 
             <div className="p-6 space-y-6">
+              {/* Order is Event ID, Action, Actor, Timestamp, Collection /
+                  Document. Event ID spans the full width so it reads as the
+                  heading of the record rather than sitting beside Action, and
+                  the remaining four keep the existing two-column grid. It is
+                  omitted entirely for records with no event to name, rather
+                  than shown empty. */}
               <div className="grid grid-cols-2 gap-4">
+                {resolveAuditEventId(selectedLog) && (
+                  <div className="col-span-2">
+                    <h3 className="text-xs font-medium text-foreground/50 uppercase tracking-wider mb-2">Event ID</h3>
+                    <p className="text-base font-mono text-foreground select-all">{resolveAuditEventId(selectedLog)}</p>
+                  </div>
+                )}
                 <div>
                   <h3 className="text-xs font-medium text-foreground/50 uppercase tracking-wider mb-2">Action</h3>
                   <Badge variant={selectedLog.success ? 'success' : 'error'}>
@@ -304,13 +325,13 @@ export const AuditLogs = () => {
                   </Badge>
                 </div>
                 <div>
-                  <h3 className="text-xs font-medium text-foreground/50 uppercase tracking-wider mb-2">Timestamp</h3>
-                  <p className="text-sm text-foreground">{new Date(selectedLog.timestamp).toLocaleString()}</p>
-                </div>
-                <div>
                   <h3 className="text-xs font-medium text-foreground/50 uppercase tracking-wider mb-2">Actor</h3>
                   <p className="text-sm text-foreground">{selectedLog.actor?.name || 'System'}</p>
                   <p className="text-xs text-foreground/50">{selectedLog.actor?.email} ({selectedLog.actor?.role})</p>
+                </div>
+                <div>
+                  <h3 className="text-xs font-medium text-foreground/50 uppercase tracking-wider mb-2">Timestamp</h3>
+                  <p className="text-sm text-foreground">{new Date(selectedLog.timestamp).toLocaleString()}</p>
                 </div>
                 <div>
                   <h3 className="text-xs font-medium text-foreground/50 uppercase tracking-wider mb-2">Collection / Document</h3>
