@@ -160,8 +160,8 @@ const DashboardLayout = () => {
   const navItems: NavItem[] = [
     { name: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
     { name: 'Events', to: '/events', icon: CalendarDays },
-    { name: 'Guests', to: '/contacts', icon: Users },
-    { name: 'Campaigns', to: '/campaigns', icon: Megaphone },
+    { name: 'Contact', to: '/contacts', icon: Users },
+    { name: 'Message', to: '/campaigns', icon: Megaphone },
     { name: 'Reports', to: '/reports', icon: PieChart },
   ];
 
