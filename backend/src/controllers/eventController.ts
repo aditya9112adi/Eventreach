@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import mongoose from 'mongoose';
+import mongoose, { ClientSession } from 'mongoose';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { Event } from '../models/Event';
@@ -9,6 +9,8 @@ import { MessageLog } from '../models/MessageLog';
 import { User } from '../models/User';
 import { getIO } from '../services/socketService';
 import { AuditService } from '../services/AuditService';
+import { auditContactDeletions } from '../services/contactDeletionService';
+import { supportsTransactions } from '../services/transactionSupport';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { getAuthorizedEventIds, isEventAuthorized } from '../services/eventAuthService';
 
@@ -390,11 +392,63 @@ const performEventDeletion = async (
   req: RequestWithId,
   bulkContext?: { bulkOperationId: string }
 ): Promise<void> => {
-  // Unassign all users linked to this event
-  const affectedUsers = await User.find({ assignedEventId: event._id }).select('_id');
-  await User.updateMany({ assignedEventId: event._id }, { $unset: { assignedEventId: 1 } });
+  /**
+   * The event's guests are deleted with it — a guest cannot exist without its
+   * event, and nothing in the app can reach one whose event is gone.
+   *
+   * Order: guests, then user assignments, then the event. With a transaction
+   * (any replica set, which includes MongoDB Atlas) the three writes commit or
+   * roll back together. A standalone mongod cannot run transactions, and there
+   * the order is what keeps the data consistent: if a later step fails the
+   * event still exists with no guests, rather than guests being left orphaned
+   * under a deleted event, and repeating the delete finishes the job.
+   *
+   * Guests are matched by eventId rather than by the ids read a moment earlier,
+   * so a guest added in between is removed too and none is left behind.
+   */
+  const transactional = await supportsTransactions();
+  let removedContacts: any[] = [];
+  let affectedUsers: any[] = [];
 
-  await Event.findByIdAndDelete(event._id);
+  const work = async (session?: ClientSession) => {
+    const contacts = await Contact.find({ eventId: event._id }).session(session ?? null).lean();
+    const users = await User.find({ assignedEventId: event._id }).select('_id').session(session ?? null).lean();
+
+    await Contact.deleteMany({ eventId: event._id }, { session });
+    removedContacts = contacts;
+
+    await User.updateMany({ assignedEventId: event._id }, { $unset: { assignedEventId: 1 } }, { session });
+    await Event.findByIdAndDelete(event._id, { session });
+    affectedUsers = users;
+  };
+
+  try {
+    if (transactional) {
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(() => work(session));
+      } finally {
+        await session.endSession();
+      }
+    } else {
+      await work();
+    }
+  } catch (err) {
+    // A rolled-back transaction removed nothing. Without one, guests may
+    // already be gone when a later step fails; that is recorded rather than
+    // lost, and the error still propagates so the event is reported as failed.
+    if (!transactional && removedContacts.length > 0) {
+      console.error(
+        `Event ${event.eventId || event._id} deletion failed after ${removedContacts.length} guest(s) were removed; ` +
+          'the event still exists and deleting it again will complete the operation.'
+      );
+      await auditContactDeletions(removedContacts, req, {
+        bulkOperationId: bulkContext?.bulkOperationId,
+        deletedWithEvent: { eventId: event.eventId, eventName: event.eventName },
+      });
+    }
+    throw err;
+  }
 
   // Notify affected users in real time
   for (const user of affectedUsers) {
@@ -417,6 +471,14 @@ const performEventDeletion = async (
     before: event,
     description: `Deleted event: ${event.eventName}`,
     ...(bulkContext ? { bulkOperationId: bulkContext.bulkOperationId } : {}),
+    metadata: { deletedContactCount: removedContacts.length },
+  });
+
+  // Each removed guest gets the same CONTACT_DELETED record as deleting it
+  // directly, written only now that the deletion has committed.
+  await auditContactDeletions(removedContacts, req, {
+    bulkOperationId: bulkContext?.bulkOperationId,
+    deletedWithEvent: { eventId: event.eventId, eventName: event.eventName },
   });
 };
 

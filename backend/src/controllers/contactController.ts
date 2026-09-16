@@ -7,6 +7,9 @@ import { extractFromExcel, extractFromPDF, RawContact } from '../utils/fileExtra
 import type { ExtractedContact } from '@eventreach/shared';
 import { DEFAULT_COUNTRY_CODE } from '@eventreach/shared';
 import { AuditService } from '../services/AuditService';
+// Guest deletion (and its CONTACT_DELETED audit record) is shared with event
+// deletion, which removes an event's guests along with it.
+import { performContactDeletion } from '../services/contactDeletionService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { isEventAuthorized, getAuthorizedEventIds } from '../services/eventAuthService';
 
@@ -385,39 +388,6 @@ export const bulkImportContacts = async (req: RequestWithId, res: Response) => {
     console.error('Bulk import error:', error);
     res.status(500).json({ error: 'Failed to bulk import contacts' });
   }
-};
-
-/**
- * Deletes one guest and records it in the audit log.
- *
- * Shared by the single and bulk endpoints so a bulk deletion leaves exactly the
- * same per-guest CONTACT_DELETED trail as deleting them one at a time.
- *
- * Message logs are deliberately left in place. They are the delivery history
- * behind campaign reports, and MessageLog keeps its own contactName and
- * phoneNumber precisely so a report still names the recipient after the guest
- * is gone (the report falls back to those when contactId no longer resolves).
- * Removing them would silently rewrite past campaign results.
- *
- * The caller is responsible for authorizing the guest's event first.
- */
-const performContactDeletion = async (
-  contact: any,
-  req: RequestWithId,
-  bulkContext?: { bulkOperationId: string }
-): Promise<void> => {
-  await Contact.findByIdAndDelete(contact._id);
-
-  await AuditService.log({
-    action: 'CONTACT_DELETED',
-    collectionName: 'contacts',
-    documentId: contact._id.toString(),
-    actor: AuditService.getActorFromReq(req),
-    request: AuditService.getRequestInfo(req),
-    before: contact,
-    description: `Deleted contact ${contact.fullName}`,
-    ...(bulkContext ? { bulkOperationId: bulkContext.bulkOperationId } : {}),
-  });
 };
 
 export const deleteContact = async (req: RequestWithId, res: Response) => {
