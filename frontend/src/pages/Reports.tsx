@@ -18,6 +18,7 @@ import {
   filterReportRows,
   filtersDiffer,
   hasResultsFor,
+  selectingResetsReport,
   initialReportRun,
   reportRunReducer,
   type ReportFilters,
@@ -139,12 +140,26 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
   },
 };
 
+/** One-line description shown on each report-type option. Page copy only. */
+const REPORT_TYPE_HINTS: Record<ReportKey, string> = {
+  event: 'Events by name, ID, status or date',
+  access: 'User and admin access periods and status',
+  contact: 'Guests by name, status or date added',
+};
+
 const Reports = () => {
   const { user } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
 
   const [activeReport, setActiveReport] = useState<ReportKey>('event');
+  /**
+   * Whether a report type has been chosen on this visit. A Super Admin opens
+   * Reports on the three report types only: nothing is selected, and no filters
+   * are shown, until one is picked. Other roles keep the original page, which
+   * opens straight on the Event Report.
+   */
+  const [reportChosen, setReportChosen] = useState<boolean>(() => user?.role !== 'SuperAdmin');
   const [events, setEvents] = useState<any[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string>('');
   const [campaignId, setCampaignId] = useState<string | null>(null);
@@ -181,6 +196,8 @@ const Reports = () => {
    * filters apply as they type.
    */
   const searchFirst = user?.role === 'SuperAdmin';
+  // The report-type step exists only in the Super Admin flow.
+  const showReport = !searchFirst || reportChosen;
 
   const visibleReports = useMemo(
     () =>
@@ -199,13 +216,16 @@ const Reports = () => {
       return;
     }
 
-    // Needed by the "Select Event Name" picker, which is a filter control, and
-    // to name each contact's event in the Contact Report. For Super Admins this
-    // is the only request made when the page opens.
+    // Super Admins make no report-data request on opening Reports. The events
+    // list is loaded on demand instead — see ensureEvents below.
+    if (searchFirst) return;
+
+    // Needed by the "Select Event Name" picker and to name each contact's
+    // event in the Contact Report.
     api.get('/events')
       .then(res => setEvents(res.data))
       .catch(err => console.error('Failed to fetch events', err));
-  }, [hasReportAccess, navigate, showToast]);
+  }, [hasReportAccess, searchFirst, navigate, showToast]);
 
   const liveFilters: ReportFilters = useMemo(
     () => ({ mode, searchValue, startDate, endDate }),
@@ -216,13 +236,36 @@ const Reports = () => {
   const liveFiltersRef = useRef(liveFilters);
   liveFiltersRef.current = liveFilters;
 
+  /**
+   * Super Admin: the events list, loaded only when something explicitly needs
+   * it — opening the "Select Event Name" picker, or searching the Contact
+   * Report (to name each contact's event). An Event Report search fills it from
+   * its own results, so the picker then needs no request at all.
+   */
+  const eventsRequested = useRef(false);
+  const ensureEvents = useCallback(() => {
+    if (eventsRequested.current) return;
+    eventsRequested.current = true;
+    api.get('/events')
+      .then((res) => setEvents(res.data))
+      .catch((err) => {
+        eventsRequested.current = false; // allow a retry on the next open
+        console.error('Failed to fetch events', err);
+      });
+  }, []);
+
   /** Fetches a report's rows as one run. */
   const loadReport = useCallback(async (key: ReportKey, filters: ReportFilters) => {
     const requestId = nextRequestId();
     dispatch({ type: 'start', reportKey: key, requestId, filters });
     try {
       const res = await api.get(REPORTS[key].endpoint);
-      dispatch({ type: 'success', requestId, rows: Array.isArray(res.data) ? res.data : [] });
+      const rows = Array.isArray(res.data) ? res.data : [];
+      if (key === 'event') {
+        setEvents(rows);
+        eventsRequested.current = true;
+      }
+      dispatch({ type: 'success', requestId, rows });
     } catch (err: any) {
       console.error(`Failed to fetch ${REPORTS[key].label}`, err);
       dispatch({
@@ -254,6 +297,8 @@ const Reports = () => {
   const runSearch = () => {
     setCurrentPage(1);
     setSelectedEventId('');
+    // Contacts carry only an eventId; the event names come from the events list.
+    if (activeReport === 'contact') ensureEvents();
     void loadReport(activeReport, liveFilters);
   };
 
@@ -306,6 +351,13 @@ const Reports = () => {
   }, [hasResults, run.rows, activeReport, eventNameById]);
 
   const switchReport = (key: ReportKey) => {
+    // Choosing a type never fetches. Re-choosing the selected type is a no-op
+    // for Super Admins, so a stray click cannot discard a generated report.
+    if (searchFirst) {
+      const resets = selectingResetsReport({ chosen: reportChosen, reportKey: activeReport }, key);
+      setReportChosen(true);
+      if (!resets) return;
+    }
     setActiveReport(key);
     // Each report has its own filter fields, so reset rather than carry over a
     // mode that does not exist on the new tab.
@@ -437,11 +489,13 @@ const Reports = () => {
         <div>
           <h2 className="text-3xl font-sans font-bold text-foreground animate-slide-in uppercase">Reports</h2>
           <p className="text-xs text-foreground/50 mt-1">
-            Filter and download {definition.label.toLowerCase()}s as Excel or PDF
+            {showReport
+              ? `Filter and download ${definition.label.toLowerCase()}s as Excel or PDF`
+              : 'Choose a report type, then set its filters and search'}
           </p>
         </div>
 
-        {activeReport === 'event' && (
+        {showReport && activeReport === 'event' && (
           <div className="flex flex-col sm:flex-row items-start sm:items-end gap-3 relative z-50">
             {/* Event Search dropdown — drills into a campaign report */}
             <div className='flex flex-col w-[260px]'>
@@ -452,13 +506,44 @@ const Reports = () => {
                 onChange={(id) => setSelectedEventId(id)}
                 placeholder='Search events...'
                 allowClear={true}
+                onOpen={searchFirst ? ensureEvents : undefined}
               />
             </div>
           </div>
         )}
       </div>
 
-      {/* Report type tabs */}
+      {searchFirst ? (
+        /* Super Admin: choose a report type. Always available, so the type can
+           be changed at any point; choosing one shows its filters only. */
+        <div role="radiogroup" aria-label="Report type" className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {visibleReports.map((report) => {
+            const Icon = report.icon;
+            const isActive = reportChosen && report.key === activeReport;
+            return (
+              <button
+                key={report.key}
+                type="button"
+                role="radio"
+                aria-checked={isActive}
+                onClick={() => switchReport(report.key)}
+                className={`glass-panel rounded-xl p-4 flex items-start gap-3 text-left transition-colors ${
+                  isActive ? 'border-accent bg-accent/10' : 'hover:border-accent/50'
+                }`}
+              >
+                <Icon className={`w-5 h-5 mt-0.5 shrink-0 ${isActive ? 'text-accent' : 'text-foreground/50'}`} />
+                <span className="min-w-0">
+                  <span className={`block text-sm font-bold uppercase tracking-wider ${isActive ? 'text-accent' : 'text-foreground'}`}>
+                    {report.label}
+                  </span>
+                  <span className="block text-xs text-foreground/50 mt-1">{REPORT_TYPE_HINTS[report.key]}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+      /* Report type tabs */
       <div className="flex flex-wrap gap-2 border-b border-border">
         {visibleReports.map((report) => {
           const Icon = report.icon;
@@ -480,7 +565,15 @@ const Reports = () => {
           );
         })}
       </div>
+      )}
 
+      {!showReport ? (
+        <div className="glass-panel p-12 flex flex-col items-center justify-center text-center rounded-2xl border border-dashed border-border/50 animate-fade-in">
+          <FileText className="w-12 h-12 text-foreground/20 mb-3" />
+          <p className="text-foreground/60 font-medium">Select a report type above to see its filters.</p>
+        </div>
+      ) : (
+      <>
       <ReportFilterBar
         options={definition.options}
         mode={mode}
@@ -629,6 +722,8 @@ const Reports = () => {
             </>
           )}
         </div>
+      )}
+      </>
       )}
     </div>
   );

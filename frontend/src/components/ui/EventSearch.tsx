@@ -11,9 +11,11 @@ interface EventSearchProps {
   onChange: (eventId: string) => void;
   placeholder?: string;
   allowClear?: boolean;
+  /** Called when the dropdown opens — lets a page load its options on demand. */
+  onOpen?: () => void;
 }
 
-export const EventSearch = ({ events, value, onChange, placeholder = 'Search events...', allowClear = true }: EventSearchProps) => {
+export const EventSearch = ({ events, value, onChange, placeholder = 'Search events...', allowClear = true, onOpen }: EventSearchProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -45,7 +47,13 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
         className={`flex items-center justify-between bg-surface border text-foreground px-3 py-2 rounded-md cursor-pointer transition-colors ${
           isOpen ? 'border-accent' : 'border-border hover:border-accent/50'
         }`}
-        onClick={() => { setIsOpen(!isOpen); if (!isOpen) setSearchTerm(''); }}
+        onClick={() => {
+          setIsOpen(!isOpen);
+          if (!isOpen) {
+            setSearchTerm('');
+            onOpen?.();
+          }
+        }}
       >
         {selectedEvent ? (
           <span className="truncate flex-1 text-sm font-medium text-foreground">

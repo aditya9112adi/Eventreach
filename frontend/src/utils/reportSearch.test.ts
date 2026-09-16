@@ -7,6 +7,7 @@ import {
   initialReportRun,
   reportRunReducer,
   hasResultsFor,
+  selectingResetsReport,
   type ReportFilters,
   type ReportRunState,
 } from './reportSearch';
@@ -209,4 +210,32 @@ test('generated results paginate with correct serial numbers', () => {
   assert.equal(page3.length, 15);
   assert.equal(getSerialNumber(3, 40, 0), 81);
   assert.equal(getSerialNumber(3, 40, page3.length - 1), 95);
+});
+
+test('report type selection', async (t) => {
+  await t.test('nothing is chosen when Reports first opens, so the first choice starts fresh', () => {
+    assert.equal(selectingResetsReport({ chosen: false, reportKey: 'event' }, 'event'), true);
+    assert.equal(selectingResetsReport({ chosen: false, reportKey: 'event' }, 'access'), true);
+  });
+
+  await t.test('switching to a different report type starts it from its filter-only state', () => {
+    assert.equal(selectingResetsReport({ chosen: true, reportKey: 'event' }, 'contact'), true);
+    assert.equal(selectingResetsReport({ chosen: true, reportKey: 'contact' }, 'access'), true);
+    assert.equal(selectingResetsReport({ chosen: true, reportKey: 'access' }, 'event'), true);
+  });
+
+  await t.test('choosing the already-selected type keeps its generated report', () => {
+    for (const key of ['event', 'access', 'contact'] as const) {
+      assert.equal(selectingResetsReport({ chosen: true, reportKey: key }, key), false);
+    }
+  });
+
+  await t.test('switching away and back does not resurrect the old results', () => {
+    let s = reportRunReducer(initialReportRun('event'), { type: 'start', reportKey: 'event', requestId: 1, filters: NO_FILTER });
+    s = reportRunReducer(s, { type: 'success', requestId: 1, rows: ROWS });
+    s = reportRunReducer(s, { type: 'reset', reportKey: 'contact', requestId: 2 }); // event -> contact
+    s = reportRunReducer(s, { type: 'reset', reportKey: 'event', requestId: 3 }); // contact -> event
+    assert.equal(hasResultsFor(s, 'event'), false, 'back on event, but a new search is required');
+    assert.equal(s.rows.length, 0);
+  });
 });

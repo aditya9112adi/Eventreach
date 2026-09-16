@@ -70,9 +70,9 @@ export const ReportFilterBar = ({
   const isDateMode = activeOption?.type === 'date';
   const hasFilter = isDateMode ? Boolean(startDate || endDate) : Boolean(searchValue);
   const canDownload = hasGenerated && resultCount > 0 && !isExporting && !isSearching;
-  // With explicit search, Clear also discards a generated report, so it is
-  // offered whenever there is one even if the inputs are already empty.
-  const showClear = hasFilter || (Boolean(onSearch) && hasGenerated);
+  // Live filtering only: Clear appears once there is something to clear. With
+  // explicit search it is always shown next to Search instead (see below).
+  const showClear = hasFilter;
 
   return (
     <form
@@ -158,14 +158,20 @@ export const ReportFilterBar = ({
           />
         </div>
 
-        {onSearch && (
-          <Button type="submit" isLoading={isSearching} disabled={isSearching} className="gap-2">
-            {!isSearching && <Search className="w-4 h-4" />}
-            Search
-          </Button>
-        )}
-
-        {showClear && (
+        {onSearch ? (
+          // Explicit search: Search and Clear always sit together, both the
+          // shared Button. Clear is never a fetch — it returns to filters only.
+          <div className="flex items-center gap-2">
+            <Button type="submit" isLoading={isSearching} disabled={isSearching} className="gap-2">
+              {!isSearching && <Search className="w-4 h-4" />}
+              Search
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClear} disabled={isSearching} className="gap-2">
+              <X className="w-4 h-4" />
+              Clear
+            </Button>
+          </div>
+        ) : showClear && (
           <button
             type="button"
             onClick={onClear}
@@ -206,7 +212,9 @@ export const ReportFilterBar = ({
             <span className="text-accent font-bold">{resultCount}</span> record
             {resultCount === 1 ? '' : 's'} match this filter
             {filtersChanged && (
-              <span className="ml-2 text-amber-400">— filters changed, search again to update</span>
+              <span role="status" className="block sm:inline sm:ml-2 mt-1 sm:mt-0 font-semibold text-amber-400">
+                Filters changed. Search again to update the report.
+              </span>
             )}
           </p>
         ) : (

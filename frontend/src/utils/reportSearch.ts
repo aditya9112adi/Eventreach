@@ -132,3 +132,22 @@ export const reportRunReducer = (state: ReportRunState, action: ReportRunAction)
 /** Results may be shown only for a completed run of the report on screen. */
 export const hasResultsFor = (state: ReportRunState, reportKey: ReportKey): boolean =>
   state.status === 'success' && state.reportKey === reportKey;
+
+// ── Report type selection ────────────────────────────────────────────────────
+
+export interface ReportSelection {
+  /** False until a report type has been chosen on this visit. */
+  chosen: boolean;
+  reportKey: ReportKey;
+}
+
+/**
+ * Whether choosing `next` starts that report from its filter-only state.
+ *
+ * The first choice always does, as does switching to a different type — so a
+ * report's filters and results never carry over into another. Choosing the
+ * type that is already selected does not, so an accidental second click cannot
+ * throw away a generated report. Choosing never fetches anything either way.
+ */
+export const selectingResetsReport = (current: ReportSelection, next: ReportKey): boolean =>
+  !current.chosen || current.reportKey !== next;
