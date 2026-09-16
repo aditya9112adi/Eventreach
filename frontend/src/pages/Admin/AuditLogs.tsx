@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { motion } from 'framer-motion';
 import api from '../../services/api';
-import { Search, Eye, Shield, Activity, Server, FileText } from 'lucide-react';
+import { Search, Shield, Activity, Server, FileText } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { PaginationControls } from '../../components/ui/PaginationControls';
 import { resolveAuditEventId } from '../../utils/auditEventId';
@@ -270,12 +271,10 @@ export const AuditLogs = () => {
                       {log.description}
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <button
-                        onClick={() => setSelectedLog(log)}
-                        className="flex items-center gap-1 ml-auto text-accent hover:text-accent/80 text-sm transition-colors"
-                      >
-                        <Eye className="h-4 w-4" /> View
-                      </button>
+                      {/* Same button as the Events list's View action. */}
+                      <Button variant="secondary" className="text-xs py-1.5 px-3" onClick={() => setSelectedLog(log)}>
+                        View
+                      </Button>
                     </td>
                   </motion.tr>
                 ))}
