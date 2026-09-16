@@ -446,7 +446,7 @@ const ContactList = () => {
                       />
                     </th>
                   )}
-                  <th className="py-3 px-4 w-12 whitespace-nowrap">#</th>
+                  <th className="py-3 px-4 w-20 whitespace-nowrap">Sr No</th>
                   <th className="py-3 px-4 w-12"></th>
                   <th className="py-3 px-4">Name</th>
                   <th className="py-3 px-4">WhatsApp Number</th>

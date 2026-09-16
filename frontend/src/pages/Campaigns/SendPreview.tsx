@@ -191,7 +191,7 @@ const SendPreview = () => {
                           className="rounded border-border bg-background text-accent focus:ring-accent/20"
                         />
                       </th>
-                      <th className="py-3 px-4 w-12 text-left whitespace-nowrap">#</th>
+                      <th className="py-3 px-4 w-20 text-left whitespace-nowrap">Sr No</th>
                       <th className="py-3 px-4 text-left">Name</th>
                       <th className="py-3 px-4 text-left">Phone</th>
                       <th className="py-3 px-4 w-20">Preview</th>

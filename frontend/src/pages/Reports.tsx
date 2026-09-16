@@ -660,7 +660,7 @@ const Reports = () => {
                   <tr className="border-b border-border text-left">
                     {/* On screen only. The column definitions also drive the Excel
                         and PDF exports and are untouched, so exports are unchanged. */}
-                    <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs whitespace-nowrap pr-4 w-12">#</th>
+                    <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs whitespace-nowrap pr-4 w-20">Sr No</th>
                     {definition.columns.map((column) => (
                       <th
                         key={column.header}

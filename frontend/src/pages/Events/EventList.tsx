@@ -367,7 +367,7 @@ const EventList = () => {
                       />
                     </th>
                   )}
-                  <th className="py-3 px-4 w-12 whitespace-nowrap">#</th>
+                  <th className="py-3 px-4 w-20 whitespace-nowrap">Sr No</th>
                   <SortTh field="eventId"         label="Event ID" />
                   <SortTh field="organizerName"   label="Event Organizer" />
                   <SortTh field="organizerMobile" label="Mobile No" />

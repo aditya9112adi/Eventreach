@@ -452,7 +452,7 @@ export const CampaignReportContent = ({
             <table className="w-full min-w-[1150px] text-sm">
               <thead>
                 <tr className="border-b border-border text-left uppercase tracking-wide text-xs text-foreground/60">
-                  <th className="pb-3 pr-4 font-semibold w-12 whitespace-nowrap">#</th>
+                  <th className="pb-3 pr-4 font-semibold w-20 whitespace-nowrap">Sr No</th>
                   <th className="pb-3 font-semibold">Contact</th>
                   <th className="pb-3 font-semibold">Phone</th>
                   <th className="pb-3 font-semibold">Status</th>

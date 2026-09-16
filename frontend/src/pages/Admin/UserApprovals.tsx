@@ -145,7 +145,7 @@ const UserApprovals = () => {
             <table className="w-full min-w-[950px] text-sm text-left">
               <thead className="text-xs uppercase bg-white/5 border-b border-white/10">
                 <tr>
-                  <th className="px-6 py-4 w-12 whitespace-nowrap">#</th>
+                  <th className="px-6 py-4 w-20 whitespace-nowrap">Sr No</th>
                   <th className="px-6 py-4">Name</th>
                   <th className="px-6 py-4">Email</th>
                   <th className="px-6 py-4">Requested Role</th>

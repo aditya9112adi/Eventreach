@@ -353,7 +353,7 @@ const JustAccess = () => {
             <table className="w-full min-w-[1150px] text-sm text-left">
               <thead className="text-[10px] font-bold uppercase tracking-widest bg-white/5 border-b border-white/10 text-foreground/60">
                 <tr>
-                  <th className="px-6 py-4 w-12 whitespace-nowrap">#</th>
+                  <th className="px-6 py-4 w-20 whitespace-nowrap">Sr No</th>
                   <th className="px-6 py-4">User</th>
                   <th className="px-6 py-4">Assigned Event</th>
                   <th className="px-6 py-4">Granted On</th>

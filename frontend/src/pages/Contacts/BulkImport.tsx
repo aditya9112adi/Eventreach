@@ -233,7 +233,7 @@ const BulkImport = () => {
               <table className="w-full min-w-[770px] text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-black/5 dark:bg-white/5 text-foreground/60 text-xs uppercase tracking-wider font-medium sticky top-0 shadow-sm border-b border-border">
-                    <th className="py-2 px-4 w-12 whitespace-nowrap">#</th>
+                    <th className="py-2 px-4 w-20 whitespace-nowrap">Sr No</th>
                     <th className="py-2 px-4 w-10"></th>
                     <th className="py-2 px-4">Name</th>
                     <th className="py-2 px-4">Phone Number</th>

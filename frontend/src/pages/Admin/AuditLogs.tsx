@@ -197,7 +197,7 @@ export const AuditLogs = () => {
           <table className="w-full min-w-[1100px] text-left border-collapse">
             <thead>
               <tr className="bg-surfaceHover text-foreground/60 font-medium border-b border-border uppercase tracking-wide text-xs">
-                <th className="py-3 px-4 w-12 whitespace-nowrap">#</th>
+                <th className="py-3 px-4 w-20 whitespace-nowrap">Sr No</th>
                 {/* Event ID is a separate column rather than a rename of
                     Collection: Collection is generic and shows contacts,
                     users and campaigns too, so renaming it would mislabel
