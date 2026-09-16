@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useReducer, useRef } from 'react';
 import api from '../services/api';
 import { useAuth } from '../store/authStore';
 import { useToast } from '../components/ui/Toast';
@@ -6,20 +6,29 @@ import { useNavigate } from 'react-router-dom';
 import { CampaignReportContent } from './Campaigns/CampaignReport';
 import { FileText, CalendarDays, ShieldCheck, Users } from 'lucide-react';
 import { Badge } from '../components/ui/Badge';
+import { Button } from '../components/ui/Button';
+import { PaginationControls } from '../components/ui/PaginationControls';
 import { EventSearch } from '../components/ui/EventSearch';
 import { ReportFilterBar, type ReportFilterOption } from '../components/ui/ReportFilterBar';
 import { formatDate, formatDateTime } from '../utils/datetime';
 import { getAccessStatus } from '../utils/accessStatus';
 import { formatEventType } from '../utils/eventType';
-import { getSerialNumber } from '../utils/pagination';
+import { getPaginatedData, getSerialNumber } from '../utils/pagination';
+import {
+  filterReportRows,
+  filtersDiffer,
+  hasResultsFor,
+  initialReportRun,
+  reportRunReducer,
+  type ReportFilters,
+  type ReportKey,
+} from '../utils/reportSearch';
 import {
   buildReportFileName,
   exportToExcel,
   exportToPdf,
   type ReportColumn,
 } from '../utils/reportExport';
-
-type ReportKey = 'event' | 'access' | 'contact';
 
 interface ReportDefinition {
   key: ReportKey;
@@ -130,17 +139,6 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
   },
 };
 
-/** Start of day / end of day so a range is inclusive of both endpoints. */
-const withinRange = (raw: string | undefined, start: string, end: string): boolean => {
-  if (!start && !end) return true;
-  if (!raw) return false;
-  const when = new Date(raw).getTime();
-  if (Number.isNaN(when)) return false;
-  if (start && when < new Date(`${start}T00:00:00`).getTime()) return false;
-  if (end && when > new Date(`${end}T23:59:59.999`).getTime()) return false;
-  return true;
-};
-
 const Reports = () => {
   const { user } = useAuth();
   const { showToast } = useToast();
@@ -152,10 +150,17 @@ const Reports = () => {
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [loadingCampaign, setLoadingCampaign] = useState(false);
 
-  // Rows for the currently selected report, plus its own filter state.
-  const [rows, setRows] = useState<any[]>([]);
-  const [loadingRows, setLoadingRows] = useState(false);
-  const [rowsError, setRowsError] = useState<string | null>(null);
+  // The generated report for the tab on screen: nothing, loading, loaded or
+  // failed, plus the filters it was generated with. See utils/reportSearch.ts.
+  const [run, dispatch] = useReducer(reportRunReducer, 'event', initialReportRun);
+  // Every request gets a fresh id; a response whose id is no longer current
+  // (another search, a tab switch or Clear since) is ignored by the reducer.
+  const requestSeq = useRef(0);
+  const nextRequestId = () => ++requestSeq.current;
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+
   const [mode, setMode] = useState<string>('EventName');
   const [searchValue, setSearchValue] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -168,6 +173,14 @@ const Reports = () => {
   // The access records endpoint is Super Admin / Admin only, so the tab is only
   // offered to those roles. The server enforces this regardless.
   const canViewAccessReport = user?.role === 'SuperAdmin' || user?.role === 'Admin';
+
+  /**
+   * Super Admins generate reports explicitly: a tab opens on its filters only,
+   * and report data is fetched when Search is pressed, not when the page or a
+   * tab opens. Other roles keep the original behaviour - the tab loads and the
+   * filters apply as they type.
+   */
+  const searchFirst = user?.role === 'SuperAdmin';
 
   const visibleReports = useMemo(
     () =>
@@ -186,51 +199,63 @@ const Reports = () => {
       return;
     }
 
-    // Fetch events for the dropdown and table
+    // Needed by the "Select Event Name" picker, which is a filter control, and
+    // to name each contact's event in the Contact Report. For Super Admins this
+    // is the only request made when the page opens.
     api.get('/events')
       .then(res => setEvents(res.data))
       .catch(err => console.error('Failed to fetch events', err));
   }, [hasReportAccess, navigate, showToast]);
 
-  // Load the rows for whichever report tab is active.
+  const liveFilters: ReportFilters = useMemo(
+    () => ({ mode, searchValue, startDate, endDate }),
+    [mode, searchValue, startDate, endDate]
+  );
+  // Read by the auto-load effect below without making it a dependency: for
+  // roles that filter live, editing a filter must not trigger a reload.
+  const liveFiltersRef = useRef(liveFilters);
+  liveFiltersRef.current = liveFilters;
+
+  /** Fetches a report's rows as one run. */
+  const loadReport = useCallback(async (key: ReportKey, filters: ReportFilters) => {
+    const requestId = nextRequestId();
+    dispatch({ type: 'start', reportKey: key, requestId, filters });
+    try {
+      const res = await api.get(REPORTS[key].endpoint);
+      dispatch({ type: 'success', requestId, rows: Array.isArray(res.data) ? res.data : [] });
+    } catch (err: any) {
+      console.error(`Failed to fetch ${REPORTS[key].label}`, err);
+      dispatch({
+        type: 'failure',
+        requestId,
+        error: err?.response?.data?.error || 'Could not load this report. Please try again.',
+      });
+    }
+  }, []);
+
+  // Original behaviour for roles other than Super Admin: load the tab's rows as
+  // soon as it opens, with the filters applied live.
   useEffect(() => {
-    if (!hasReportAccess) return;
+    if (!hasReportAccess || searchFirst) return;
 
     // The events list is already fetched above for the drill-down picker, so
     // the Event Report reuses it instead of asking for the same data twice.
     if (activeReport === 'event') {
-      setRows(events);
-      setRowsError(null);
-      setLoadingRows(false);
+      const requestId = nextRequestId();
+      dispatch({ type: 'start', reportKey: 'event', requestId, filters: liveFiltersRef.current });
+      dispatch({ type: 'success', requestId, rows: events });
       return;
     }
 
-    let cancelled = false;
-    setLoadingRows(true);
-    setRowsError(null);
+    void loadReport(activeReport, liveFiltersRef.current);
+  }, [hasReportAccess, searchFirst, activeReport, events, loadReport]);
 
-    api
-      .get(definition.endpoint)
-      .then((res) => {
-        if (cancelled) return;
-        setRows(Array.isArray(res.data) ? res.data : []);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error(`Failed to fetch ${definition.label}`, err);
-        setRows([]);
-        setRowsError(
-          err.response?.data?.error || 'Could not load this report. Please try again.'
-        );
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingRows(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [definition.endpoint, definition.label, hasReportAccess, activeReport, events]);
+  /** Super Admin: generate the report for the current filters. */
+  const runSearch = () => {
+    setCurrentPage(1);
+    setSelectedEventId('');
+    void loadReport(activeReport, liveFilters);
+  };
 
   useEffect(() => {
     if (!selectedEventId) {
@@ -269,13 +294,16 @@ const Reports = () => {
    * the events already loaded for this user rather than adding a populate to
    * the shared /contacts endpoint.
    */
+  const hasResults = hasResultsFor(run, activeReport);
+
   const decoratedRows = useMemo(() => {
-    if (activeReport !== 'contact') return rows;
-    return rows.map((row: any) => ({
+    if (!hasResults) return [];
+    if (activeReport !== 'contact') return run.rows;
+    return run.rows.map((row: any) => ({
       ...row,
       eventName: eventNameById.get(String(row.eventId)) ?? '',
     }));
-  }, [rows, activeReport, eventNameById]);
+  }, [hasResults, run.rows, activeReport, eventNameById]);
 
   const switchReport = (key: ReportKey) => {
     setActiveReport(key);
@@ -286,43 +314,76 @@ const Reports = () => {
     setStartDate('');
     setEndDate('');
     setSelectedEventId('');
+    setCurrentPage(1);
+    // A fresh tab starts with no report. Resetting with a new request id also
+    // discards any response still on its way for the previous tab.
+    dispatch({ type: 'reset', reportKey: key, requestId: nextRequestId() });
   };
 
   const clearFilters = () => {
     setSearchValue('');
     setStartDate('');
     setEndDate('');
+    if (searchFirst) {
+      // Back to the initial state: no report, and nothing fetched.
+      setCurrentPage(1);
+      dispatch({ type: 'reset', reportKey: activeReport, requestId: nextRequestId() });
+    }
   };
 
   const activeOption =
     definition.options.find((option) => option.key === mode) ?? definition.options[0];
 
-  const filteredRows = useMemo(() => {
-    const needle = searchValue.trim().toLowerCase();
+  // Super Admins see the report for the filters it was generated with, so the
+  // table and the downloads keep matching what was searched even if the inputs
+  // are edited afterwards. Other roles filter live, as before.
+  const reportFilters: ReportFilters | null = searchFirst ? (hasResults ? run.applied : null) : liveFilters;
+  const reportOption =
+    definition.options.find((option) => option.key === reportFilters?.mode) ?? activeOption;
 
-    return decoratedRows.filter((row) => {
-      if (activeOption.type === 'date') {
-        return withinRange(definition.date(row), startDate, endDate);
-      }
-      if (!needle) return true;
-      const haystack =
-        mode === 'Status' ? definition.status(row) : definition.text(row);
-      return haystack.toLowerCase().includes(needle);
-    });
-  }, [decoratedRows, mode, activeOption, searchValue, startDate, endDate, definition]);
+  const filteredRows = useMemo(
+    () =>
+      reportFilters
+        ? filterReportRows(decoratedRows, definition, reportFilters, reportOption.type === 'date')
+        : [],
+    [decoratedRows, definition, reportFilters, reportOption]
+  );
+
+  const pagedRows = useMemo(
+    () => getPaginatedData(filteredRows, currentPage, rowsPerPage),
+    [filteredRows, currentPage, rowsPerPage]
+  );
+
+  // With live filtering the row set changes as the inputs change, so start
+  // again from the first page.
+  useEffect(() => {
+    if (!searchFirst) setCurrentPage(1);
+  }, [searchFirst, searchValue, startDate, endDate, mode]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [rowsPerPage]);
+
+  useEffect(() => {
+    const totalPages = Math.ceil(filteredRows.length / rowsPerPage);
+    if (currentPage > totalPages && totalPages > 0) setCurrentPage(totalPages);
+  }, [filteredRows.length, currentPage, rowsPerPage]);
 
   const fileNamePreview = useMemo(
-    () => buildReportFileName(definition.fileName, activeOption.key),
-    [definition.fileName, activeOption.key]
+    () => buildReportFileName(definition.fileName, reportOption.key),
+    [definition.fileName, reportOption.key]
   );
 
   const subtitle = useMemo(() => {
-    if (activeOption.type === 'date') {
-      if (!startDate && !endDate) return 'All dates';
-      return `Date: ${startDate || 'any'} to ${endDate || 'any'}`;
+    const f = reportFilters ?? liveFilters;
+    if (reportOption.type === 'date') {
+      if (!f.startDate && !f.endDate) return 'All dates';
+      return `Date: ${f.startDate || 'any'} to ${f.endDate || 'any'}`;
     }
-    return searchValue ? `${activeOption.label}: ${searchValue}` : 'No filter applied';
-  }, [activeOption, searchValue, startDate, endDate]);
+    return f.searchValue ? `${reportOption.label}: ${f.searchValue}` : 'No filter applied';
+  }, [reportOption, reportFilters, liveFilters]);
+
+  const filtersChanged = searchFirst && hasResults && filtersDiffer(run.applied, liveFilters);
 
   const runExport = useCallback(
     async (kind: 'excel' | 'pdf') => {
@@ -333,7 +394,7 @@ const Reports = () => {
 
       setIsExporting(true);
       try {
-        const name = buildReportFileName(definition.fileName, activeOption.key);
+        const name = buildReportFileName(definition.fileName, reportOption.key);
         if (kind === 'excel') {
           await exportToExcel(name, definition.label, definition.columns, filteredRows);
         } else {
@@ -347,7 +408,7 @@ const Reports = () => {
         setIsExporting(false);
       }
     },
-    [filteredRows, definition, activeOption.key, subtitle, showToast]
+    [filteredRows, definition, reportOption.key, subtitle, showToast]
   );
 
   const statusVariant = (status: string) => {
@@ -436,6 +497,14 @@ const Reports = () => {
         resultCount={filteredRows.length}
         isExporting={isExporting}
         fileNamePreview={fileNamePreview}
+        {...(searchFirst
+          ? {
+              onSearch: runSearch,
+              isSearching: run.status === 'loading',
+              hasGenerated: hasResults,
+              filtersChanged,
+            }
+          : {})}
       />
 
       {/* Event Report keeps its original campaign drill-down. */}
@@ -475,19 +544,29 @@ const Reports = () => {
             </h3>
           </div>
 
-          {loadingRows ? (
+          {run.status === 'loading' ? (
             <div className="flex items-center justify-center py-16">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
             </div>
-          ) : rowsError ? (
-            <p className="text-destructive text-center py-8 text-sm font-medium">{rowsError}</p>
+          ) : run.status === 'error' && run.reportKey === activeReport ? (
+            <p className="text-destructive text-center py-8 text-sm font-medium">{run.error}</p>
+          ) : searchFirst && !hasResults ? (
+            <div className="flex flex-col items-center justify-center text-center py-14">
+              <FileText className="w-12 h-12 text-foreground/20 mb-3" />
+              <p className="text-foreground/60 font-medium">
+                Select your filters and search to generate a report.
+              </p>
+            </div>
           ) : filteredRows.length === 0 ? (
             <p className="text-foreground/40 text-center py-8">
-              {rows.length === 0
-                ? `No ${definition.label.toLowerCase()} data found.`
-                : 'No records match this filter.'}
+              {searchFirst
+                ? 'No reports found for the selected filters.'
+                : run.rows.length === 0
+                  ? `No ${definition.label.toLowerCase()} data found.`
+                  : 'No records match this filter.'}
             </p>
           ) : (
+            <>
             <div className="table-scroll">
               <table className="w-full min-w-[870px] text-sm">
                 <thead>
@@ -509,9 +588,9 @@ const Reports = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {filteredRows.map((row: any, index: number) => (
+                  {pagedRows.map((row: any, index: number) => (
                     <tr key={row._id} className="hover:bg-surfaceHover transition-colors group">
-                      <td className="py-4 pr-4 text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(1, filteredRows.length, index)}</td>
+                      <td className="py-4 pr-4 text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(currentPage, rowsPerPage, index)}</td>
                       {definition.columns.map((column) => {
                         const cell = String(column.value(row));
                         return (
@@ -529,12 +608,10 @@ const Reports = () => {
                       })}
                       {activeReport === 'event' && (
                         <td className="py-4 text-right">
-                          <button
-                            onClick={() => setSelectedEventId(row._id)}
-                            className="bg-accent/10 text-accent hover:bg-accent/20 font-medium text-xs px-4 py-2 rounded transition-colors uppercase tracking-wider"
-                          >
+                          {/* Same View button as the Events list and Audit Logs. */}
+                          <Button variant="secondary" className="text-xs py-1.5 px-3" onClick={() => setSelectedEventId(row._id)}>
                             View
-                          </button>
+                          </Button>
                         </td>
                       )}
                     </tr>
@@ -542,6 +619,14 @@ const Reports = () => {
                 </tbody>
               </table>
             </div>
+            <PaginationControls
+              currentPage={currentPage}
+              rowsPerPage={rowsPerPage}
+              totalItems={filteredRows.length}
+              onPageChange={setCurrentPage}
+              onRowsChange={setRowsPerPage}
+            />
+            </>
           )}
         </div>
       )}

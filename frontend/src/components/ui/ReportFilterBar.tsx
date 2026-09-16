@@ -1,4 +1,5 @@
-import { Download, FileSpreadsheet, FileText, X } from 'lucide-react';
+import { Download, FileSpreadsheet, FileText, Search, X } from 'lucide-react';
+import { Button } from './Button';
 
 export interface ReportFilterOption {
   /** Stable key used in the download file name, e.g. "UserName". */
@@ -27,6 +28,17 @@ interface ReportFilterBarProps {
   isExporting: boolean;
   /** Shown under the controls, e.g. "AccessReport_UserName_21082026". */
   fileNamePreview: string;
+  /**
+   * Explicit-search mode. When provided, a Search button is shown and the
+   * report is only generated when it is pressed (or Enter is pressed in a
+   * field); without it the bar behaves as before, filtering live.
+   */
+  onSearch?: () => void;
+  isSearching?: boolean;
+  /** False until a report has been generated; downloads stay disabled until then. */
+  hasGenerated?: boolean;
+  /** The inputs no longer match the generated report. */
+  filtersChanged?: boolean;
 }
 
 const LABEL = 'text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1';
@@ -49,14 +61,29 @@ export const ReportFilterBar = ({
   resultCount,
   isExporting,
   fileNamePreview,
+  onSearch,
+  isSearching = false,
+  hasGenerated = true,
+  filtersChanged = false,
 }: ReportFilterBarProps) => {
   const activeOption = options.find((option) => option.key === mode) ?? options[0];
   const isDateMode = activeOption?.type === 'date';
   const hasFilter = isDateMode ? Boolean(startDate || endDate) : Boolean(searchValue);
-  const canDownload = resultCount > 0 && !isExporting;
+  const canDownload = hasGenerated && resultCount > 0 && !isExporting && !isSearching;
+  // With explicit search, Clear also discards a generated report, so it is
+  // offered whenever there is one even if the inputs are already empty.
+  const showClear = hasFilter || (Boolean(onSearch) && hasGenerated);
 
   return (
-    <div className="glass-panel rounded-2xl p-6 animate-fade-up">
+    <form
+      className="glass-panel rounded-2xl p-6 animate-fade-up"
+      // Enter in any field is the same explicit action as pressing Search.
+      // Without onSearch this is a no-op, so live filtering is unaffected.
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (onSearch && !isSearching) onSearch();
+      }}
+    >
       {/* Filter mode — one field at a time, which is what names the download. */}
       <fieldset>
         <legend className={LABEL}>Filter By</legend>
@@ -82,7 +109,10 @@ export const ReportFilterBar = ({
         </div>
       </fieldset>
 
-      <div className="flex flex-col lg:flex-row lg:items-end gap-3 mt-5">
+      {/* lg:flex-wrap: with the Search and Clear buttons the row no longer fits
+          one line at laptop widths, so the downloads wrap instead of being
+          pushed past the edge of the page and clipped. */}
+      <div className="flex flex-col lg:flex-row lg:flex-wrap lg:items-end gap-3 mt-5">
         <div className="flex flex-col flex-1 min-w-[200px]">
           <label className={LABEL} htmlFor="report-search">
             Search Value
@@ -128,7 +158,14 @@ export const ReportFilterBar = ({
           />
         </div>
 
-        {hasFilter && (
+        {onSearch && (
+          <Button type="submit" isLoading={isSearching} disabled={isSearching} className="gap-2">
+            {!isSearching && <Search className="w-4 h-4" />}
+            Search
+          </Button>
+        )}
+
+        {showClear && (
           <button
             type="button"
             onClick={onClear}
@@ -145,7 +182,7 @@ export const ReportFilterBar = ({
               type="button"
               onClick={onDownloadExcel}
               disabled={!canDownload}
-              title={resultCount === 0 ? 'Nothing to download' : 'Download as Excel'}
+              title={!hasGenerated ? 'Search to generate a report first' : resultCount === 0 ? 'Nothing to download' : 'Download as Excel'}
               className="flex items-center gap-2 bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed font-bold text-xs px-4 py-2 rounded transition-colors uppercase tracking-wider"
             >
               <FileSpreadsheet className="w-4 h-4" /> Excel
@@ -154,7 +191,7 @@ export const ReportFilterBar = ({
               type="button"
               onClick={onDownloadPdf}
               disabled={!canDownload}
-              title={resultCount === 0 ? 'Nothing to download' : 'Download as PDF'}
+              title={!hasGenerated ? 'Search to generate a report first' : resultCount === 0 ? 'Nothing to download' : 'Download as PDF'}
               className="flex items-center gap-2 bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed font-bold text-xs px-4 py-2 rounded transition-colors uppercase tracking-wider"
             >
               <FileText className="w-4 h-4" /> PDF
@@ -164,15 +201,22 @@ export const ReportFilterBar = ({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 mt-4 pt-4 border-t border-border">
-        <p className="text-xs text-foreground/50">
-          <span className="text-accent font-bold">{resultCount}</span> record
-          {resultCount === 1 ? '' : 's'} match this filter
-        </p>
+        {hasGenerated ? (
+          <p className="text-xs text-foreground/50">
+            <span className="text-accent font-bold">{resultCount}</span> record
+            {resultCount === 1 ? '' : 's'} match this filter
+            {filtersChanged && (
+              <span className="ml-2 text-amber-400">— filters changed, search again to update</span>
+            )}
+          </p>
+        ) : (
+          <p className="text-xs text-foreground/50">No report generated yet</p>
+        )}
         <p className="text-xs text-foreground/40 flex items-center gap-1.5">
           <Download className="w-3 h-3" />
           {isExporting ? 'Preparing download...' : `${fileNamePreview}.xlsx / .pdf`}
         </p>
       </div>
-    </div>
+    </form>
   );
 };
