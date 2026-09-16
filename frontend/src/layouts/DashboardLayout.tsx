@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useLocation, useNavigate, NavLink, Outlet } from 'react-router-dom';
+import { useLocation, useNavigate, NavLink, Link, Outlet } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../store/authStore';
 import { useSocket } from '../contexts/SocketContext';
@@ -18,6 +18,7 @@ import {
   Moon,
   PieChart,
   Shield,
+  ShieldCheck,
   KeyRound
 } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
@@ -142,7 +143,21 @@ const DashboardLayout = () => {
     };
   }, [socket, user?.role]);
 
-  const navItems = [
+  interface NavChild {
+    name: string;
+    /** Value of `?type=` on the parent route. */
+    type: string;
+    icon: typeof PieChart;
+  }
+  interface NavItem {
+    name: string;
+    to: string;
+    icon: typeof PieChart;
+    /** Shown indented directly below the item while its route is open. */
+    children?: NavChild[];
+  }
+
+  const navItems: NavItem[] = [
     { name: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
     { name: 'Events', to: '/events', icon: CalendarDays },
     { name: 'Guests', to: '/contacts', icon: Users },
@@ -155,7 +170,21 @@ const DashboardLayout = () => {
     navItems.push({ name: 'Just Access', to: '/admin/just-access', icon: MessageSquare });
     navItems.push({ name: 'Audit Logs', to: '/admin/audit-logs', icon: Shield });
     navItems.push({ name: 'Settings', to: '/settings', icon: Settings });
+
+    // Super Admins choose a report type here rather than on the Reports page.
+    // Each links to /reports?type=…; choosing one shows that report's filters
+    // and never fetches report data by itself.
+    const reports = navItems.find((item) => item.to === '/reports');
+    if (reports) {
+      reports.children = [
+        { name: 'Event Report', type: 'event', icon: CalendarDays },
+        { name: 'Access Report', type: 'access', icon: ShieldCheck },
+        { name: 'Contact Report', type: 'contact', icon: Users },
+      ];
+    }
   }
+
+  const activeChildType = new URLSearchParams(location.search).get('type');
 
   return (
     <div className="min-h-screen flex text-foreground">
@@ -191,11 +220,24 @@ const DashboardLayout = () => {
         </div>
 
         <nav className="flex-1 overflow-y-auto p-4 space-y-1 relative">
-          {navItems.map((item) => (
+          {navItems.map((item) => {
+            const isOnRoute = location.pathname === item.to || location.pathname.startsWith(`${item.to}/`);
+            const showChildren = Boolean(item.children) && isOnRoute;
+            return (
+            <div key={item.name}>
             <NavLink
-              key={item.name}
               to={item.to}
-              onClick={() => setSidebarOpen(false)}
+              onClick={(e) => {
+                if (item.children) {
+                  // Keep the sidebar open so a report type can be picked from
+                  // the submenu, and don't discard the report already chosen
+                  // by re-navigating to the bare route.
+                  if (isOnRoute) e.preventDefault();
+                  return;
+                }
+                setSidebarOpen(false);
+              }}
+              aria-expanded={item.children ? showChildren : undefined}
               className={({ isActive }) => `
                 relative flex items-center px-4 py-3 text-sm font-bold tracking-wide uppercase transition-colors duration-300 rounded-md outline-none
                 ${isActive 
@@ -226,7 +268,33 @@ const DashboardLayout = () => {
                 </>
               )}
             </NavLink>
-          ))}
+
+            {showChildren && item.children && (
+              <div className="mt-1 mb-2 ml-6 pl-3 border-l border-border space-y-1" aria-label={`${item.name} types`}>
+                {item.children.map((child) => {
+                  const isChildActive = activeChildType === child.type;
+                  return (
+                    <Link
+                      key={child.type}
+                      to={`${item.to}?type=${child.type}`}
+                      onClick={() => setSidebarOpen(false)}
+                      aria-current={isChildActive ? 'page' : undefined}
+                      className={`flex items-center px-3 py-2 text-xs font-bold tracking-wide uppercase rounded-md transition-colors duration-200 outline-none ${
+                        isChildActive
+                          ? 'text-accent bg-accent/10'
+                          : 'text-foreground/50 hover:bg-white/5 hover:text-foreground'
+                      }`}
+                    >
+                      <child.icon className={`w-4 h-4 mr-2.5 flex-shrink-0 ${isChildActive ? 'text-accent' : 'text-foreground/40'}`} />
+                      {child.name}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+            </div>
+            );
+          })}
         </nav>
 
         <div className="shrink-0 p-4 border-t border-border">

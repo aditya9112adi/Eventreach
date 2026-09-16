@@ -8,6 +8,7 @@ import {
   reportRunReducer,
   hasResultsFor,
   selectingResetsReport,
+  parseReportType,
   type ReportFilters,
   type ReportRunState,
 } from './reportSearch';
@@ -237,5 +238,30 @@ test('report type selection', async (t) => {
     s = reportRunReducer(s, { type: 'reset', reportKey: 'event', requestId: 3 }); // contact -> event
     assert.equal(hasResultsFor(s, 'event'), false, 'back on event, but a new search is required');
     assert.equal(s.rows.length, 0);
+  });
+});
+
+test('parseReportType reads the sidebar ?type= parameter', async (t) => {
+  await t.test('recognises the three report types', () => {
+    assert.equal(parseReportType('event', true), 'event');
+    assert.equal(parseReportType('access', true), 'access');
+    assert.equal(parseReportType('contact', true), 'contact');
+  });
+
+  await t.test('no parameter means no report type chosen', () => {
+    assert.equal(parseReportType(null, true), null);
+    assert.equal(parseReportType('', true), null);
+  });
+
+  await t.test('an unknown or differently-cased value is not a report type', () => {
+    for (const v of ['events', 'EVENT', 'Access', 'report', 'undefined', '<script>']) {
+      assert.equal(parseReportType(v, true), null, v);
+    }
+  });
+
+  await t.test('the Access Report is refused for roles that cannot see it', () => {
+    assert.equal(parseReportType('access', false), null);
+    assert.equal(parseReportType('event', false), 'event');
+    assert.equal(parseReportType('contact', false), 'contact');
   });
 });

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useReducer, useRef } from 'r
 import api from '../services/api';
 import { useAuth } from '../store/authStore';
 import { useToast } from '../components/ui/Toast';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CampaignReportContent } from './Campaigns/CampaignReport';
 import { FileText, CalendarDays, ShieldCheck, Users } from 'lucide-react';
 import { Badge } from '../components/ui/Badge';
@@ -19,6 +19,7 @@ import {
   filtersDiffer,
   hasResultsFor,
   selectingResetsReport,
+  parseReportType,
   initialReportRun,
   reportRunReducer,
   type ReportFilters,
@@ -140,13 +141,6 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
   },
 };
 
-/** One-line description shown on each report-type option. Page copy only. */
-const REPORT_TYPE_HINTS: Record<ReportKey, string> = {
-  event: 'Events by name, ID, status or date',
-  access: 'User and admin access periods and status',
-  contact: 'Guests by name, status or date added',
-};
-
 const Reports = () => {
   const { user } = useAuth();
   const { showToast } = useToast();
@@ -154,10 +148,10 @@ const Reports = () => {
 
   const [activeReport, setActiveReport] = useState<ReportKey>('event');
   /**
-   * Whether a report type has been chosen on this visit. A Super Admin opens
-   * Reports on the three report types only: nothing is selected, and no filters
-   * are shown, until one is picked. Other roles keep the original page, which
-   * opens straight on the Event Report.
+   * Whether a report type has been chosen. A Super Admin picks the report
+   * type from the REPORTS submenu in the sidebar, which sets `?type=` on this
+   * page; with no type there are no filters yet. Other roles keep the original
+   * page, which opens straight on the Event Report.
    */
   const [reportChosen, setReportChosen] = useState<boolean>(() => user?.role !== 'SuperAdmin');
   const [events, setEvents] = useState<any[]>([]);
@@ -198,6 +192,8 @@ const Reports = () => {
   const searchFirst = user?.role === 'SuperAdmin';
   // The report-type step exists only in the Super Admin flow.
   const showReport = !searchFirst || reportChosen;
+  const [searchParams] = useSearchParams();
+  const requestedType = parseReportType(searchParams.get('type'), canViewAccessReport);
 
   const visibleReports = useMemo(
     () =>
@@ -383,6 +379,30 @@ const Reports = () => {
     }
   };
 
+  /**
+   * Super Admin: the sidebar's REPORTS submenu is the report-type selector. It
+   * links here with `?type=event|access|contact`, so the chosen type follows
+   * the URL — the sidebar highlight, Back/Forward and a refresh all agree with
+   * the page. Choosing a type still never fetches anything; without a type the
+   * page returns to "no report type chosen".
+   */
+  const switchReportRef = useRef(switchReport);
+  switchReportRef.current = switchReport;
+  useEffect(() => {
+    if (!searchFirst) return;
+    if (requestedType) {
+      switchReportRef.current(requestedType);
+      return;
+    }
+    setReportChosen(false);
+    setSearchValue('');
+    setStartDate('');
+    setEndDate('');
+    setSelectedEventId('');
+    setCurrentPage(1);
+    dispatch({ type: 'reset', reportKey: 'event', requestId: nextRequestId() });
+  }, [searchFirst, requestedType]);
+
   const activeOption =
     definition.options.find((option) => option.key === mode) ?? definition.options[0];
 
@@ -491,7 +511,7 @@ const Reports = () => {
           <p className="text-xs text-foreground/50 mt-1">
             {showReport
               ? `Filter and download ${definition.label.toLowerCase()}s as Excel or PDF`
-              : 'Choose a report type, then set its filters and search'}
+              : 'Choose a report type under Reports in the sidebar, then set its filters and search'}
           </p>
         </div>
 
@@ -513,37 +533,9 @@ const Reports = () => {
         )}
       </div>
 
-      {searchFirst ? (
-        /* Super Admin: choose a report type. Always available, so the type can
-           be changed at any point; choosing one shows its filters only. */
-        <div role="radiogroup" aria-label="Report type" className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {visibleReports.map((report) => {
-            const Icon = report.icon;
-            const isActive = reportChosen && report.key === activeReport;
-            return (
-              <button
-                key={report.key}
-                type="button"
-                role="radio"
-                aria-checked={isActive}
-                onClick={() => switchReport(report.key)}
-                className={`glass-panel rounded-xl p-4 flex items-start gap-3 text-left transition-colors ${
-                  isActive ? 'border-accent bg-accent/10' : 'hover:border-accent/50'
-                }`}
-              >
-                <Icon className={`w-5 h-5 mt-0.5 shrink-0 ${isActive ? 'text-accent' : 'text-foreground/50'}`} />
-                <span className="min-w-0">
-                  <span className={`block text-sm font-bold uppercase tracking-wider ${isActive ? 'text-accent' : 'text-foreground'}`}>
-                    {report.label}
-                  </span>
-                  <span className="block text-xs text-foreground/50 mt-1">{REPORT_TYPE_HINTS[report.key]}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-      /* Report type tabs */
+      {/* Report type tabs — roles other than Super Admin, whose report types
+          are in the sidebar under REPORTS. */}
+      {!searchFirst && (
       <div className="flex flex-wrap gap-2 border-b border-border">
         {visibleReports.map((report) => {
           const Icon = report.icon;
@@ -570,7 +562,9 @@ const Reports = () => {
       {!showReport ? (
         <div className="glass-panel p-12 flex flex-col items-center justify-center text-center rounded-2xl border border-dashed border-border/50 animate-fade-in">
           <FileText className="w-12 h-12 text-foreground/20 mb-3" />
-          <p className="text-foreground/60 font-medium">Select a report type above to see its filters.</p>
+          <p className="text-foreground/60 font-medium">
+            Select a report type under <span className="text-accent font-bold">REPORTS</span> in the sidebar to see its filters.
+          </p>
         </div>
       ) : (
       <>

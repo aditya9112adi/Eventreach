@@ -151,3 +151,14 @@ export interface ReportSelection {
  */
 export const selectingResetsReport = (current: ReportSelection, next: ReportKey): boolean =>
   !current.chosen || current.reportKey !== next;
+
+/**
+ * The report type named by the `?type=` URL parameter the sidebar links set,
+ * or null when there is none, it is unknown, or it is the Access Report for a
+ * role that may not see it. Null means "no report type chosen".
+ */
+export const parseReportType = (value: string | null, canViewAccessReport: boolean): ReportKey | null => {
+  if (value === 'event' || value === 'contact') return value;
+  if (value === 'access') return canViewAccessReport ? 'access' : null;
+  return null;
+};
