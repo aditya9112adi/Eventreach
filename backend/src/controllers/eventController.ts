@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
+import crypto from 'crypto';
 import { z } from 'zod';
 import { Event } from '../models/Event';
 import { Contact } from '../models/Contact';
@@ -371,8 +373,61 @@ export const updateEvent = async (req: RequestWithId, res: Response) => {
   }
 };
 
+/**
+ * Deletes one event and everything that has to happen alongside it: users
+ * assigned to it are unassigned and told so over the socket, and the deletion
+ * is written to the audit log.
+ *
+ * Extracted so the single and bulk endpoints cannot drift apart. Bulk deletion
+ * is the same operation repeated, so it must produce the same per-event audit
+ * trail — one EVENT_DELETED record naming the event, not a single lump entry
+ * that loses which events went.
+ *
+ * The caller is responsible for authorizing the event first.
+ */
+const performEventDeletion = async (
+  event: any,
+  req: RequestWithId,
+  bulkContext?: { bulkOperationId: string }
+): Promise<void> => {
+  // Unassign all users linked to this event
+  const affectedUsers = await User.find({ assignedEventId: event._id }).select('_id');
+  await User.updateMany({ assignedEventId: event._id }, { $unset: { assignedEventId: 1 } });
+
+  await Event.findByIdAndDelete(event._id);
+
+  // Notify affected users in real time
+  for (const user of affectedUsers) {
+    try {
+      getIO().to(user._id.toString()).emit('EVENT_ASSIGNMENT_CHANGED', {
+        assignedEventId: null,
+        eventName: null,
+      });
+    } catch (err) {
+      console.error('Socket emit error on deleteEvent:', err);
+    }
+  }
+
+  await AuditService.log({
+    action: 'EVENT_DELETED',
+    collectionName: 'events',
+    documentId: event._id.toString(),
+    actor: AuditService.getActorFromReq(req),
+    request: AuditService.getRequestInfo(req),
+    before: event,
+    description: `Deleted event: ${event.eventName}`,
+    ...(bulkContext ? { bulkOperationId: bulkContext.bulkOperationId } : {}),
+  });
+};
+
 export const deleteEvent = async (req: RequestWithId, res: Response) => {
   try {
+    // A malformed id used to reach Event.findById and throw a CastError, which
+    // surfaced as a 500. The request is simply bad, so it is rejected as one.
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid event id' });
+    }
+
     const currentUser = (req as any).user;
     const authorized = await isEventAuthorized(currentUser, req.params.id);
     if (!authorized) {
@@ -382,38 +437,105 @@ export const deleteEvent = async (req: RequestWithId, res: Response) => {
     const event = await Event.findById(req.params.id);
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
-    // Unassign all users linked to this event
-    const affectedUsers = await User.find({ assignedEventId: event._id }).select('_id');
-    await User.updateMany({ assignedEventId: event._id }, { $unset: { assignedEventId: 1 } });
-
-    await Event.findByIdAndDelete(req.params.id);
-
-    // Notify affected users in real time
-    for (const user of affectedUsers) {
-      try {
-        getIO().to(user._id.toString()).emit('EVENT_ASSIGNMENT_CHANGED', {
-          assignedEventId: null,
-          eventName: null,
-        });
-      } catch (err) {
-        console.error('Socket emit error on deleteEvent:', err);
-      }
-    }
-
-    await AuditService.log({
-      action: 'EVENT_DELETED',
-      collectionName: 'events',
-      documentId: event._id.toString(),
-      actor: AuditService.getActorFromReq(req),
-      request: AuditService.getRequestInfo(req),
-      before: event,
-      description: `Deleted event: ${event.eventName}`,
-    });
+    await performEventDeletion(event, req);
 
     res.json({ message: 'Event deleted successfully' });
   } catch (error) {
     console.error('Delete event error:', error);
     res.status(500).json({ error: 'Failed to delete event' });
+  }
+};
+
+/** Bulk delete accepts a bounded list of ids in one request. */
+const bulkDeleteBody = z.object({
+  ids: z
+    .array(z.string())
+    .min(1, 'Select at least one event to delete')
+    // A ceiling keeps one request from tying up the process indefinitely; the
+    // UI pages at 100 rows, so a full page always fits in a single call.
+    .max(100, 'Cannot delete more than 100 events in one request'),
+});
+
+/**
+ * Deletes several events in one request.
+ *
+ * Every id is authorized and deleted individually — a caller cannot widen
+ * their own access by batching — and each failure is reported against its own
+ * id rather than failing the whole batch. The response is 207 when some ids
+ * succeeded and others did not, so the client can avoid telling the user that
+ * an event was removed when it was not.
+ */
+export const bulkDeleteEvents = async (req: RequestWithId, res: Response) => {
+  try {
+    const parsed = bulkDeleteBody.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0].message });
+    }
+
+    // Duplicates in the payload would otherwise be reported as "not found" the
+    // second time around, which reads as a failure that did not happen.
+    const ids = Array.from(new Set(parsed.data.ids));
+    const currentUser = (req as any).user;
+    const bulkOperationId = `BULK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+
+    const deletedIds: string[] = [];
+    const failed: { id: string; reason: string }[] = [];
+
+    for (const id of ids) {
+      try {
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+          failed.push({ id, reason: 'Invalid event id' });
+          continue;
+        }
+        if (!(await isEventAuthorized(currentUser, id))) {
+          failed.push({ id, reason: 'Access denied' });
+          continue;
+        }
+        const event = await Event.findById(id);
+        if (!event) {
+          failed.push({ id, reason: 'Event not found' });
+          continue;
+        }
+
+        await performEventDeletion(event, req, { bulkOperationId });
+        deletedIds.push(id);
+      } catch (err) {
+        // One bad event must not abort the rest of the batch.
+        console.error(`Bulk delete failed for event ${id}:`, err);
+        failed.push({ id, reason: 'Failed to delete event' });
+      }
+    }
+
+    // A summary entry alongside the per-event records, matching how bulk
+    // contact imports are logged.
+    await AuditService.log({
+      action: 'BULK_EVENT_DELETED',
+      collectionName: 'events',
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      bulkOperationId,
+      bulk: {
+        isBulk: true,
+        operationType: 'DELETE',
+        totalRecords: ids.length,
+        successfulRecords: deletedIds.length,
+        failedRecords: failed.length,
+      },
+      description: `Bulk deleted ${deletedIds.length} of ${ids.length} events`,
+      success: failed.length === 0,
+    });
+
+    // 207 only when the outcome is genuinely mixed; an all-failed batch is a
+    // plain failure and should not be dressed up as a partial success.
+    const status = failed.length === 0 ? 200 : deletedIds.length === 0 ? 400 : 207;
+    res.status(status).json({
+      deletedCount: deletedIds.length,
+      deletedIds,
+      failed,
+    });
+  } catch (error) {
+    console.error('Bulk delete events error:', error);
+    res.status(500).json({ error: 'Failed to delete events' });
   }
 };
 
