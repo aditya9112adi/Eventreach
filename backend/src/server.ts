@@ -21,6 +21,7 @@ import settingsRoutes from './routes/settingsRoutes';
 import adminRoutes from './routes/adminRoutes';
 import auditRoutes from './routes/auditRoutes';
 import webhookRoutes from './routes/webhookRoutes';
+import whatsappRoutes from './routes/whatsappRoutes';
 import { requestMiddleware } from './middleware/requestMiddleware';
 import { globalLimiter } from './middleware/rateLimitMiddleware';
 import { getAllowedOrigins, getFrontendBaseUrl, isFrontendUrlConfigured } from './config/appUrls';
@@ -87,6 +88,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/whatsapp', whatsappRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
