@@ -34,6 +34,10 @@ services:
         sync: false
       - key: WHATSAPP_API_VERSION
         sync: false
+      # Optional. Only used to read an approved template's body text for the
+      # Composer preview; sending does not need it.
+      - key: WHATSAPP_WABA_ID
+        sync: false
       # Delivery-status webhook. VERIFY_TOKEN is a value you choose and paste
       # into the Meta dashboard; APP_SECRET comes from Meta (App settings >
       # Basic) and authenticates incoming callbacks.
