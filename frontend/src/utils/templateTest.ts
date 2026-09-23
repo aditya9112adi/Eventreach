@@ -1,6 +1,6 @@
 /**
- * Single-guest WhatsApp template test: the decisions the Campaign Composer
- * makes around it, kept out of the component so they can be tested.
+ * WhatsApp template send from the Campaign Composer: the decisions around it,
+ * kept out of the component so they can be tested.
  *
  * An approved template is filled by Meta, not by this app — the frontend never
  * builds the message text that is sent. It only renders a preview of what the
@@ -59,16 +59,70 @@ export const renderTemplateBody = (bodyText: string, variables: TemplateVariable
   });
 };
 
-/** Identifies one exact test: the same key twice is the duplicate to prevent. */
+// ── guest picker ─────────────────────────────────────────────────────────────
+
+export interface GuestOption {
+  _id: string;
+  fullName: string;
+  phoneNumber: string;
+}
+
+/**
+ * Filters the visible guests by name or number. Selection lives outside this
+ * list, so narrowing the search never changes who is selected.
+ */
+export const filterGuests = <T extends GuestOption>(guests: readonly T[], query: string): T[] => {
+  const q = query.trim().toLowerCase();
+  if (!q) return [...guests];
+  // Digits typed without the country code should still find "+9198…".
+  const digits = q.replace(/\D/g, '');
+  return guests.filter(
+    (guest) =>
+      guest.fullName.toLowerCase().includes(q) ||
+      guest.phoneNumber.toLowerCase().includes(q) ||
+      (digits.length > 0 && guest.phoneNumber.replace(/\D/g, '').includes(digits))
+  );
+};
+
+/** What the closed selector shows — a count, never a list of names. */
+export const guestSelectionLabel = (count: number): string => {
+  if (count <= 0) return 'Select guests...';
+  return count === 1 ? '1 guest selected' : `${count} guests selected`;
+};
+
+/**
+ * Adds or removes one guest. Ids are a set: ticking a guest never disturbs the
+ * ones already ticked, and the same guest can never appear twice.
+ */
+export const toggleGuest = (selected: readonly string[], guestId: string): string[] => {
+  const next = new Set(selected);
+  if (next.has(guestId)) next.delete(guestId);
+  else next.add(guestId);
+  return [...next];
+};
+
+/**
+ * Select All applies to the guests currently listed, so it means what it says
+ * while a search is narrowing the list — and it keeps selections the search is
+ * hiding rather than silently dropping them.
+ */
+export const selectAllGuests = (
+  selected: readonly string[],
+  visible: readonly GuestOption[]
+): string[] => [...new Set([...selected, ...visible.map((guest) => guest._id)])];
+
+// ── sending ──────────────────────────────────────────────────────────────────
+
+/** Identifies one exact send: the same key twice is the duplicate to prevent. */
 export const selectionKey = (
   eventId: string,
-  contactId: string,
+  contactIds: readonly string[],
   templateName: string
-): string => `${eventId}:${contactId}:${templateName}`;
+): string => `${eventId}:${[...contactIds].sort().join(',')}:${templateName}`;
 
 export interface SendGateState {
   eventId: string;
-  contactId: string;
+  contactIds: readonly string[];
   templateName: string;
   preview: TemplatePreview | null;
   isSending: boolean;
@@ -79,29 +133,34 @@ export interface SendGateState {
 }
 
 /**
- * Whether the Send button may fire. Exactly one guest, a preview that loaded,
- * a usable phone number, no send in flight, and never the same selection
- * twice — that last rule is what a double click runs into.
+ * Whether the Send button may fire: at least one guest, a preview that loaded
+ * for the first of them, no send in flight, and never the same selection twice
+ * — that last rule is what a double click runs into.
+ *
+ * A phone number that cannot be used only blocks the send when it is the only
+ * recipient; in a batch the server reports that guest as a failure and still
+ * messages the others.
  */
 export const canSendTemplate = (state: SendGateState): boolean => {
-  if (!state.eventId || !state.contactId || !state.templateName) return false;
+  if (!state.eventId || state.contactIds.length === 0 || !state.templateName) return false;
   if (!state.eventSendable || state.isSending) return false;
   const { preview } = state;
   if (!preview) return false;
-  if (preview.recipient.contactId !== state.contactId) return false; // stale preview
-  if (!preview.recipient.phoneValid || preview.placeholderMismatch) return false;
-  return state.lastSentKey !== selectionKey(state.eventId, state.contactId, state.templateName);
+  if (preview.recipient.contactId !== state.contactIds[0]) return false; // stale preview
+  if (preview.placeholderMismatch) return false;
+  if (!preview.recipient.phoneValid && state.contactIds.length === 1) return false;
+  return state.lastSentKey !== selectionKey(state.eventId, state.contactIds, state.templateName);
 };
 
 /** Why the button is disabled, for the hint under it. '' when it is enabled. */
 export const sendBlockedReason = (state: SendGateState): string => {
   if (!state.eventId) return 'Select an event.';
   if (!state.eventSendable) return 'This event is no longer accepting messages.';
-  if (!state.contactId) return 'Select exactly one guest.';
+  if (state.contactIds.length === 0) return 'Select at least one guest.';
   if (state.isSending) return 'Sending…';
   if (!state.preview) return 'Loading the template preview…';
-  if (state.preview.recipient.contactId !== state.contactId) return 'Loading the template preview…';
-  if (!state.preview.recipient.phoneValid) {
+  if (state.preview.recipient.contactId !== state.contactIds[0]) return 'Loading the template preview…';
+  if (!state.preview.recipient.phoneValid && state.contactIds.length === 1) {
     return state.preview.recipient.phoneError
       ? `This guest's phone number cannot be used: ${state.preview.recipient.phoneError}`
       : "This guest's phone number cannot be used.";
@@ -109,10 +168,82 @@ export const sendBlockedReason = (state: SendGateState): string => {
   if (state.preview.placeholderMismatch) {
     return 'The approved template expects a different number of values than this page fills.';
   }
-  if (state.lastSentKey === selectionKey(state.eventId, state.contactId, state.templateName)) {
-    return 'Already sent to this guest. Choose another guest, or use Send again.';
+  if (state.lastSentKey === selectionKey(state.eventId, state.contactIds, state.templateName)) {
+    return 'Already sent to this selection. Change the guests, or use Send again.';
   }
   return '';
+};
+
+export interface SentRecipient {
+  contactId: string;
+  fullName: string;
+  messageId: string;
+  status: string;
+}
+
+export interface FailedRecipient {
+  contactId: string;
+  fullName: string | null;
+  reason: string;
+  code: string;
+  /** Meta's own error number, when the rejection came from Meta. */
+  metaCode?: number;
+}
+
+export interface SendSummary {
+  tone: 'success' | 'partial' | 'error';
+  headline: string;
+  sent: SentRecipient[];
+  failed: FailedRecipient[];
+}
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+/**
+ * Turns the endpoint's per-recipient result into what the panel shows.
+ *
+ * A batch where some recipients failed is never reported as a success: the
+ * headline states both counts and every failure is listed with its reason.
+ */
+export const summarizeSendResult = (data: any): SendSummary => {
+  const sent: SentRecipient[] = Array.isArray(data?.sent) ? data.sent : [];
+  const rawFailed: FailedRecipient[] = Array.isArray(data?.failed) ? data.failed : [];
+  // Meta's number is what a support page or the template manager is searched
+  // by, so it is shown with the reason rather than dropped.
+  const failed = rawFailed.map((recipient) =>
+    typeof recipient.metaCode === 'number'
+      ? { ...recipient, reason: `${recipient.reason} (Meta error ${recipient.metaCode})` }
+      : recipient
+  );
+  const total = sent.length + failed.length;
+
+  if (failed.length === 0) {
+    return {
+      tone: 'success',
+      headline:
+        sent.length === 1
+          ? `WhatsApp accepted the message for ${sent[0].fullName}.`
+          : `WhatsApp accepted all ${plural(sent.length, 'message')}.`,
+      sent,
+      failed,
+    };
+  }
+
+  if (sent.length === 0) {
+    return {
+      tone: 'error',
+      headline: `No messages were sent — ${plural(failed.length, 'guest')} failed.`,
+      sent,
+      failed,
+    };
+  }
+
+  return {
+    tone: 'partial',
+    headline: `${sent.length} of ${total} messages sent — ${plural(failed.length, 'guest')} failed.`,
+    sent,
+    failed,
+  };
 };
 
 /**

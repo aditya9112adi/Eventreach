@@ -18,20 +18,23 @@ import { EventSearch } from '../../components/ui/EventSearch';
 import { FileUpload } from '../../components/ui/FileUpload';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
+import { GuestMultiSelect } from '../../components/ui/GuestMultiSelect';
 import {
   canSendTemplate,
   describeSendError,
   renderTemplateBody,
   selectionKey,
   sendBlockedReason,
+  summarizeSendResult,
   variableLabel,
+  type SendSummary,
   type TemplatePreview,
 } from '../../utils/templateTest';
 
 /**
- * The approved WhatsApp templates this page can send. One entry for now: the
- * single-guest test that comes before bulk sending. The backend keeps the same
- * allowlist and is what actually decides — this is only what the user sees.
+ * The approved WhatsApp templates this page can send. One entry for now. The
+ * backend keeps the same allowlist and is what actually decides — this is only
+ * what the user sees.
  */
 const TEMPLATES = [
   {
@@ -40,12 +43,6 @@ const TEMPLATES = [
     description: 'Approved utility template. Fills guest name, event, date, time and venue.',
   },
 ];
-
-interface TemplateSendResult {
-  messageId: string;
-  status: string;
-  fullName: string;
-}
 
 const Composer = () => {
   const navigate = useNavigate();
@@ -66,17 +63,20 @@ const Composer = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   
-  // WhatsApp template mode: one approved template, one guest, one real message.
+  // WhatsApp template mode: one approved template, the selected guests, real
+  // messages — each rendered by Meta from that guest's own values.
   const [messageMode, setMessageMode] = useState<'custom' | 'template'>('custom');
   const [templateName, setTemplateName] = useState(TEMPLATES[0].name);
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [selectedContactId, setSelectedContactId] = useState('');
+  const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
+  const [isContactsLoading, setIsContactsLoading] = useState(false);
+  const [contactsError, setContactsError] = useState('');
   const [templatePreview, setTemplatePreview] = useState<TemplatePreview | null>(null);
   const [previewError, setPreviewError] = useState('');
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [isSendingTemplate, setIsSendingTemplate] = useState(false);
   const [templateError, setTemplateError] = useState('');
-  const [templateResult, setTemplateResult] = useState<TemplateSendResult | null>(null);
+  const [sendSummary, setSendSummary] = useState<SendSummary | null>(null);
   // The selection already sent. Holding it here is what stops the same guest
   // being messaged twice by a double click or an impatient second click.
   const [lastSentKey, setLastSentKey] = useState<string | null>(null);
@@ -125,13 +125,25 @@ const Composer = () => {
 
 
   /**
-   * Guests of the selected event, for the single-guest template test. Loaded
-   * only in template mode — the custom flow picks its recipients on the next
-   * page and nothing about it changes here.
+   * Guests of the selected event, for the template send. Loaded only in
+   * template mode — the custom flow picks its recipients on the next page and
+   * nothing about it changes here.
+   *
+   * Changing the event clears the selection outright: a guest of the previous
+   * event must never stay selected, and the server would refuse them anyway.
    */
   useEffect(() => {
-    if (messageMode !== 'template' || !selectedEventId) return;
+    setSelectedContactIds([]);
+    setContacts([]);
+    setContactsError('');
+
+    if (messageMode !== 'template' || !selectedEventId) {
+      setIsContactsLoading(false);
+      return;
+    }
+
     let cancelled = false;
+    setIsContactsLoading(true);
 
     const fetchContacts = async () => {
       try {
@@ -141,15 +153,13 @@ const Composer = () => {
         // not offered as a recipient.
         const valid = (response.data as Contact[]).filter((c) => c.status === 'Valid');
         setContacts(valid);
-        setSelectedContactId((current) => {
-          if (valid.some((c) => c._id === current)) return current;
-          return valid.length === 1 ? valid[0]._id : '';
-        });
       } catch (err) {
         if (cancelled) return;
         console.error('Failed to fetch guests', err);
         setContacts([]);
-        setSelectedContactId('');
+        setContactsError(describeSendError(err));
+      } finally {
+        if (!cancelled) setIsContactsLoading(false);
       }
     };
 
@@ -160,17 +170,21 @@ const Composer = () => {
   }, [messageMode, selectedEventId]);
 
   /**
-   * What this guest would receive. The text comes from the backend, which
+   * What the guests would receive. The text comes from the backend, which
    * reads the approved body from Meta and resolves the variables from the
    * stored event and guest — the browser never composes a template message and
    * never holds a WhatsApp credential.
+   *
+   * A batch previews its first selected guest; the rest receive the same
+   * template with their own name filled in.
    */
+  const previewContactId = selectedContactIds[0] ?? '';
   const previewRequestRef = useRef(0);
   useEffect(() => {
-    setTemplateResult(null);
+    setSendSummary(null);
     setTemplateError('');
 
-    if (messageMode !== 'template' || !selectedEventId || !selectedContactId) {
+    if (messageMode !== 'template' || !selectedEventId || !previewContactId) {
       setTemplatePreview(null);
       setPreviewError('');
       setIsPreviewLoading(false);
@@ -183,7 +197,7 @@ const Composer = () => {
 
     api
       .get('/whatsapp/event-template-preview', {
-        params: { eventId: selectedEventId, contactId: selectedContactId, templateName },
+        params: { eventId: selectedEventId, contactId: previewContactId, templateName },
       })
       .then((response) => {
         if (previewRequestRef.current !== requestId) return; // a later selection won
@@ -197,7 +211,7 @@ const Composer = () => {
       .finally(() => {
         if (previewRequestRef.current === requestId) setIsPreviewLoading(false);
       });
-  }, [messageMode, selectedEventId, selectedContactId, templateName]);
+  }, [messageMode, selectedEventId, previewContactId, templateName]);
 
   const handleFileUpload = async (file: File) => {
     setIsUploading(true);
@@ -289,7 +303,7 @@ const Composer = () => {
 
   const sendGate = {
     eventId: selectedEventId,
-    contactId: selectedContactId,
+    contactIds: selectedContactIds,
     templateName,
     preview: templatePreview,
     isSending: isSendingTemplate,
@@ -298,11 +312,16 @@ const Composer = () => {
   };
 
   /**
-   * Sends ONE approved template message to ONE guest.
+   * Sends the approved template to every selected guest.
    *
    * Three things stop a duplicate: the ref lock below (a second click landing
    * before React re-renders), lastSentKey (the same selection twice), and the
-   * backend's own 60-second window for an identical send.
+   * backend's own 60-second window per guest.
+   *
+   * A partial failure is not an error: the request resolves with 207 and the
+   * per-recipient results say who was sent to and who was not. When every
+   * recipient failed the request rejects, but the body still carries the same
+   * per-recipient list, so it is reported the same way.
    */
   const sendingTemplateRef = useRef(false);
   const handleSendTemplate = async () => {
@@ -314,20 +333,29 @@ const Composer = () => {
     try {
       const response = await api.post('/whatsapp/event-template', {
         eventId: selectedEventId,
-        contactId: selectedContactId,
+        contactIds: selectedContactIds,
         templateName,
       });
-      setTemplateResult({
-        messageId: response.data.messageId,
-        status: response.data.status,
-        fullName: response.data.sentTo?.fullName || templatePreview?.recipient.fullName || '',
-      });
-      setLastSentKey(selectionKey(selectedEventId, selectedContactId, templateName));
-      showToast('success', 'WhatsApp accepted the message');
-    } catch (err) {
-      const message = describeSendError(err);
-      setTemplateError(message);
-      showToast('error', message);
+      const summary = summarizeSendResult(response.data);
+      setSendSummary(summary);
+      // Only a send that actually reached someone locks the selection; a batch
+      // where nothing went out stays retryable without an extra click.
+      if (summary.sent.length > 0) {
+        setLastSentKey(selectionKey(selectedEventId, selectedContactIds, templateName));
+      }
+      showToast(summary.tone === 'success' ? 'success' : 'error', summary.headline);
+    } catch (err: any) {
+      const data = err?.response?.data;
+      if (Array.isArray(data?.failed)) {
+        // Every recipient failed: same per-recipient reporting, no success.
+        const summary = summarizeSendResult(data);
+        setSendSummary(summary);
+        showToast('error', summary.headline);
+      } else {
+        const message = describeSendError(err);
+        setTemplateError(message);
+        showToast('error', message);
+      }
     } finally {
       sendingTemplateRef.current = false;
       setIsSendingTemplate(false);
@@ -371,7 +399,10 @@ const Composer = () => {
               disabled={!canSendTemplate(sendGate)}
               title={sendBlockedReason(sendGate) || undefined}
             >
-              <Send className="w-4 h-4 mr-2" /> Send to 1 Guest
+              <Send className="w-4 h-4 mr-2" />
+              {selectedContactIds.length > 1
+                ? `Send to ${selectedContactIds.length} Guests`
+                : 'Send to 1 Guest'}
             </Button>
           )}
         </div>
@@ -423,7 +454,7 @@ const Composer = () => {
               <p className="text-xs text-foreground/50 mt-2">
                 {messageMode === 'custom'
                   ? 'Free text and attachments, sent to the recipients you pick on the next screen.'
-                  : 'An approved WhatsApp template, sent to exactly one guest as a live test. Bulk template sending is not available yet.'}
+                  : 'An approved WhatsApp template, sent to the guests you select. Meta fills each message from the event and that guest.'}
               </p>
             </div>
 
@@ -448,30 +479,34 @@ const Composer = () => {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-sans text-foreground/80 mb-2">Guest</label>
-                  {contacts.length === 0 ? (
-                    <p className="text-sm text-foreground/60">
-                      {selectedEventId
-                        ? 'This event has no guest with a valid phone number yet.'
-                        : 'Select an event first.'}
+                  <label htmlFor="template-guests" className="block text-sm font-sans text-foreground/80 mb-2">
+                    Guests
+                  </label>
+                  <div className="w-full max-w-md relative z-10">
+                    <GuestMultiSelect
+                      id="template-guests"
+                      guests={contacts}
+                      value={selectedContactIds}
+                      onChange={setSelectedContactIds}
+                      isLoading={isContactsLoading}
+                      disabled={!selectedEventId || isSendingTemplate}
+                      emptyMessage={
+                        selectedEventId
+                          ? 'This event has no guest with a valid phone number yet.'
+                          : 'Select an event first.'
+                      }
+                    />
+                  </div>
+                  {contactsError ? (
+                    <p className="text-xs text-destructive mt-2">
+                      The guest list could not be loaded: {contactsError}
                     </p>
                   ) : (
-                    <select
-                      value={selectedContactId}
-                      onChange={(e) => setSelectedContactId(e.target.value)}
-                      className="w-full max-w-md rounded-md border border-border bg-background text-foreground p-2.5 text-sm focus:ring-2 focus:ring-white/20 outline-none"
-                    >
-                      <option value="">Select a guest...</option>
-                      {contacts.map((contact) => (
-                        <option key={contact._id} value={contact._id}>
-                          {contact.fullName} — {contact.phoneNumber}
-                        </option>
-                      ))}
-                    </select>
+                    <p className="text-xs text-foreground/50 mt-2">
+                      Each selected guest receives the approved template with their own name filled in.
+                      PDF recipient extraction is not implemented yet.
+                    </p>
                   )}
-                  <p className="text-xs text-foreground/50 mt-2">
-                    Exactly one guest per test. Bulk sending and PDF recipient extraction are not implemented yet.
-                  </p>
                 </div>
 
                 {isPreviewLoading && (
@@ -509,7 +544,10 @@ const Composer = () => {
                       </table>
                     </div>
                     <p className="text-xs text-foreground/50">
-                      Recipient: {templatePreview.recipient.fullName} ({templatePreview.recipient.phoneNumber})
+                      Preview for {templatePreview.recipient.fullName} ({templatePreview.recipient.phoneNumber})
+                      {selectedContactIds.length > 1
+                        ? ` — and ${selectedContactIds.length - 1} more guest${selectedContactIds.length > 2 ? 's' : ''}, each with their own name.`
+                        : ''}
                     </p>
                     {templatePreview.bodySource === 'unavailable' && (
                       <p className="text-xs text-amber-400">
@@ -533,26 +571,69 @@ const Composer = () => {
                   </div>
                 )}
 
-                {templateResult && (
-                  <div className="flex items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
-                    <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5 text-emerald-400" />
-                    <div className="space-y-1 min-w-0">
-                      <p className="text-sm font-medium text-emerald-400">
-                        WhatsApp accepted the message for {templateResult.fullName}.
+                {sendSummary && (
+                  <div
+                    className={`flex items-start gap-3 rounded-lg border px-4 py-3 ${
+                      sendSummary.tone === 'success'
+                        ? 'border-emerald-500/30 bg-emerald-500/10'
+                        : sendSummary.tone === 'partial'
+                          ? 'border-amber-500/30 bg-amber-500/10'
+                          : 'border-destructive/30 bg-destructive/10'
+                    }`}
+                  >
+                    {sendSummary.tone === 'success' ? (
+                      <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5 text-emerald-400" />
+                    ) : (
+                      <AlertTriangle
+                        className={`w-5 h-5 shrink-0 mt-0.5 ${
+                          sendSummary.tone === 'partial' ? 'text-amber-400' : 'text-destructive'
+                        }`}
+                      />
+                    )}
+                    <div className="space-y-2 min-w-0 w-full">
+                      <p
+                        className={`text-sm font-medium ${
+                          sendSummary.tone === 'success'
+                            ? 'text-emerald-400'
+                            : sendSummary.tone === 'partial'
+                              ? 'text-amber-400'
+                              : 'text-destructive'
+                        }`}
+                      >
+                        {sendSummary.headline}
                       </p>
-                      <p className="text-xs text-foreground/60">
-                        Status: {templateResult.status} — delivery to the handset is confirmed later by the
-                        webhook, not by this response.
-                      </p>
-                      <p className="text-xs text-foreground/60 font-mono break-all">
-                        Message ID: {templateResult.messageId}
+
+                      {sendSummary.sent.length > 0 && (
+                        <ul className="space-y-1">
+                          {sendSummary.sent.map((recipient) => (
+                            <li key={recipient.contactId} className="text-xs text-foreground/60">
+                              <span className="text-foreground/80">{recipient.fullName}</span> — {recipient.status}
+                              <span className="font-mono break-all"> · {recipient.messageId}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
+                      {sendSummary.failed.length > 0 && (
+                        <ul className="space-y-1">
+                          {sendSummary.failed.map((recipient) => (
+                            <li key={recipient.contactId} className="text-xs text-destructive">
+                              <span className="font-medium">{recipient.fullName ?? 'Unknown guest'}</span> —{' '}
+                              {recipient.reason}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
+                      <p className="text-xs text-foreground/50">
+                        Delivery to each handset is confirmed later by the webhook, not by this response.
                       </p>
                       <button
                         type="button"
                         onClick={() => setLastSentKey(null)}
                         className="text-xs text-accent hover:underline"
                       >
-                        Send again to this guest
+                        Send again to this selection
                       </button>
                     </div>
                   </div>
@@ -733,7 +814,7 @@ const Composer = () => {
                       </div>
                     ) : (
                       <div className="bg-white/80 p-2 rounded-lg shadow-sm w-[85%] float-left clear-both rounded-tl-none text-[12px] text-slate-500">
-                        Select an event and one guest to preview the approved template.
+                        Select an event and at least one guest to preview the approved template.
                       </div>
                     )
                   ) : (
