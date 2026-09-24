@@ -35,15 +35,32 @@ export interface PreparedMedia {
   supportsCaption: boolean;
 }
 
-const prepared = (a: any): PreparedMedia | null =>
-  a && typeof a.metaMediaId === 'string' && a.metaMediaId
-    ? {
-        metaMediaId: a.metaMediaId,
-        kind: a.type,
-        filename: a.filename,
-        supportsCaption: a.supportsCaption !== false && a.type !== 'audio',
-      }
-    : null;
+/** The four media kinds WhatsApp accepts, and the only valid message types here. */
+const MEDIA_KINDS = new Set(['image', 'video', 'audio', 'document']);
+
+const prepared = (a: any): PreparedMedia | null => {
+  if (!a || typeof a.metaMediaId !== 'string' || !a.metaMediaId) return null;
+
+  /**
+   * An attachment that reached this point with no recognisable kind would
+   * build a message with no `type` at all. Meta treats an untyped message as
+   * text, then rejects it for having no text — "(#100) Invalid parameter: The
+   * parameter 'text' cannot be null" — which says nothing about the real
+   * problem. Refuse it here instead, so the recipient's row names the cause.
+   */
+  if (!MEDIA_KINDS.has(a.kind ?? a.type)) {
+    throw new WhatsAppSendError(
+      `The attachment "${a.filename || 'attachment'}" has an unrecognised media type and cannot be sent.`
+    );
+  }
+
+  return {
+    metaMediaId: a.metaMediaId,
+    kind: a.type,
+    filename: a.filename,
+    supportsCaption: a.supportsCaption !== false && a.type !== 'audio',
+  };
+};
 
 const textPayload = (to: string, body: string) => ({
   messaging_product: 'whatsapp',
@@ -73,7 +90,15 @@ const mediaObject = (media: PreparedMedia, caption?: string) => {
  */
 export const buildPrimaryPayload = (to: string, messageText: string, attachments: any[] = []) => {
   const first = (attachments || []).map(prepared).find(Boolean) as PreparedMedia | undefined;
-  if (!first) return textPayload(to, messageText || '');
+  if (!first) {
+    // No media and no text is nothing to send. Posting an empty body would be
+    // refused by Meta with an error about the text parameter, which reads as a
+    // payload bug rather than an empty campaign.
+    if (!messageText) {
+      throw new WhatsAppSendError('There is nothing to send: the campaign has no message text and no attachment.');
+    }
+    return textPayload(to, messageText);
+  }
 
   return {
     messaging_product: 'whatsapp',

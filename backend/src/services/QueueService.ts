@@ -27,7 +27,18 @@ import { AuditService } from './AuditService';
 const prepareMediaForSending = async (attachments: any[]): Promise<any[]> => {
   const out: any[] = [];
 
-  for (const att of attachments) {
+  for (const stored of attachments) {
+    /**
+     * A campaign's attachments arrive as Mongoose subdocuments, whose schema
+     * fields (url, type, filename) are prototype getters rather than own
+     * properties. Spreading one further down would copy its internals ($__,
+     * _doc, …) and silently drop every field, leaving the message with no
+     * `type` — which Meta then treats as a text message with no text and
+     * rejects as "(#100) … The parameter 'text' cannot be null". Convert to a
+     * plain object first; an attachment passed in directly is already one.
+     */
+    const att = typeof stored?.toObject === 'function' ? stored.toObject() : stored;
+
     const fileName = path.basename(String(att?.url || ''));
     if (!fileName) throw new Error('A campaign attachment has no stored file.');
 

@@ -434,3 +434,221 @@ describe('No credentials in logs or responses', () => {
     assert.ok(!String(log.errorReason).includes(process.env.WHATSAPP_TOKEN!), 'token must not reach the report');
   });
 });
+
+// ── Custom Message payloads, built from the STORED campaign ──────────────────
+
+/**
+ * Regression cover for the production failure of 23 Sep 2026: a text + PDF
+ * campaign reached Meta as
+ *   {"messaging_product":…,"to":…,"undefined":{"id":…,"caption":…}}
+ * with no `type` at all, because campaign.mediaAttachments hands over Mongoose
+ * subdocuments and spreading one drops every schema field. Meta treats an
+ * untyped message as text and answers
+ *   (#100) Invalid parameter: The parameter 'text' cannot be null.
+ *
+ * The tests above pass attachments as plain object literals, which is why they
+ * never saw it. These go through the database exactly as sendCampaign does.
+ */
+describe('Custom Message payloads, from the stored campaign', () => {
+  const attachFrom = async (kind: string, filename?: string) => {
+    const f = FIXTURES[kind];
+    const res = await uploadFile({
+      bytes: makeBytes(kind),
+      filename: filename || `c${f.ext}`,
+      contentType: f.mime,
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    return res.body;
+  };
+
+  const MESSAGE = 'Hi,\n\nPlease find the event document attached.\n\nThank you,\nEventReach Team';
+
+  /** Stores the campaign, then sends it the way sendCampaign does: with the
+   *  values read back off the persisted document. */
+  const sendStored = async (messageText: string, attachments: any[]) => {
+    const campaign = await Campaign.create({
+      eventId,
+      messageText,
+      mediaAttachments: attachments,
+      status: 'Draft',
+    });
+    const fresh = await Campaign.findById(campaign._id);
+    await queueService.processCampaign(
+      String(fresh._id),
+      undefined,
+      fresh.messageText,
+      fresh.mediaAttachments
+    );
+    for (let i = 0; i < 80; i++) {
+      const pending = await MessageLog.countDocuments({ campaignId: String(campaign._id), status: 'Pending' });
+      if (pending === 0) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return campaign;
+  };
+
+  const messagesFrom = (calls: Array<{ url: string; body: any }>) =>
+    calls.filter((c) => c.url.includes('/messages')).map((c) => c.body);
+
+  /** The exact shape the production error was about. */
+  const assertNoNullText = (payload: any) => {
+    assert.ok(payload.type, 'the message must carry a type — an untyped message is read by Meta as text');
+    assert.ok(!Object.keys(payload).includes('undefined'), 'no "undefined" key may reach Meta');
+    assert.ok(!('text' in payload), 'a media message must not carry a text property at all');
+    assert.ok(
+      !/"text"\s*:\s*null/.test(JSON.stringify(payload)),
+      'the payload must never serialize text: null'
+    );
+  };
+
+  test('1. text only sends a text payload carrying the real body', async () => {
+    const calls = stubMeta();
+    await seedContacts(1);
+    await sendStored(MESSAGE, []);
+
+    const [payload] = messagesFrom(calls);
+    assert.equal(payload.type, 'text');
+    assert.equal(payload.text.body, MESSAGE, 'the composed message must survive to Meta');
+    assert.equal(payload.text.preview_url, false);
+    assert.equal(calls.filter((c) => c.url.includes('/media')).length, 0);
+  });
+
+  test('2. PDF only sends a document payload, with no text property', async () => {
+    const calls = stubMeta();
+    const att = await attachFrom('pdf', 'Aditya_New_.pdf');
+    await seedContacts(1);
+    await sendStored('', [att]);
+
+    const [payload] = messagesFrom(calls);
+    assert.equal(payload.type, 'document');
+    assert.equal(payload.document.id, 'media-id-1');
+    assert.equal(payload.document.filename, 'Aditya_New_.pdf');
+    assert.equal(payload.document.caption, undefined, 'no caption when there is no message');
+    assertNoNullText(payload);
+  });
+
+  test('3. text + PDF sends ONE document payload whose caption is the message', async () => {
+    const calls = stubMeta();
+    const att = await attachFrom('pdf', 'Aditya_New_.pdf');
+    await seedContacts(1);
+    await sendStored(MESSAGE, [att]);
+
+    const payloads = messagesFrom(calls);
+    assert.equal(payloads.length, 1, 'the text rides as the caption, it is not sent twice');
+    assert.equal(payloads[0].type, 'document');
+    assert.equal(payloads[0].document.caption, MESSAGE);
+    assert.equal(payloads[0].document.filename, 'Aditya_New_.pdf', 'the filename is the other field the bug dropped');
+    assertNoNullText(payloads[0]);
+  });
+
+  test('4. image only sends an image payload, with no text property', async () => {
+    const calls = stubMeta();
+    const att = await attachFrom('png');
+    await seedContacts(1);
+    await sendStored('', [att]);
+
+    const [payload] = messagesFrom(calls);
+    assert.equal(payload.type, 'image');
+    assert.equal(payload.image.id, 'media-id-1');
+    assertNoNullText(payload);
+  });
+
+  test('5. text + image sends an image payload captioned with the message', async () => {
+    const calls = stubMeta();
+    const att = await attachFrom('png');
+    await seedContacts(1);
+    await sendStored(MESSAGE, [att]);
+
+    const [payload] = messagesFrom(calls);
+    assert.equal(payload.type, 'image');
+    assert.equal(payload.image.caption, MESSAGE);
+    assertNoNullText(payload);
+  });
+
+  test('6. every recipient of a text + PDF campaign gets the same document payload', async () => {
+    const calls = stubMeta();
+    const att = await attachFrom('pdf', 'Aditya_New_.pdf');
+    await seedContacts(3);
+    await sendStored(MESSAGE, [att]);
+
+    const payloads = messagesFrom(calls);
+    assert.equal(payloads.length, 3, 'one message per recipient');
+    assert.equal(calls.filter((c) => c.url.includes('/media')).length, 1, 'uploaded once');
+    for (const payload of payloads) {
+      assert.equal(payload.type, 'document');
+      assert.equal(payload.document.id, 'media-id-1');
+      assert.equal(payload.document.filename, 'Aditya_New_.pdf');
+      assert.equal(payload.document.caption, MESSAGE);
+      assertNoNullText(payload);
+    }
+    assert.equal(new Set(payloads.map((p) => p.to)).size, 3, 'three distinct recipients');
+  });
+
+  test('7. a campaign with neither text nor attachment is refused, not sent as empty text', async () => {
+    const calls = stubMeta();
+    await seedContacts(1);
+    const campaign = await sendStored('', []);
+
+    assert.equal(messagesFrom(calls).length, 0, 'nothing may be posted to Meta');
+    const log = await MessageLog.findOne({ campaignId: String(campaign._id) }).lean();
+    assert.equal(log.status, 'Failed');
+    assert.match(log.errorReason, /nothing to send/i);
+  });
+
+  test('an attachment with an unrecognised type fails loudly instead of going out untyped', async () => {
+    const calls = stubMeta();
+    const att = await attachFrom('pdf', 'Aditya_New_.pdf');
+    await seedContacts(1);
+    // The shape the bug produced: a media id, but no kind.
+    const campaign = await Campaign.create({ eventId, messageText: MESSAGE, status: 'Draft' });
+    await queueService.processCampaign(String(campaign._id), undefined, MESSAGE, [
+      { url: att.url, filename: att.filename, mimeType: att.mimeType },
+    ]);
+    for (let i = 0; i < 80; i++) {
+      const pending = await MessageLog.countDocuments({ campaignId: String(campaign._id), status: 'Pending' });
+      if (pending === 0) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    assert.equal(messagesFrom(calls).length, 0, 'an untyped message must never reach Meta');
+    const log = await MessageLog.findOne({ campaignId: String(campaign._id) }).lean();
+    assert.equal(log.status, 'Failed');
+    assert.match(log.errorReason, /unrecognised media type/i);
+  });
+
+  test('the composed text reaches Meta and the recipient log verbatim', async () => {
+    const calls = stubMeta();
+    const att = await attachFrom('pdf', 'Aditya_New_.pdf');
+    await seedContacts(1);
+
+    const campaign = await Campaign.create({
+      eventId, messageText: MESSAGE, mediaAttachments: [att], status: 'Draft',
+    });
+
+    // What is stored before anything is sent.
+    const stored = await Campaign.findById(campaign._id).lean();
+    assert.equal(stored.messageText, MESSAGE, 'the composer text must persist verbatim');
+    assert.equal(stored.mediaAttachments[0].type, 'document', 'the stored attachment keeps its type');
+    assert.equal(stored.mediaAttachments[0].filename, 'Aditya_New_.pdf');
+
+    const fresh = await Campaign.findById(campaign._id);
+    await queueService.processCampaign(String(fresh._id), undefined, fresh.messageText, fresh.mediaAttachments);
+    for (let i = 0; i < 80; i++) {
+      const pending = await MessageLog.countDocuments({ campaignId: String(campaign._id), status: 'Pending' });
+      if (pending === 0) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    assert.equal(messagesFrom(calls)[0].document.caption, MESSAGE, 'the text must not be lost on the way to Meta');
+
+    const log = await MessageLog.findOne({ campaignId: String(campaign._id) }).lean();
+    assert.equal(log.messageText, MESSAGE, 'the per-recipient record keeps the text that was sent');
+
+    // Clearing the live draft after a send is deliberate — the Composer shows
+    // it under "Previously Shared Messages" from history. It is emptied, never
+    // set to null.
+    const after = await Campaign.findById(campaign._id).lean();
+    assert.equal(after.messageText, '', 'the draft is cleared after sending, by design');
+    assert.notEqual(after.messageText, null);
+  });
+});
