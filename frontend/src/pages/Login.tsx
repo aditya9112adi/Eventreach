@@ -205,6 +205,11 @@ const Login = () => {
                   Create an account
                 </Link>
               </div>
+              <div className="mt-6 text-center text-xs">
+                <Link to="/privacy-policy" className="text-foreground/40 hover:text-foreground/70 transition-colors">
+                  Privacy Policy
+                </Link>
+              </div>
             </form>
           </div>
         </div>

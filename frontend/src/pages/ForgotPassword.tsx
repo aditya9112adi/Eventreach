@@ -159,6 +159,12 @@ const ForgotPassword = () => {
               <ArrowLeft className="w-4 h-4" />
               Back to Login
             </Link>
+
+            <div className="mt-4 text-center text-xs">
+              <Link to="/privacy-policy" className="text-foreground/40 hover:text-foreground/70 transition-colors">
+                Privacy Policy
+              </Link>
+            </div>
           </div>
         </div>
       </div>

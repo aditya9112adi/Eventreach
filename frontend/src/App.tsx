@@ -25,6 +25,7 @@ const ChangePassword = lazy(() => import('./pages/ChangePassword'));
 const Register = lazy(() => import('./pages/Register'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const UserApprovals = lazy(() => import('./pages/Admin/UserApprovals'));
 const JustAccess = lazy(() => import('./pages/Admin/JustAccess'));
 const AuditLogs = lazy(() => import('./pages/Admin/AuditLogs'));
@@ -60,6 +61,8 @@ function AnimatedRoutes() {
         <Route path="/register" element={<PageWrapper><Register /></PageWrapper>} />
         <Route path="/forgot-password" element={<PageWrapper><ForgotPassword /></PageWrapper>} />
         <Route path="/reset-password" element={<PageWrapper><ResetPassword /></PageWrapper>} />
+        {/* Public on purpose: Meta's app review has to reach it without an account. */}
+        <Route path="/privacy-policy" element={<PageWrapper><PrivacyPolicy /></PageWrapper>} />
 
         <Route
           element={
