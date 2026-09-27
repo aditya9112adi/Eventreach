@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
+import { createRequire } from 'node:module';
 import {
   buildReportWorkbook,
+  buildReportPdf,
   buildMetaRows,
   REPORT_NOTE,
   REPORT_CREDIT,
@@ -179,33 +181,143 @@ test('Event Report — Excel', async (t) => {
   });
 });
 
-test('Event Report — PDF shares the same contract', async (t) => {
+/**
+ * The PDF is built and read back, so these assert what the document actually
+ * says rather than what its source looks like. pdf-parse is resolved from the
+ * backend's dependencies — the one copy this repository already has.
+ */
+const readPdfText = async (doc: any): Promise<string> => {
+  const require = createRequire(import.meta.url);
+  const pdfParse = require(require.resolve('pdf-parse', { paths: ['./backend', '.'] }));
+  const parsed = await pdfParse(Buffer.from(doc.output('arraybuffer')));
+  return parsed.text;
+};
+
+test('Event Report — PDF content', async (t) => {
+  const doc = await buildReportPdf('Event Report', COLUMNS, ROWS, META);
+  const text = await readPdfText(doc);
+  // pdf-parse runs words together, so the assertions strip spaces.
+  const flat = text.replace(/\s+/g, '');
+
+  await t.test('the report states its own name', () => {
+    assert.match(text, /Event Report/);
+  });
+
+  await t.test('it carries the same three filters as the Excel report', () => {
+    assert.match(flat, /SearchValueEVT-39759394/);
+    assert.match(flat, /StartDate2026-09-16/);
+    assert.match(flat, /EndDate2026-09-16/);
+  });
+
+  await t.test('all nine columns are present, in order', () => {
+    const headers = ['Event ID', 'Event Name', 'Event Type', 'Organizer', 'Mobile', 'Date', 'Time', 'Venue', 'Status'];
+    let cursor = -1;
+    for (const header of headers) {
+      const at = flat.indexOf(header.replace(/\s+/g, ''), cursor + 1);
+      assert.ok(at > cursor, `${header} must appear after the previous column`);
+      cursor = at;
+    }
+  });
+
+  await t.test('the row values are the ones handed in', () => {
+    assert.match(flat, /EVT-000001/);
+    assert.match(flat, /SamMudgade/);
+    assert.match(flat, /9112477076/);
+    assert.match(flat, /Upcoming/);
+  });
+
+  await t.test('Date, Mobile and Status survive a row with long text beside them', async () => {
+    // Long names and venues are what squeeze the narrow columns. Without fixed
+    // widths the date wraps to "10 Oct" / "2026" and the report reads badly.
+    const crowded = {
+      ...ROWS[0],
+      eventName: 'Anniversary Celebration For The Whole Extended Family',
+      organizerName: 'Sam Mudgade Kshirsagar Suryavanshi',
+      eventVenue: 'Grand Palace Convention Centre, Kothrud, Pune 411038',
+    };
+    const doc = await buildReportPdf('Event Report', COLUMNS, [crowded], META);
+    const crowdedText = await readPdfText(doc);
+
+    assert.match(crowdedText, /10 Oct 2026/, 'the date stays on one line');
+    assert.match(crowdedText, /9112477076/, 'the mobile is not split');
+    assert.match(crowdedText, /Upcoming/, 'the status is not clipped');
+    assert.match(crowdedText, /21:39/, 'the time is not split');
+  });
+
+  await t.test('both standing notes are in the document', () => {
+    assert.match(text, /Note :: This report is system generated/);
+    assert.match(text, /Designed & developed by SmartStack Soft Solutions/);
+  });
+
+  await t.test('nothing from the Campaign Delivery Report leaks in', () => {
+    for (const field of ['Campaign Delivery', 'Message Content', 'Contact Name', 'Failure']) {
+      assert.ok(!text.includes(field), `${field} belongs to the campaign report, not this one`);
+    }
+  });
+
+  await t.test('it is landscape, so nine columns fit across the page', () => {
+    const { width, height } = doc.internal.pageSize;
+    assert.ok(width > height, `expected landscape, got ${width}x${height}`);
+  });
+
+  await t.test('a long value wraps instead of running over the border', async () => {
+    const longRow = { ...ROWS[0], eventVenue: 'Grand Palace Convention Centre, Kothrud, Pune 411038' };
+    const wide = await buildReportPdf('Event Report', COLUMNS, [longRow], META);
+    const wrapped = await readPdfText(wide);
+    assert.match(wrapped.replace(/\s+/g, ''), /GrandPalaceConventionCentre,Kothrud,Pune411038/);
+    assert.equal(wide.internal.getNumberOfPages(), 1, 'wrapping must not spill onto another page');
+  });
+
+  await t.test('a long report repeats the headings and the notes on every page', async () => {
+    const many = Array.from({ length: 60 }, () => ROWS[0]);
+    const long = await buildReportPdf('Event Report', COLUMNS, many, META);
+    const pages = long.internal.getNumberOfPages();
+    assert.ok(pages > 1, `expected a multi-page report, got ${pages}`);
+
+    const longText = await readPdfText(long);
+    const headings = (longText.match(/Event ID/g) ?? []).length;
+    const notes = (longText.match(/Note :: This report is system generated/g) ?? []).length;
+    assert.equal(headings, pages, 'the heading row repeats on every page');
+    assert.equal(notes, pages, 'the note appears on every page');
+  });
+
+  await t.test('only the rows handed in are written', async () => {
+    const empty = await buildReportPdf('Event Report', COLUMNS, [], META);
+    const emptyText = await readPdfText(empty);
+    assert.ok(!emptyText.includes('EVT-000001'), 'an empty filtered set prints no rows');
+    assert.match(emptyText, /Event Report/, 'but still prints the report itself');
+  });
+});
+
+test('Event Report — PDF styling', async (t) => {
+  // Fills, bold and line widths do not survive text extraction, so these few
+  // are read from the builder's source. Everything the document *says* is
+  // asserted against the rendered PDF above.
   const source = fs.readFileSync('frontend/src/utils/reportExport.ts', 'utf-8');
+  const builder = source.slice(source.indexOf('export const buildReportPdf'), source.indexOf('export const exportToPdf'));
 
-  await t.test('it prints the title, the filters and both notes', () => {
-    const pdf = source.slice(source.indexOf('export const exportToPdf'));
-    assert.ok(pdf.includes('doc.text(title'), 'the report name');
-    assert.ok(pdf.includes('buildMetaRows(meta)'), 'the same three filter lines as Excel');
-    assert.ok(pdf.includes('REPORT_NOTE'), REPORT_NOTE);
-    assert.ok(pdf.includes('REPORT_CREDIT'), REPORT_CREDIT);
+  await t.test('the heading row is bold and highlighted, matching the Excel fill', () => {
+    assert.ok(builder.includes("fontStyle: 'bold'"), 'bold headings');
+    assert.ok(builder.includes('fillColor: [217, 225, 242]'), 'the same fill the workbook uses');
   });
 
-  await t.test('the table is drawn with borders on every side', () => {
-    const pdf = source.slice(source.indexOf('export const exportToPdf'));
-    assert.ok(pdf.includes("theme: 'grid'"), "autotable's grid theme draws all four sides");
-    assert.ok(pdf.includes('lineWidth'), 'with a visible line width');
+  await t.test('every cell is bordered', () => {
+    assert.ok(builder.includes("theme: 'grid'"), "autotable's grid theme draws all four sides");
+    assert.ok(builder.includes('lineWidth: 0.1'), 'with a visible line width');
   });
 
-  await t.test('the headings are bold and filled', () => {
-    const pdf = source.slice(source.indexOf('export const exportToPdf'));
-    assert.ok(pdf.includes("fontStyle: 'bold'"));
-    assert.ok(pdf.includes('fillColor: [217, 225, 242]'));
+  await t.test('long values are set to wrap', () => {
+    assert.ok(builder.includes("overflow: 'linebreak'"));
   });
 
-  await t.test('it writes the rows it is given, and never queries for more', () => {
-    const pdf = source.slice(source.indexOf('export const exportToPdf'));
-    assert.ok(pdf.includes('body: rows.map'), 'the body comes from the rows argument');
-    assert.ok(!/\bfetch\(|\baxios\b|\bapi\./.test(pdf), 'no export may load its own dataset');
+  await t.test('headings repeat and rows are kept whole across pages', () => {
+    assert.ok(builder.includes("showHead: 'everyPage'"));
+    assert.ok(builder.includes("rowPageBreak: 'avoid'"));
+  });
+
+  await t.test('it never loads its own data', () => {
+    assert.ok(builder.includes('body: rows.map'), 'the body comes from the rows argument');
+    assert.ok(!/fetch\(|axios|api\./.test(builder), 'no export may query for rows');
   });
 });
 

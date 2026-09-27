@@ -158,6 +158,112 @@ export const exportToExcel = async <T>(
   );
 };
 
+/**
+ * Assembles the PDF. Split from the download for the same reason as the
+ * workbook: the document can then be built and read back in a test, where
+ * `doc.save()` has no browser to save into.
+ *
+ * Laid out to match the Excel report rather than the plain table this used to
+ * print: same title, same three filter lines, same highlighted headings, a
+ * border on every cell, and the two standing notes at the foot of every page.
+ */
+export const buildReportPdf = async <T>(
+  title: string,
+  columns: ReportColumn<T>[],
+  rows: T[],
+  meta: ReportMeta = {}
+): Promise<any> => {
+  const [jspdf, autotable]: any[] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
+  const jsPDF = jspdf.default ?? jspdf.jsPDF ?? jspdf;
+  const autoTable = autotable.default ?? autotable.autoTable ?? autotable;
+
+  // Nine columns do not fit across a portrait page without squashing.
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 12;
+
+  // Title: centred, bold, underlined — as the report reads in Excel.
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(20);
+  doc.text(title, pageWidth / 2, 16, { align: 'center' });
+  const titleWidth = doc.getTextWidth(title);
+  doc.setLineWidth(0.4);
+  doc.line((pageWidth - titleWidth) / 2, 18, (pageWidth + titleWidth) / 2, 18);
+
+  // The filters this report was generated from: bold label, plain value, in
+  // two aligned columns the way the spreadsheet lays them out.
+  doc.setFontSize(10);
+  let y = 27;
+  for (const [label, value] of buildMetaRows(meta)) {
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(20);
+    doc.text(label, margin, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(60);
+    doc.text(String(value), margin + 34, y);
+    y += 6;
+  }
+
+  /**
+   * Column widths, shared out across the page in the proportions each report
+   * already declares for Excel. Without this every column gets an equal slice,
+   * which wraps "02 Oct 2026" onto two lines while a one-word Status column
+   * sits half empty.
+   */
+  const usable = pageWidth - margin * 2;
+  const declared = columns.map((column) => column.width ?? 20);
+  const totalDeclared = declared.reduce((sum, width) => sum + width, 0);
+  const columnStyles: Record<number, any> = {};
+  declared.forEach((width, index) => {
+    columnStyles[index] = { cellWidth: (width / totalDeclared) * usable };
+  });
+
+  autoTable(doc, {
+    startY: y + 4,
+    head: [columns.map((column) => column.header)],
+    body: rows.map((row) => columns.map((column) => String(column.value(row)))),
+    columnStyles,
+    // 'grid' puts a line on all four sides of every cell.
+    theme: 'grid',
+    styles: {
+      fontSize: 9,
+      cellPadding: 2,
+      lineWidth: 0.1,
+      lineColor: [150, 158, 170],
+      textColor: 20,
+      // Long venues and organizer names wrap instead of running over a border.
+      overflow: 'linebreak',
+      valign: 'middle',
+    },
+    headStyles: {
+      fillColor: [217, 225, 242],
+      textColor: 20,
+      fontStyle: 'bold',
+      lineWidth: 0.1,
+      lineColor: [120, 128, 140],
+      halign: 'left',
+    },
+    // A long report repeats its headings, and a row is not split across pages.
+    showHead: 'everyPage',
+    rowPageBreak: 'avoid',
+    margin: { left: margin, right: margin, bottom: 18 },
+    tableWidth: 'auto',
+    didDrawPage: () => {
+      // Drawn per page so the notes are present however far the table runs.
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(90);
+      const footerY = pageHeight - 8;
+      doc.text(REPORT_NOTE, margin, footerY);
+      doc.text(REPORT_CREDIT, pageWidth - margin, footerY, { align: 'right' });
+    },
+  });
+
+  return doc;
+};
+
 export const exportToPdf = async <T>(
   fileName: string,
   title: string,
@@ -165,46 +271,6 @@ export const exportToPdf = async <T>(
   rows: T[],
   meta: ReportMeta = {}
 ): Promise<void> => {
-  const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
-    import('jspdf'),
-    import('jspdf-autotable'),
-  ]);
-
-  // Reports are wide (up to nine columns), so landscape avoids squashing.
-  const doc = new jsPDF({ orientation: 'landscape' });
-  const left = 14;
-
-  doc.setFontSize(16);
-  doc.text(title, doc.internal.pageSize.getWidth() / 2, 16, { align: 'center' });
-
-  doc.setFontSize(10);
-  doc.setTextColor(60);
-  let y = 26;
-  for (const [label, value] of buildMetaRows(meta)) {
-    doc.text(`${label}: ${value}`, left, y);
-    y += 6;
-  }
-  doc.setTextColor(110);
-  doc.text(`Total records: ${rows.length}`, left, y);
-
-  autoTable(doc, {
-    startY: y + 6,
-    head: [columns.map((column) => column.header)],
-    body: rows.map((row) => columns.map((column) => String(column.value(row)))),
-    // 'grid' draws a line on every side of every cell.
-    theme: 'grid',
-    styles: { fontSize: 8, cellPadding: 2, lineWidth: 0.1, lineColor: [150, 150, 150] },
-    headStyles: { fillColor: [217, 225, 242], textColor: 20, fontStyle: 'bold', lineWidth: 0.1, lineColor: [120, 120, 120] },
-    margin: { left, right: left },
-  });
-
-  // The two standing notes, under the table on the last page.
-  const endY = (doc as any).lastAutoTable?.finalY ?? y + 10;
-  const footerY = Math.min(endY + 10, doc.internal.pageSize.getHeight() - 10);
-  doc.setFontSize(9);
-  doc.setTextColor(90);
-  doc.text(REPORT_NOTE, left, footerY);
-  doc.text(REPORT_CREDIT, doc.internal.pageSize.getWidth() - left, footerY, { align: 'right' });
-
+  const doc = await buildReportPdf(title, columns, rows, meta);
   doc.save(`${fileName}.pdf`);
 };
