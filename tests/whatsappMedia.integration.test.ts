@@ -616,6 +616,86 @@ describe('Custom Message payloads, from the stored campaign', () => {
     assert.match(log.errorReason, /unrecognised media type/i);
   });
 
+  /**
+   * Audio is the one media kind WhatsApp accepts no caption on, so the
+   * campaign text cannot ride along with it and has to follow as its own
+   * message. These take audio through the database exactly as sendCampaign
+   * does — the path that silently dropped every attachment field before
+   * d5e5213, and which the tests above cover for documents and images only.
+   */
+  test('8. audio only sends an audio payload, with no caption and no text property', async () => {
+    const calls = stubMeta();
+    const att = await attachFrom('mp3', 'invite-song.mp3');
+    await seedContacts(1);
+    await sendStored('', [att]);
+
+    const payloads = messagesFrom(calls);
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].type, 'audio');
+    assert.equal(payloads[0].audio.id, 'media-id-1');
+    assert.equal(payloads[0].audio.caption, undefined, 'WhatsApp rejects a caption on audio');
+    assert.equal(payloads[0].audio.filename, undefined, 'only a document carries a filename');
+    assertNoNullText(payloads[0]);
+  });
+
+  test('9. text + audio sends the audio, then the text as its own message', async () => {
+    const calls = stubMeta();
+    const att = await attachFrom('mp3', 'invite-song.mp3');
+    await seedContacts(1);
+    await sendStored(MESSAGE, [att]);
+
+    const payloads = messagesFrom(calls);
+    assert.equal(payloads.length, 2, 'the text cannot be a caption here, so it follows separately');
+
+    const [audio, text] = payloads;
+    assert.equal(audio.type, 'audio');
+    assert.equal(audio.audio.caption, undefined);
+    assertNoNullText(audio);
+
+    assert.equal(text.type, 'text');
+    assert.equal(text.text.body, MESSAGE, 'the text must not be lost');
+    assert.equal(audio.to, text.to, 'both go to the same recipient');
+  });
+
+  test('10. the stored audio attachment survives the database round trip', async () => {
+    stubMeta();
+    const att = await attachFrom('mp3', 'invite-song.mp3');
+    await seedContacts(1);
+
+    const campaign = await Campaign.create({
+      eventId, messageText: MESSAGE, mediaAttachments: [att], status: 'Draft',
+    });
+    const stored = await Campaign.findById(campaign._id).lean();
+    assert.equal(stored.mediaAttachments[0].type, 'audio', 'the kind must survive persistence');
+    assert.equal(stored.mediaAttachments[0].filename, 'invite-song.mp3');
+  });
+
+  test('11. an audio file that is no longer on the server fails every recipient with the reason', async () => {
+    const calls = stubMeta();
+    await seedContacts(2);
+    const campaign = await Campaign.create({
+      eventId,
+      messageText: MESSAGE,
+      mediaAttachments: [{ url: '/uploads/vanished-song.mp3', type: 'audio', filename: 'vanished-song.mp3' }],
+      status: 'Draft',
+    });
+    const fresh = await Campaign.findById(campaign._id);
+    await queueService.processCampaign(String(fresh._id), undefined, fresh.messageText, fresh.mediaAttachments);
+    for (let i = 0; i < 80; i++) {
+      const pending = await MessageLog.countDocuments({ campaignId: String(campaign._id), status: 'Pending' });
+      if (pending === 0) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    assert.equal(messagesFrom(calls).length, 0, 'nothing may be posted when the file is gone');
+    const logs = await MessageLog.find({ campaignId: String(campaign._id) }).lean();
+    assert.equal(logs.length, 2);
+    for (const log of logs) {
+      assert.equal(log.status, 'Failed');
+      assert.match(log.errorReason, /no longer available|re-upload/i);
+    }
+  });
+
   test('the composed text reaches Meta and the recipient log verbatim', async () => {
     const calls = stubMeta();
     const att = await attachFrom('pdf', 'Aditya_New_.pdf');
