@@ -446,14 +446,10 @@ const Reports = () => {
     [definition.fileName, reportOption.key]
   );
 
-  const subtitle = useMemo(() => {
-    const f = reportFilters ?? liveFilters;
-    if (reportOption.type === 'date') {
-      if (!f.startDate && !f.endDate) return 'All dates';
-      return `Date: ${f.startDate || 'any'} to ${f.endDate || 'any'}`;
-    }
-    return f.searchValue ? `${reportOption.label}: ${f.searchValue}` : 'No filter applied';
-  }, [reportOption, reportFilters, liveFilters]);
+  // filteredRows is built from reportFilters; the export must use the same
+  // object, never the live inputs, or a download could claim filters the table
+  // never used.
+  const exportFilters = reportFilters ?? liveFilters;
 
   const filtersChanged = searchFirst && hasResults && filtersDiffer(run.applied, liveFilters);
 
@@ -467,10 +463,17 @@ const Reports = () => {
       setIsExporting(true);
       try {
         const name = buildReportFileName(definition.fileName, reportOption.key);
+        // The very filters the visible table was built from, so the download
+        // states its own scope and can never describe a different dataset.
+        const meta = {
+          searchValue: exportFilters.searchValue,
+          startDate: exportFilters.startDate,
+          endDate: exportFilters.endDate,
+        };
         if (kind === 'excel') {
-          await exportToExcel(name, definition.label, definition.columns, filteredRows);
+          await exportToExcel(name, definition.label, definition.columns, filteredRows, meta);
         } else {
-          await exportToPdf(name, definition.label, definition.columns, filteredRows, subtitle);
+          await exportToPdf(name, definition.label, definition.columns, filteredRows, meta);
         }
         showToast('success', `${name}.${kind === 'excel' ? 'xlsx' : 'pdf'} downloaded`);
       } catch (error) {
@@ -480,7 +483,7 @@ const Reports = () => {
         setIsExporting(false);
       }
     },
-    [filteredRows, definition, reportOption.key, subtitle, showToast]
+    [filteredRows, definition, reportOption.key, exportFilters, showToast]
   );
 
   const statusVariant = (status: string) => {

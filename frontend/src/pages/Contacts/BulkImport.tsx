@@ -171,6 +171,22 @@ const BulkImport = () => {
 
             <div className="pt-4">
               <label className="block text-sm font-sans text-foreground/80 mb-2">File</label>
+              {/* The columns the importer matches on. Stated here because a
+                  sheet with different headings is refused, and the error is
+                  easier to avoid than to read. */}
+              <div className="mb-3 rounded-lg border border-border bg-surface/50 px-4 py-3">
+                <p className="text-xs text-foreground/70">
+                  The Excel sheet must have these columns in its first row:
+                </p>
+                <p className="mt-1.5 font-mono text-xs text-foreground">
+                  Sr.No <span className="text-foreground/30">|</span> Guest Name{' '}
+                  <span className="text-foreground/30">|</span> Contact Number
+                </p>
+                <p className="mt-2 text-xs text-foreground/50">
+                  Sr.No is your own numbering and is not stored. Contact Number may be written as
+                  9876543210, 919876543210 or +91 98765 43210.
+                </p>
+              </div>
               <FileUpload 
                 onFileSelect={setFile} 
                 selectedFile={file}

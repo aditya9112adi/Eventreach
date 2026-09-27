@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import { z } from 'zod';
 import { normalizeIndianPhone } from '../utils/indianPhone';
 import { Contact } from '../models/Contact';
-import { extractFromExcel, extractFromPDF, RawContact } from '../utils/fileExtractors';
+import { extractFromExcel, extractFromPDF, ImportFormatError, RawContact } from '../utils/fileExtractors';
 import type { ExtractedContact } from '@eventreach/shared';
 import { DEFAULT_COUNTRY_CODE } from '@eventreach/shared';
 import { AuditService } from '../services/AuditService';
@@ -221,10 +221,20 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
 
     let rawContacts: RawContact[] = [];
 
-    if (file.mimetype.includes('pdf')) {
-      rawContacts = await extractFromPDF(file.buffer);
-    } else {
-      rawContacts = extractFromExcel(file.buffer);
+    try {
+      if (file.mimetype.includes('pdf')) {
+        rawContacts = await extractFromPDF(file.buffer);
+      } else {
+        rawContacts = extractFromExcel(file.buffer);
+      }
+    } catch (err: any) {
+      // A sheet whose columns cannot be matched used to come back as an empty
+      // preview, which read as "no contacts found" and said nothing about the
+      // real problem. Name the expected format instead.
+      if (err instanceof ImportFormatError) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
     }
 
     const previewContacts: ExtractedContact[] = [];
@@ -247,6 +257,15 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
       } else {
         status = 'Invalid';
         validationReason = imported.reason;
+      }
+
+      // A guest with no name cannot be greeted by one, and inventing a
+      // placeholder would hide the gap in the uploaded sheet.
+      if (!raw.fullName || !raw.fullName.trim()) {
+        status = 'Invalid';
+        validationReason = validationReason
+          ? `${validationReason} Guest Name is also missing.`
+          : 'Guest Name is missing.';
       }
 
       if (status === 'Valid' && existingNumbers.has(normalizedPhone)) {
