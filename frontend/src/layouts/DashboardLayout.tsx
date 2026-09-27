@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
 import { useToast } from '../components/ui/Toast';
+import { AppFooter } from '../components/ui/AppFooter';
 
 const DashboardLayout = () => {
   const { user, logout, updateUser } = useAuth();
@@ -364,10 +365,16 @@ const DashboardLayout = () => {
           Horizontal overflow now belongs to each table's own .table-scroll
           wrapper, where the scrollbar is visible.
         */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar">
-          <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar flex flex-col">
+          {/*
+            flex-1 on the page content is what holds the footer at the bottom
+            of a short page. On a long one the content simply grows and the
+            footer follows it in the scroll, rather than covering it.
+          */}
+          <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 w-full flex-1">
             <Outlet />
           </div>
+          <AppFooter />
         </main>
       </div>
     </div>
