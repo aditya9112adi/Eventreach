@@ -19,6 +19,31 @@ import { readTemplateConfig, type TemplateConfig } from './whatsappTemplateServi
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 10_000;
 
+/** Header formats Meta allows on a template. There is no audio header. */
+export type TemplateHeaderFormat = 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'LOCATION';
+
+/** The media header formats this application can fill. */
+export const MEDIA_HEADER_FORMATS = ['IMAGE', 'VIDEO', 'DOCUMENT'] as const;
+export type MediaHeaderFormat = (typeof MEDIA_HEADER_FORMATS)[number];
+
+export const isMediaHeaderFormat = (format: unknown): format is MediaHeaderFormat =>
+  typeof format === 'string' && (MEDIA_HEADER_FORMATS as readonly string[]).includes(format);
+
+export interface TemplateHeader {
+  format: TemplateHeaderFormat;
+  /** TEXT headers only: the approved text, still containing {{1}} if it has one. */
+  text?: string;
+  /** Placeholders in a TEXT header. Media headers carry no text. */
+  placeholderCount: number;
+  /**
+   * Whether a header parameter must be supplied on every send.
+   *
+   * A media header always needs one — the example image Meta reviewed is not
+   * what gets sent. A TEXT header only needs one if it contains a placeholder.
+   */
+  required: boolean;
+}
+
 export interface TemplateDefinition {
   name: string;
   languageCode: string;
@@ -26,8 +51,10 @@ export interface TemplateDefinition {
   status: string | null;
   /** The approved body text, still containing {{1}}, {{2}}, … */
   bodyText: string;
-  /** How many distinct placeholders the body uses. */
+  /** How many distinct placeholders the body uses. Body only — never the header. */
   placeholderCount: number;
+  /** The approved header, or null when the template has none. */
+  header: TemplateHeader | null;
 }
 
 export type CatalogHttpGet = (
@@ -59,6 +86,31 @@ export const countPlaceholders = (bodyText: string): number => {
   return seen.size;
 };
 
+/**
+ * The HEADER component, if the template has one.
+ *
+ * Meta already returns this in `components` — it was previously discarded,
+ * which is why a media template could not be sent: its header parameter was
+ * never built, and Meta rejected the message for a missing parameter.
+ */
+const readHeader = (component: any): TemplateHeader | null => {
+  const format = typeof component?.format === 'string' ? component.format.toUpperCase() : '';
+  if (!format) return null;
+
+  if (format === 'TEXT') {
+    const text = typeof component.text === 'string' ? component.text : '';
+    const placeholderCount = countPlaceholders(text);
+    return { format: 'TEXT', text, placeholderCount, required: placeholderCount > 0 };
+  }
+
+  return {
+    format: format as TemplateHeaderFormat,
+    placeholderCount: 0,
+    // A media header is filled per message, so it is always required.
+    required: isMediaHeaderFormat(format),
+  };
+};
+
 /** Picks the requested language out of Meta's list of template versions. */
 export const selectTemplate = (
   list: any[],
@@ -75,9 +127,11 @@ export const selectTemplate = (
   const chosen = exact ?? matches.find((t) => t.language.split('_')[0] === base);
   if (!chosen) return null;
 
-  const body = (chosen.components || []).find(
-    (c: any) => typeof c?.type === 'string' && c.type.toUpperCase() === 'BODY'
-  );
+  const components: any[] = Array.isArray(chosen.components) ? chosen.components : [];
+  const componentOfType = (type: string) =>
+    components.find((c: any) => typeof c?.type === 'string' && c.type.toUpperCase() === type);
+
+  const body = componentOfType('BODY');
   const bodyText = typeof body?.text === 'string' ? body.text : '';
   if (!bodyText) return null;
 
@@ -87,6 +141,7 @@ export const selectTemplate = (
     status: typeof chosen.status === 'string' ? chosen.status : null,
     bodyText,
     placeholderCount: countPlaceholders(bodyText),
+    header: readHeader(componentOfType('HEADER')),
   };
 };
 

@@ -415,3 +415,148 @@ test('endpoint: an unexpected error returns a generic 500 with nothing from the 
   assert.equal(res.statusCode, 500);
   assert.deepEqual(res.body, { success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to send the WhatsApp template message.' } });
 });
+
+// ── media templates: the header component ────────────────────────────────────
+
+/**
+ * A template whose approved header is an image, video or document needs a
+ * header parameter on every send. Without one Meta refuses the message for a
+ * missing parameter, which is why these templates could not be sent before.
+ */
+test('header media', async (t) => {
+  const base = {
+    to: '+919876543210',
+    templateName: 'event_reminder',
+    languageCode: 'en',
+    variables: ['Aditya', 'Wedding', '25 September 2026', '7:00 PM', 'Grand Palace, Pune'],
+  };
+
+  await t.test('a document header carries the id AND the filename', () => {
+    const payload = buildTemplatePayload(
+      validateTemplateMessage({
+        ...base,
+        headerMedia: { kind: 'document', mediaId: 'MEDIA_1', filename: 'Invite.pdf' },
+      })
+    );
+    const [header, body] = payload.template.components;
+    assert.equal(header.type, 'header');
+    assert.deepEqual(header.parameters, [
+      { type: 'document', document: { id: 'MEDIA_1', filename: 'Invite.pdf' } },
+    ]);
+    assert.equal(body.type, 'body', 'the body still follows the header');
+    assert.equal(body.parameters.length, 5);
+  });
+
+  await t.test('an image header carries the id only', () => {
+    const payload = buildTemplatePayload(
+      validateTemplateMessage({ ...base, headerMedia: { kind: 'image', mediaId: 'MEDIA_2' } })
+    );
+    assert.deepEqual(payload.template.components[0].parameters, [
+      { type: 'image', image: { id: 'MEDIA_2' } },
+    ]);
+  });
+
+  await t.test('a video header carries the id only', () => {
+    const payload = buildTemplatePayload(
+      validateTemplateMessage({ ...base, headerMedia: { kind: 'video', mediaId: 'MEDIA_3' } })
+    );
+    assert.deepEqual(payload.template.components[0].parameters, [
+      { type: 'video', video: { id: 'MEDIA_3' } },
+    ]);
+  });
+
+  await t.test('the header comes before the body, the order Meta documents', () => {
+    const payload = buildTemplatePayload(
+      validateTemplateMessage({ ...base, headerMedia: { kind: 'image', mediaId: 'MEDIA_4' } })
+    );
+    assert.deepEqual(
+      payload.template.components.map((c: any) => c.type),
+      ['header', 'body']
+    );
+  });
+
+  await t.test('a template with no header media is unchanged — body only', () => {
+    const payload = buildTemplatePayload(validateTemplateMessage(base));
+    assert.deepEqual(
+      payload.template.components.map((c: any) => c.type),
+      ['body']
+    );
+    assert.equal(JSON.stringify(payload).includes('header'), false);
+  });
+
+  await t.test('an unknown media kind is refused', () => {
+    assert.throws(
+      () => validateTemplateMessage({ ...base, headerMedia: { kind: 'audio', mediaId: 'M' } }),
+      (err: any) => err.category === 'VALIDATION_ERROR' && err.field === 'headerMedia.kind'
+    );
+  });
+
+  await t.test('a missing media id is refused', () => {
+    assert.throws(
+      () => validateTemplateMessage({ ...base, headerMedia: { kind: 'image', mediaId: '  ' } }),
+      (err: any) => err.field === 'headerMedia.mediaId'
+    );
+  });
+
+  await t.test('a document without its filename is refused', () => {
+    assert.throws(
+      () => validateTemplateMessage({ ...base, headerMedia: { kind: 'document', mediaId: 'M' } }),
+      (err: any) => err.field === 'headerMedia.filename'
+    );
+  });
+});
+
+
+/**
+ * The exact document-template payload, for the template whose body takes no
+ * variables. A body component here would be a parameter the approved template
+ * does not have, which Meta rejects.
+ */
+test('event_document payload', async (t) => {
+  const message = validateTemplateMessage({
+    to: '+919876543210',
+    templateName: 'event_document',
+    languageCode: 'en',
+    variables: [],
+    headerMedia: { kind: 'document', mediaId: 'META_MEDIA_ID', filename: 'Invite.pdf' },
+  });
+  const payload: any = buildTemplatePayload(message);
+
+  await t.test('is a template message, not a standalone document', () => {
+    assert.equal(payload.type, 'template');
+    assert.equal(payload.messaging_product, 'whatsapp');
+    assert.equal(payload.recipient_type, 'individual');
+    assert.equal(payload.document, undefined, 'a bare document message would need an open 24h window');
+    assert.equal(payload.text, undefined);
+  });
+
+  await t.test('names the template and its language', () => {
+    assert.equal(payload.template.name, 'event_document');
+    assert.deepEqual(payload.template.language, { code: 'en' });
+  });
+
+  await t.test('carries exactly one component: the document header', () => {
+    assert.equal(payload.template.components.length, 1);
+    assert.deepEqual(payload.template.components[0], {
+      type: 'header',
+      parameters: [{ type: 'document', document: { id: 'META_MEDIA_ID', filename: 'Invite.pdf' } }],
+    });
+  });
+
+  await t.test('carries NO body parameters', () => {
+    assert.equal(
+      payload.template.components.some((c: any) => c.type === 'body'),
+      false,
+      'event_document has zero body variables'
+    );
+  });
+
+  await t.test('event_reminder still sends its five body values and no header', () => {
+    const reminder: any = buildTemplatePayload(validateTemplateMessage(EVENT_REMINDER));
+    assert.deepEqual(
+      reminder.template.components.map((c: any) => c.type),
+      ['body']
+    );
+    assert.equal(reminder.template.components[0].parameters.length, 5);
+  });
+});

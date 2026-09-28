@@ -33,12 +33,27 @@ const LANGUAGE_CODE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2,3})?$/;
 const MAX_VARIABLES = 100;
 const MAX_VARIABLE_LENGTH = 1024;
 
+/**
+ * The media that fills a template's header.
+ *
+ * Carried as a Meta media id, never a link: the file stays private, exactly as
+ * campaign media does. There is no audio kind — Meta allows no audio header.
+ */
+export interface TemplateHeaderMedia {
+  kind: 'image' | 'video' | 'document';
+  mediaId: string;
+  /** Documents only. Without it the recipient sees the raw media id. */
+  filename?: string;
+}
+
 export interface TemplateMessageInput {
   to: unknown;
   templateName: unknown;
   languageCode: unknown;
   /** Positional values: variables[0] fills {{1}}, variables[1] fills {{2}}, … */
   variables: unknown;
+  /** Present only for a template whose approved header is an image, video or document. */
+  headerMedia?: unknown;
 }
 
 export interface TemplateMessageResult {
@@ -141,6 +156,7 @@ export interface ValidatedTemplateMessage {
   templateName: string;
   languageCode: string;
   variables: string[];
+  headerMedia?: TemplateHeaderMedia;
 }
 
 const invalid = (field: string, message: string) =>
@@ -195,32 +211,88 @@ export const validateTemplateMessage = (input: TemplateMessageInput): ValidatedT
     return text;
   });
 
-  return { to: phone.e164, templateName, languageCode, variables };
+  return { to: phone.e164, templateName, languageCode, variables, headerMedia: validateHeaderMedia(input.headerMedia) };
+};
+
+const HEADER_MEDIA_KINDS = new Set(['image', 'video', 'document']);
+
+/**
+ * The header media, when the caller supplied one.
+ *
+ * Absent is valid — most templates have no header, and a TEXT header needs no
+ * media. What is never valid is a half-built one, because Meta answers a
+ * malformed header parameter with a generic "invalid parameter" that says
+ * nothing about which part was wrong.
+ */
+export const validateHeaderMedia = (value: unknown): TemplateHeaderMedia | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object') throw invalid('headerMedia', 'Header media must be an object.');
+
+  const media = value as Record<string, unknown>;
+  const kind = typeof media.kind === 'string' ? media.kind.trim().toLowerCase() : '';
+  if (!HEADER_MEDIA_KINDS.has(kind)) {
+    throw invalid('headerMedia.kind', 'Header media must be an image, a video or a document.');
+  }
+
+  const mediaId = typeof media.mediaId === 'string' ? media.mediaId.trim() : '';
+  if (!mediaId) throw invalid('headerMedia.mediaId', 'Header media is missing its WhatsApp media id.');
+
+  const filename = typeof media.filename === 'string' ? media.filename.trim() : '';
+  if (kind === 'document' && !filename) {
+    // Without it WhatsApp shows the opaque media id as the document's name.
+    throw invalid('headerMedia.filename', 'A document header needs the original filename.');
+  }
+
+  return {
+    kind: kind as TemplateHeaderMedia['kind'],
+    mediaId,
+    ...(filename ? { filename } : {}),
+  };
 };
 
 // ── payload ──────────────────────────────────────────────────────────────────
 
 /** The Cloud API body for a template message. Variables keep their order. */
-export const buildTemplatePayload = (message: ValidatedTemplateMessage) => ({
-  messaging_product: 'whatsapp',
-  recipient_type: 'individual',
-  to: message.to,
-  type: 'template',
-  template: {
-    name: message.templateName,
-    language: { code: message.languageCode },
-    ...(message.variables.length > 0
-      ? {
-          components: [
-            {
-              type: 'body',
-              parameters: message.variables.map((text) => ({ type: 'text', text })),
-            },
-          ],
-        }
-      : {}),
-  },
+/**
+ * The header component for a media header: { type: 'image', image: { id } },
+ * and for a document additionally the filename the recipient downloads as.
+ */
+const headerComponent = (media: TemplateHeaderMedia) => ({
+  type: 'header',
+  parameters: [
+    {
+      type: media.kind,
+      [media.kind]: {
+        id: media.mediaId,
+        ...(media.kind === 'document' && media.filename ? { filename: media.filename } : {}),
+      },
+    },
+  ],
 });
+
+export const buildTemplatePayload = (message: ValidatedTemplateMessage) => {
+  // Header first, then body — the order Meta documents.
+  const components: any[] = [];
+  if (message.headerMedia) components.push(headerComponent(message.headerMedia));
+  if (message.variables.length > 0) {
+    components.push({
+      type: 'body',
+      parameters: message.variables.map((text) => ({ type: 'text', text })),
+    });
+  }
+
+  return {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: message.to,
+    type: 'template',
+    template: {
+      name: message.templateName,
+      language: { code: message.languageCode },
+      ...(components.length > 0 ? { components } : {}),
+    },
+  };
+};
 
 // ── Meta error handling ──────────────────────────────────────────────────────
 

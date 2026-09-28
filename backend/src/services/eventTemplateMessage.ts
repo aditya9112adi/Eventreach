@@ -46,11 +46,23 @@ export class EventTemplateError extends Error {
   }
 }
 
+/** Header formats a template can declare here. Meta allows no audio header. */
+export type DeclaredHeaderFormat = 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+
 export interface EventTemplateSpec {
   /** The language the template was approved in. */
   languageCode: string;
-  /** Named sources for {{1}}, {{2}}, … in order. */
+  /** Named sources for {{1}}, {{2}}, … in order. Empty for a body with no variables. */
   fields: readonly string[];
+  /**
+   * The approved header, when it takes a file.
+   *
+   * Declared here rather than discovered from Meta so that sending does not
+   * depend on the template catalog being readable: WHATSAPP_WABA_ID is optional
+   * and only powers the preview. A template without this either has no header
+   * or a text one, and sends as it always has.
+   */
+  headerFormat?: DeclaredHeaderFormat;
 }
 
 /**
@@ -62,6 +74,17 @@ export const EVENT_TEMPLATES: Record<string, EventTemplateSpec> = {
   event_reminder: {
     languageCode: 'en',
     fields: ['recipientName', 'eventName', 'eventDate', 'eventTime', 'eventVenue'],
+  },
+  /**
+   * Approved under the production WABA with a DOCUMENT header and a fixed body
+   * ("Hello, please find the event document attached."). The body takes no
+   * variables, so no body component is built for it — sending one would be
+   * rejected for a parameter the template does not have.
+   */
+  event_document: {
+    languageCode: 'en',
+    fields: [],
+    headerFormat: 'DOCUMENT',
   },
 };
 

@@ -7,12 +7,23 @@ import {
   WhatsAppTemplateError,
   type TemplateMessageInput,
   type TemplateMessageResult,
+  type TemplateHeaderMedia,
 } from '../services/whatsappTemplateService';
-import { fetchTemplateDefinition } from '../services/whatsappTemplateCatalog';
+import fs from 'fs';
+import path from 'path';
+import { WHATSAPP_MEDIA_RULES } from '@eventreach/shared';
+import {
+  fetchTemplateDefinition,
+  isMediaHeaderFormat,
+  type MediaHeaderFormat,
+} from '../services/whatsappTemplateCatalog';
+import { whatsappService } from '../services/WhatsAppService';
+import { UPLOAD_DIR } from '../middleware/mediaUpload';
 import {
   buildEventTemplateVariables,
   resolveEventTemplate,
   EventTemplateError,
+  type DeclaredHeaderFormat,
   type TemplateVariable,
 } from '../services/eventTemplateMessage';
 import { isEventAuthorized } from '../services/eventAuthService';
@@ -130,6 +141,175 @@ const recentSends = new Map<string, number>();
 /** Exported for tests. */
 export const clearRecentEventTemplateSends = () => recentSends.clear();
 
+/**
+ * The attachment a media template needs, as the upload endpoint returned it.
+ * The file itself stays on this server; only a Meta media id is ever sent.
+ */
+const templateAttachmentBody = z
+  .object({
+    url: z.string().min(1),
+    filename: z.string().min(1),
+    mimeType: z.string().min(1).optional(),
+  })
+  .optional();
+
+/** Meta's header format -> the media kind the sender speaks. */
+const HEADER_FORMAT_TO_KIND: Record<MediaHeaderFormat, 'image' | 'video' | 'document'> = {
+  IMAGE: 'image',
+  VIDEO: 'video',
+  DOCUMENT: 'document',
+};
+
+const A_FILE_OF_TYPE: Record<MediaHeaderFormat, string> = {
+  IMAGE: 'an image',
+  VIDEO: 'a video',
+  DOCUMENT: 'a document (PDF)',
+};
+
+/**
+ * Turns the request's attachment into the header media for this template, or
+ * refuses the request with a reason that names the real problem.
+ *
+ * Uploaded ONCE per request, not once per recipient: the media id is reusable
+ * for every message in the send, exactly as campaign media is.
+ */
+export const resolveHeaderMedia = async (
+  context: EventTemplateContext,
+  attachment: { url: string; filename: string; mimeType?: string } | undefined
+): Promise<TemplateHeaderMedia | undefined> => {
+  /**
+   * What the template declares wins. Reading the definition from Meta is a
+   * convenience for the preview and needs WHATSAPP_WABA_ID, which is optional —
+   * sending must not depend on it.
+   */
+  if (context.headerFormat) {
+    return uploadHeaderMedia(context, attachment, context.headerFormat);
+  }
+
+  const definition = await fetchTemplateDefinition(context.templateName, context.languageCode);
+
+  if (!definition) {
+    /**
+     * Nothing declared and nothing readable: a text-only template still sends
+     * (none of this is needed for it), but an attachment cannot be placed
+     * blind, so say what is missing instead of guessing.
+     */
+    if (attachment) {
+      throw new EventTemplateError(
+        'CONFIGURATION_ERROR',
+        'This template does not declare a media header and the approved definition could not be read from WhatsApp. Set WHATSAPP_WABA_ID on the server, or declare the header in EVENT_TEMPLATES.',
+        503
+      );
+    }
+    return undefined;
+  }
+
+  const header = definition.header;
+
+  if (header?.format === 'TEXT' && header.required) {
+    // A text header with its own {{1}} needs a header text parameter, which
+    // this flow does not build. Refusing beats a rejected send.
+    throw new EventTemplateError(
+      'UNSUPPORTED_TEMPLATE',
+      `"${context.templateName}" has a text header with its own placeholder, which this page cannot fill yet.`,
+      400,
+      'templateName'
+    );
+  }
+
+  const needsMedia = header != null && isMediaHeaderFormat(header.format);
+
+  if (!needsMedia) {
+    if (attachment) {
+      throw new EventTemplateError(
+        'VALIDATION_ERROR',
+        `"${context.templateName}" has no media header, so it cannot carry an attachment.`,
+        400,
+        'attachment'
+      );
+    }
+    return undefined;
+  }
+
+  return uploadHeaderMedia(context, attachment, header!.format as MediaHeaderFormat);
+};
+
+/** Validates the attachment against the header format, then uploads it once. */
+const uploadHeaderMedia = async (
+  context: EventTemplateContext,
+  attachment: { url: string; filename: string; mimeType?: string } | undefined,
+  format: MediaHeaderFormat
+): Promise<TemplateHeaderMedia | undefined> => {
+  if (!attachment) {
+    throw new EventTemplateError(
+      'ATTACHMENT_REQUIRED',
+      `"${context.templateName}" needs ${A_FILE_OF_TYPE[format]} for its header. Attach one and send again.`,
+      400,
+      'attachment'
+    );
+  }
+
+  const fileName = path.basename(String(attachment.url || ''));
+  if (!fileName) {
+    throw new EventTemplateError('VALIDATION_ERROR', 'The attachment has no stored file.', 400, 'attachment');
+  }
+
+  // Same resolution the campaign path uses: the stored url is a local path
+  // behind an authenticated route, never a link WhatsApp could follow.
+  const ext = path.extname(fileName).toLowerCase();
+  const mimeType =
+    attachment.mimeType ||
+    Object.keys(WHATSAPP_MEDIA_RULES).find((m) => WHATSAPP_MEDIA_RULES[m].extensions.includes(ext)) ||
+    '';
+  const rule = WHATSAPP_MEDIA_RULES[mimeType];
+  if (!rule) {
+    throw new EventTemplateError(
+      'VALIDATION_ERROR',
+      `"${attachment.filename}" is not a file type WhatsApp accepts.`,
+      400,
+      'attachment'
+    );
+  }
+
+  const expectedKind = HEADER_FORMAT_TO_KIND[format];
+  if (rule.kind !== expectedKind) {
+    throw new EventTemplateError(
+      'VALIDATION_ERROR',
+      `"${context.templateName}" needs ${A_FILE_OF_TYPE[format]}, but "${attachment.filename}" is ${rule.kind === 'audio' ? 'an audio file' : `a ${rule.kind}`}.`,
+      400,
+      'attachment'
+    );
+  }
+
+  const filePath = path.join(UPLOAD_DIR, fileName);
+  if (!fs.existsSync(filePath)) {
+    // The host's disk is ephemeral: a file uploaded before a restart is gone.
+    throw new EventTemplateError(
+      'ATTACHMENT_MISSING',
+      `The attached file "${attachment.filename}" is no longer available on the server. Please re-upload it and send again.`,
+      400,
+      'attachment'
+    );
+  }
+
+  try {
+    const mediaId = await whatsappService.uploadMediaToMeta(filePath, mimeType, attachment.filename);
+    return {
+      kind: expectedKind,
+      mediaId,
+      ...(expectedKind === 'document' ? { filename: attachment.filename } : {}),
+    };
+  } catch (error: any) {
+    // Meta's own message only — never the token or the file's bytes.
+    throw new EventTemplateError(
+      'MEDIA_UPLOAD_FAILED',
+      error?.message || 'Failed to upload the attachment to WhatsApp.',
+      502,
+      'attachment'
+    );
+  }
+};
+
 const sendEventTemplateBody = z.object({
   eventId: z.string().optional(),
   // The list form. `contactId` stays valid for a single guest, so the preview
@@ -137,12 +317,15 @@ const sendEventTemplateBody = z.object({
   contactIds: z.array(z.string()).optional(),
   contactId: z.string().optional(),
   templateName: z.string().optional(),
+  attachment: templateAttachmentBody,
 });
 
 export interface EventTemplateContext {
   event: any;
   templateName: string;
   languageCode: string;
+  /** The approved header format, when the template declares one. */
+  headerFormat?: DeclaredHeaderFormat;
 }
 
 export interface ResolvedEventTemplate extends EventTemplateContext {
@@ -222,7 +405,12 @@ export const resolveEventContext = async (
     );
   }
 
-  return { event, templateName: name, languageCode: spec.languageCode };
+  return {
+    event,
+    templateName: name,
+    languageCode: spec.languageCode,
+    headerFormat: spec.headerFormat,
+  };
 };
 
 /**
@@ -311,6 +499,19 @@ export const previewEventTemplate = async (req: Request, res: Response) => {
       // would be rejected by Meta (132000) — say so before anything is sent.
       placeholderMismatch:
         definition != null && definition.placeholderCount !== context.variables.length,
+      // What the approved template expects above the body, so the composer can
+      // ask for the right kind of file (or none at all).
+      // The declared header is authoritative; the definition only fills in for
+      // a template that declares none.
+      header: context.headerFormat
+        ? { format: context.headerFormat, required: true, isMedia: true }
+        : definition?.header
+          ? {
+              format: definition.header.format,
+              required: definition.header.required,
+              isMedia: isMediaHeaderFormat(definition.header.format),
+            }
+          : null,
       variables: context.variables,
       recipient: {
         contactId: String(context.contact._id),
@@ -396,6 +597,14 @@ export const buildEventTemplateHandler = (
       const contactIds = readRecipientIds(parsed.data);
       const context = await resolveEventContext(parsed.data, user);
 
+      /**
+       * Uploaded once for the whole request, before any recipient is
+       * messaged: the media id is reusable, and re-uploading the same file per
+       * recipient would be slow and pointless. A failure here refuses the
+       * whole send, because no recipient can be messaged as composed.
+       */
+      const headerMedia = await resolveHeaderMedia(context, parsed.data.attachment);
+
       for (const [key, at] of recentSends) {
         if (now() - at >= DUPLICATE_SEND_WINDOW_MS) recentSends.delete(key);
       }
@@ -435,6 +644,7 @@ export const buildEventTemplateHandler = (
             templateName: context.templateName,
             languageCode: context.languageCode,
             variables: guest.variables.map((variable) => variable.value),
+            ...(headerMedia ? { headerMedia } : {}),
           });
 
           // Every other send in the app is audited; a real WhatsApp message
@@ -453,6 +663,9 @@ export const buildEventTemplateHandler = (
               languageCode: context.languageCode,
               messageId: result.messageId,
               recipientCount: contactIds.length,
+              ...(headerMedia
+                ? { headerMedia: { kind: headerMedia.kind, filename: headerMedia.filename ?? null } }
+                : {}),
             },
           });
 
@@ -511,6 +724,11 @@ export const buildEventTemplateHandler = (
         success: failed.length === 0,
         templateName: context.templateName,
         languageCode: context.languageCode,
+        // The media id itself is an internal handle; the kind and filename are
+        // what the sender needs to see confirmed.
+        headerMedia: headerMedia
+          ? { kind: headerMedia.kind, filename: headerMedia.filename ?? null }
+          : null,
         bulkOperationId,
         requestedCount: contactIds.length,
         sentCount: sent.length,

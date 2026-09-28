@@ -22,12 +22,14 @@ import { GuestMultiSelect } from '../../components/ui/GuestMultiSelect';
 import {
   canSendTemplate,
   describeSendError,
+  headerUploadPrompt,
   renderTemplateBody,
   selectionKey,
   sendBlockedReason,
   summarizeSendResult,
   variableLabel,
   type SendSummary,
+  type TemplateAttachment,
   type TemplatePreview,
 } from '../../utils/templateTest';
 
@@ -41,6 +43,12 @@ const TEMPLATES = [
     name: 'event_reminder',
     label: 'Event reminder',
     description: 'Approved utility template. Fills guest name, event, date, time and venue.',
+  },
+  {
+    name: 'event_document',
+    label: 'Event document',
+    description:
+      'Approved utility template with a fixed message and a PDF attached. Its wording is set by the approved template and cannot be edited here.',
   },
 ];
 
@@ -77,6 +85,10 @@ const Composer = () => {
   const [isSendingTemplate, setIsSendingTemplate] = useState(false);
   const [templateError, setTemplateError] = useState('');
   const [sendSummary, setSendSummary] = useState<SendSummary | null>(null);
+  // The file a media template's header needs. Held separately from the Custom
+  // Message attachments, which are a different flow entirely.
+  const [templateAttachment, setTemplateAttachment] = useState<TemplateAttachment | null>(null);
+  const [isHeaderUploading, setIsHeaderUploading] = useState(false);
   // The selection already sent. Holding it here is what stops the same guest
   // being messaged twice by a double click or an impatient second click.
   const [lastSentKey, setLastSentKey] = useState<string | null>(null);
@@ -178,6 +190,12 @@ const Composer = () => {
    * A batch previews its first selected guest; the rest receive the same
    * template with their own name filled in.
    */
+  // A file chosen for one template's header means nothing for another's, and
+  // nothing for a different event.
+  useEffect(() => {
+    setTemplateAttachment(null);
+  }, [templateName, selectedEventId]);
+
   const previewContactId = selectedContactIds[0] ?? '';
   const previewRequestRef = useRef(0);
   useEffect(() => {
@@ -301,6 +319,8 @@ const Composer = () => {
     }
   };
 
+  const headerPrompt = headerUploadPrompt(templatePreview?.header ?? null);
+
   const sendGate = {
     eventId: selectedEventId,
     contactIds: selectedContactIds,
@@ -309,6 +329,30 @@ const Composer = () => {
     isSending: isSendingTemplate,
     lastSentKey,
     eventSendable: isEventSendable,
+    attachment: templateAttachment,
+  };
+
+  /**
+   * Uploads the header file through the same endpoint, and with the same
+   * validation, as a Custom Message attachment. The file stays on the server;
+   * only a WhatsApp media id is ever sent, and only from the backend.
+   */
+  const handleHeaderUpload = async (file: File) => {
+    setIsHeaderUploading(true);
+    setTemplateError('');
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const response = await api.post('/campaigns/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setTemplateAttachment(response.data);
+    } catch (err: any) {
+      setTemplateAttachment(null);
+      setTemplateError(err?.response?.data?.error || describeSendError(err));
+    } finally {
+      setIsHeaderUploading(false);
+    }
   };
 
   /**
@@ -335,6 +379,7 @@ const Composer = () => {
         eventId: selectedEventId,
         contactIds: selectedContactIds,
         templateName,
+        ...(templateAttachment ? { attachment: templateAttachment } : {}),
       });
       const summary = summarizeSendResult(response.data);
       setSendSummary(summary);
@@ -509,6 +554,46 @@ const Composer = () => {
                   )}
                 </div>
 
+                {headerPrompt && (
+                  <div>
+                    <label className="block text-sm font-sans text-foreground/80 mb-2">
+                      {headerPrompt.label}
+                    </label>
+                    {templateAttachment ? (
+                      <div className="flex max-w-md items-center gap-3 rounded-lg border border-border bg-surface/50 px-4 py-3">
+                        <FileText className="h-5 w-5 shrink-0 text-accent" />
+                        <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                          {templateAttachment.filename}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setTemplateAttachment(null)}
+                          disabled={isSendingTemplate}
+                          aria-label="Remove the header file"
+                          className="rounded-full p-1 text-foreground/40 transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="max-w-md">
+                        <FileUpload
+                          onFileSelect={handleHeaderUpload}
+                          selectedFile={null}
+                          onClear={() => setTemplateAttachment(null)}
+                          accept={headerPrompt.accept}
+                          maxSize={WHATSAPP_MAX_ANY_BYTES}
+                          perTypeMaxBytes={WHATSAPP_MEDIA_MAX_BYTES}
+                          limitSummary={whatsAppMediaLimitSummary()}
+                        />
+                      </div>
+                    )}
+                    <p className="mt-2 text-xs text-foreground/50">
+                      {isHeaderUploading ? 'Uploading...' : headerPrompt.hint}
+                    </p>
+                  </div>
+                )}
+
                 {isPreviewLoading && (
                   <p className="text-sm text-foreground/60">Loading the template preview...</p>
                 )}
@@ -523,14 +608,24 @@ const Composer = () => {
                 {templatePreview && !isPreviewLoading && (
                   <div className="rounded-lg border border-border bg-surface/50 p-4 space-y-3">
                     <div className="flex items-center justify-between gap-3">
-                      <h4 className="text-sm font-semibold text-foreground">Values Meta will fill in</h4>
+                      <h4 className="text-sm font-semibold text-foreground">
+                        {templatePreview.variables.length === 0
+                          ? 'What this template sends'
+                          : 'Values Meta will fill in'}
+                      </h4>
                       {templatePreview.templateStatus && (
                         <Badge variant={templatePreview.templateStatus === 'APPROVED' ? 'success' : 'warning'}>
                           {templatePreview.templateStatus}
                         </Badge>
                       )}
                     </div>
-                    <div className="table-scroll">
+                    {templatePreview.variables.length === 0 && (
+                      <p className="text-xs text-foreground/60">
+                        This template has no variables — Meta sends its approved wording as it is.
+                        Only the attached file changes per send.
+                      </p>
+                    )}
+                    <div className={templatePreview.variables.length === 0 ? 'hidden' : 'table-scroll'}>
                       <table className="w-full text-sm">
                         <tbody>
                           {templatePreview.variables.map((variable) => (
@@ -543,6 +638,14 @@ const Composer = () => {
                         </tbody>
                       </table>
                     </div>
+                    {headerPrompt && (
+                      <p className="text-xs text-foreground/60">
+                        <span className="text-foreground/40">Header </span>
+                        {templateAttachment
+                          ? templateAttachment.filename
+                          : `— ${headerPrompt.label.toLowerCase()} not attached yet`}
+                      </p>
+                    )}
                     <p className="text-xs text-foreground/50">
                       Preview for {templatePreview.recipient.fullName} ({templatePreview.recipient.phoneNumber})
                       {selectedContactIds.length > 1

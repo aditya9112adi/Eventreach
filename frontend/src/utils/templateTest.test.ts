@@ -9,6 +9,7 @@ import {
   summarizeSendResult,
   filterGuests,
   guestSelectionLabel,
+  headerUploadPrompt,
   variableLabel,
   type TemplatePreview,
   type SendGateState,
@@ -29,6 +30,7 @@ const preview = (overrides: Partial<TemplatePreview> = {}): TemplatePreview => (
   bodyText: 'Hi {{1}}, {{2}} is on {{3}} at {{4}}, {{5}}.',
   bodySource: 'meta',
   placeholderMismatch: false,
+  header: null,
   variables: VARIABLES,
   recipient: {
     contactId: 'c1',
@@ -328,4 +330,53 @@ test('error messages', async (t) => {
 test('variable labels', () => {
   assert.equal(variableLabel('eventVenue'), 'Venue');
   assert.equal(variableLabel('somethingNew'), 'somethingNew');
+});
+
+
+test('media templates', async (t) => {
+  const mediaHeader = (format: string) => ({ format, required: true, isMedia: true });
+  const ATTACHMENT = { url: '/uploads/123-Invite.pdf', filename: 'Invite.pdf', mimeType: 'application/pdf' };
+
+  await t.test('the upload prompt follows the template, not a hardcoded type', () => {
+    assert.deepEqual(headerUploadPrompt(mediaHeader('IMAGE'))?.accept, {
+      'image/jpeg': ['.jpeg', '.jpg'],
+      'image/png': ['.png'],
+    });
+    assert.deepEqual(headerUploadPrompt(mediaHeader('VIDEO'))?.accept, { 'video/mp4': ['.mp4'] });
+    assert.deepEqual(headerUploadPrompt(mediaHeader('DOCUMENT'))?.accept, { 'application/pdf': ['.pdf'] });
+  });
+
+  await t.test('no upload field for a text header or no header at all', () => {
+    assert.equal(headerUploadPrompt(null), null);
+    assert.equal(headerUploadPrompt({ format: 'TEXT', required: false, isMedia: false }), null);
+  });
+
+  await t.test('a media template cannot be sent until its file is attached', () => {
+    const state = gate({ preview: preview({ header: mediaHeader('DOCUMENT') }) });
+    assert.equal(canSendTemplate(state), false);
+    assert.match(sendBlockedReason(state), /attach/i);
+  });
+
+  await t.test('attaching the file unblocks it', () => {
+    const state = gate({
+      preview: preview({ header: mediaHeader('DOCUMENT') }),
+      attachment: ATTACHMENT,
+    });
+    assert.equal(canSendTemplate(state), true);
+    assert.equal(sendBlockedReason(state), '');
+  });
+
+  await t.test('a template with no media header needs no attachment', () => {
+    assert.equal(canSendTemplate(gate()), true);
+    assert.equal(canSendTemplate(gate({ preview: preview({ header: { format: 'TEXT', required: false, isMedia: false } }) })), true);
+  });
+
+  await t.test('the file requirement applies to every recipient of a batch', () => {
+    const state = gate({
+      contactIds: ['c1', 'c2', 'c3'],
+      preview: preview({ header: mediaHeader('IMAGE') }),
+    });
+    assert.equal(canSendTemplate(state), false);
+    assert.equal(canSendTemplate({ ...state, attachment: ATTACHMENT }), true);
+  });
 });

@@ -16,6 +16,55 @@ export interface TemplateVariable {
   value: string;
 }
 
+export interface TemplateHeaderRequirement {
+  /** Meta's own format: TEXT, IMAGE, VIDEO, DOCUMENT or LOCATION. */
+  format: string;
+  /** Whether a header parameter must be supplied on every send. */
+  required: boolean;
+  /** True for IMAGE, VIDEO and DOCUMENT — the formats that take a file. */
+  isMedia: boolean;
+}
+
+/** An attachment chosen for a template header, as the upload endpoint returns it. */
+export interface TemplateAttachment {
+  url: string;
+  filename: string;
+  mimeType?: string;
+  type?: string;
+}
+
+/**
+ * What the composer should ask for, given the approved template. One lookup
+ * rather than a branch per media type, so a template with a video header needs
+ * no new interface code.
+ */
+export const headerUploadPrompt = (
+  header: TemplateHeaderRequirement | null
+): { label: string; hint: string; accept: Record<string, string[]> } | null => {
+  if (!header?.isMedia) return null;
+  switch (header.format) {
+    case 'IMAGE':
+      return {
+        label: 'Header image',
+        hint: 'This template shows an image above the message.',
+        accept: { 'image/jpeg': ['.jpeg', '.jpg'], 'image/png': ['.png'] },
+      };
+    case 'VIDEO':
+      return {
+        label: 'Header video',
+        hint: 'This template shows a video above the message.',
+        accept: { 'video/mp4': ['.mp4'] },
+      };
+    case 'DOCUMENT':
+    default:
+      return {
+        label: 'Header document',
+        hint: 'This template sends a document with the message.',
+        accept: { 'application/pdf': ['.pdf'] },
+      };
+  }
+};
+
 export interface TemplatePreview {
   templateName: string;
   languageCode: string;
@@ -24,6 +73,8 @@ export interface TemplatePreview {
   bodyText: string | null;
   bodySource: 'meta' | 'unavailable';
   placeholderMismatch: boolean;
+  /** What the approved template expects above the body, or null for none. */
+  header: TemplateHeaderRequirement | null;
   variables: TemplateVariable[];
   recipient: {
     contactId: string;
@@ -130,6 +181,8 @@ export interface SendGateState {
   lastSentKey: string | null;
   /** Completed or cancelled events cannot be messaged. */
   eventSendable: boolean;
+  /** The file chosen for a media header, when the template needs one. */
+  attachment?: TemplateAttachment | null;
 }
 
 /**
@@ -148,6 +201,9 @@ export const canSendTemplate = (state: SendGateState): boolean => {
   if (!preview) return false;
   if (preview.recipient.contactId !== state.contactIds[0]) return false; // stale preview
   if (preview.placeholderMismatch) return false;
+  // A media template is not sendable until its header file is attached: Meta
+  // rejects the message outright if the header parameter is missing.
+  if (preview.header?.isMedia && preview.header.required && !state.attachment) return false;
   if (!preview.recipient.phoneValid && state.contactIds.length === 1) return false;
   return state.lastSentKey !== selectionKey(state.eventId, state.contactIds, state.templateName);
 };
@@ -167,6 +223,10 @@ export const sendBlockedReason = (state: SendGateState): string => {
   }
   if (state.preview.placeholderMismatch) {
     return 'The approved template expects a different number of values than this page fills.';
+  }
+  if (state.preview.header?.isMedia && state.preview.header.required && !state.attachment) {
+    const prompt = headerUploadPrompt(state.preview.header);
+    return `Attach ${prompt?.label.toLowerCase() ?? 'the header file'} this template requires.`;
   }
   if (state.lastSentKey === selectionKey(state.eventId, state.contactIds, state.templateName)) {
     return 'Already sent to this selection. Change the guests, or use Send again.';

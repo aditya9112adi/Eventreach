@@ -24,6 +24,7 @@ import {
   selectTemplate,
   fetchTemplateDefinition,
   clearTemplateCatalogCache,
+  isMediaHeaderFormat,
   type CatalogHttpGet,
 } from '../src/services/whatsappTemplateCatalog';
 
@@ -256,5 +257,114 @@ test('reading the approved body from Meta', async (t) => {
       config: { accessToken: 't', phoneNumberId: '1', apiVersion: 'v22.0', wabaId: 'W1' },
     });
     assert.equal(definition, null);
+  });
+});
+
+
+test('reading a template HEADER from Meta', async (t) => {
+  const withHeader = (header: any) => [
+    {
+      name: 'event_reminder',
+      language: 'en',
+      status: 'APPROVED',
+      components: [
+        ...(header ? [header] : []),
+        { type: 'BODY', text: 'Hi {{1}}, {{2}} is on {{3}} at {{4}}. Venue: {{5}}.' },
+        { type: 'FOOTER', text: 'EventReach' },
+      ],
+    },
+  ];
+
+  await t.test('a document header is reported, and is always required', () => {
+    const definition = selectTemplate(withHeader({ type: 'HEADER', format: 'DOCUMENT' }), 'event_reminder', 'en');
+    assert.deepEqual(definition?.header, { format: 'DOCUMENT', placeholderCount: 0, required: true });
+  });
+
+  await t.test('image and video headers are reported the same way', () => {
+    for (const format of ['IMAGE', 'VIDEO']) {
+      const definition = selectTemplate(withHeader({ type: 'HEADER', format }), 'event_reminder', 'en');
+      assert.equal(definition?.header?.format, format);
+      assert.equal(definition?.header?.required, true, `${format} must require a parameter`);
+    }
+  });
+
+  await t.test('a plain text header needs no parameter', () => {
+    const definition = selectTemplate(
+      withHeader({ type: 'HEADER', format: 'TEXT', text: 'Event reminder' }),
+      'event_reminder',
+      'en'
+    );
+    assert.deepEqual(definition?.header, {
+      format: 'TEXT',
+      text: 'Event reminder',
+      placeholderCount: 0,
+      required: false,
+    });
+  });
+
+  await t.test('a text header with its own placeholder does need one', () => {
+    const definition = selectTemplate(
+      withHeader({ type: 'HEADER', format: 'TEXT', text: 'Reminder for {{1}}' }),
+      'event_reminder',
+      'en'
+    );
+    assert.equal(definition?.header?.placeholderCount, 1);
+    assert.equal(definition?.header?.required, true);
+  });
+
+  await t.test('a template with no header reports null', () => {
+    assert.equal(selectTemplate(withHeader(null), 'event_reminder', 'en')?.header, null);
+  });
+
+  await t.test('the body placeholder count never counts the header', () => {
+    const definition = selectTemplate(
+      withHeader({ type: 'HEADER', format: 'TEXT', text: 'Reminder for {{1}}' }),
+      'event_reminder',
+      'en'
+    );
+    assert.equal(definition?.placeholderCount, 5, 'five body placeholders, header excluded');
+  });
+
+  await t.test('only image, video and document take a file', () => {
+    assert.equal(isMediaHeaderFormat('IMAGE'), true);
+    assert.equal(isMediaHeaderFormat('VIDEO'), true);
+    assert.equal(isMediaHeaderFormat('DOCUMENT'), true);
+    assert.equal(isMediaHeaderFormat('TEXT'), false);
+    assert.equal(isMediaHeaderFormat('LOCATION'), false);
+    // Meta has no audio header at all.
+    assert.equal(isMediaHeaderFormat('AUDIO'), false);
+  });
+});
+
+
+/**
+ * event_document: approved with a DOCUMENT header and a body that takes no
+ * variables. The header format is declared in EVENT_TEMPLATES rather than read
+ * from Meta, so sending it does not depend on WHATSAPP_WABA_ID being set.
+ */
+test('event_document', async (t) => {
+  await t.test('is an approved template this page may send', () => {
+    assert.ok(EVENT_TEMPLATES.event_document, 'registered in the allowlist');
+    assert.equal(resolveEventTemplate('event_document').name, 'event_document');
+  });
+
+  await t.test('sends in English', () => {
+    assert.equal(EVENT_TEMPLATES.event_document.languageCode, 'en');
+  });
+
+  await t.test('declares a DOCUMENT header', () => {
+    assert.equal(EVENT_TEMPLATES.event_document.headerFormat, 'DOCUMENT');
+  });
+
+  await t.test('has no body variables, so none are built', () => {
+    assert.deepEqual([...EVENT_TEMPLATES.event_document.fields], []);
+    const variables = buildEventTemplateVariables('event_document', EVENT, CONTACT);
+    assert.deepEqual(variables, [], 'a body parameter here would be rejected by Meta');
+  });
+
+  await t.test('event_reminder is untouched by its arrival', () => {
+    assert.equal(EVENT_TEMPLATES.event_reminder.languageCode, 'en');
+    assert.equal(EVENT_TEMPLATES.event_reminder.headerFormat, undefined, 'it has no media header');
+    assert.equal(buildEventTemplateVariables('event_reminder', EVENT, CONTACT).length, 5);
   });
 });

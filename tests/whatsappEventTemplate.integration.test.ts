@@ -549,3 +549,358 @@ describe('duplicate prevention', () => {
     assert.equal(sent.length, 2);
   });
 });
+
+// ── media templates: the header file ─────────────────────────────────────────
+
+/**
+ * A template whose approved header is a document, image or video needs a file
+ * on every send. The file is uploaded to Meta ONCE per request and the media
+ * id reused for every recipient, exactly as campaign media is.
+ *
+ * The catalog lookup is what tells us the header format, so these tests set
+ * WHATSAPP_WABA_ID for their duration only — the tests above deliberately run
+ * without it, and must keep behaving as they do.
+ */
+describe('media templates', () => {
+  const axios = require('axios');
+  const fsNode = require('node:fs');
+  const pathNode = require('node:path');
+  const { UPLOAD_DIR } = require('../backend/dist/middleware/mediaUpload');
+  const { clearTemplateCatalogCache } = require('../backend/dist/services/whatsappTemplateCatalog');
+
+  const originalGet = axios.get;
+  let headerFormat: string | null = 'DOCUMENT';
+  const files: string[] = [];
+
+  /** A real file on disk, as the upload endpoint would have left one. */
+  const storedFile = (name: string, bytes: Buffer) => {
+    const fileName = `tpl-${Date.now()}-${name}`;
+    fsNode.mkdirSync(UPLOAD_DIR, { recursive: true });
+    fsNode.writeFileSync(pathNode.join(UPLOAD_DIR, fileName), bytes);
+    files.push(fileName);
+    return { url: `/uploads/${fileName}`, filename: name };
+  };
+
+  const PDF = () => storedFile('Invite.pdf', Buffer.from('%PDF-1.4\ntrailer<</Root 1 0 R>>\n%%EOF\n'));
+  const PNG = () => storedFile('photo.png', Buffer.from('89504e470d0a1a0a', 'hex'));
+
+  before(() => {
+    process.env.WHATSAPP_WABA_ID = 'WABA_ID_FOR_TEST';
+    process.env.WHATSAPP_TOKEN = 'placeholder-not-a-real-token';
+    axios.get = async () => ({
+      data: {
+        data: [
+          {
+            name: 'event_reminder',
+            language: 'en',
+            status: 'APPROVED',
+            components: [
+              ...(headerFormat ? [{ type: 'HEADER', format: headerFormat }] : []),
+              { type: 'BODY', text: 'Hi {{1}}, {{2}} is on {{3}} at {{4}}. Venue: {{5}}.' },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
+  after(() => {
+    axios.get = originalGet;
+    delete process.env.WHATSAPP_WABA_ID;
+    delete process.env.WHATSAPP_TOKEN;
+    for (const f of files) {
+      try {
+        fsNode.unlinkSync(pathNode.join(UPLOAD_DIR, f));
+      } catch {
+        /* already gone */
+      }
+    }
+  });
+
+  beforeEach(() => {
+    headerFormat = 'DOCUMENT';
+    clearTemplateCatalogCache();
+  });
+
+  test('the attachment becomes the header media, and every recipient shares one upload', async () => {
+    const f = await fixture();
+    const attachment = PDF();
+
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: { ...f.body(f.guests.map((g: any) => g._id.toString())), attachment },
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.sentCount, 3);
+    assert.equal(res.body.headerMedia.kind, 'document');
+    assert.equal(res.body.headerMedia.filename, 'Invite.pdf');
+
+    assert.equal(sent.length, 3);
+    for (const message of sent) {
+      assert.equal(message.headerMedia.kind, 'document');
+      assert.equal(message.headerMedia.filename, 'Invite.pdf', 'the recipient must see a filename, not a media id');
+    }
+    assert.equal(
+      new Set(sent.map((m: any) => m.headerMedia.mediaId)).size,
+      1,
+      'one upload for the whole request, reused for every recipient'
+    );
+  });
+
+  test('a media template with no attachment is refused, and nothing is sent', async () => {
+    const f = await fixture();
+    const res = await call(mockUrl, { token: f.token, body: f.body([f.guests[0]._id.toString()]) });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'ATTACHMENT_REQUIRED');
+    assert.match(res.body.error.message, /document/i);
+    assert.equal(sent.length, 0);
+  });
+
+  test('a file of the wrong kind for the header is refused', async () => {
+    const f = await fixture();
+    const attachment = PNG(); // an image, for a DOCUMENT header
+
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: { ...f.body([f.guests[0]._id.toString()]), attachment },
+    });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'VALIDATION_ERROR');
+    assert.equal(sent.length, 0);
+  });
+
+  test('an image header accepts an image', async () => {
+    headerFormat = 'IMAGE';
+    clearTemplateCatalogCache();
+    const f = await fixture();
+
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: { ...f.body([f.guests[0]._id.toString()]), attachment: PNG() },
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(sent[0].headerMedia.kind, 'image');
+    assert.equal(sent[0].headerMedia.filename, undefined, 'only a document carries a filename');
+  });
+
+  test('a template with no media header refuses an attachment rather than ignoring it', async () => {
+    headerFormat = null;
+    clearTemplateCatalogCache();
+    const f = await fixture();
+
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: { ...f.body([f.guests[0]._id.toString()]), attachment: PDF() },
+    });
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.error.message, /no media header/i);
+    assert.equal(sent.length, 0);
+  });
+
+  test('a text-only template still sends with no header component', async () => {
+    headerFormat = null;
+    clearTemplateCatalogCache();
+    const f = await fixture();
+
+    const res = await call(mockUrl, { token: f.token, body: f.body([f.guests[0]._id.toString()]) });
+
+    assert.equal(res.status, 200);
+    assert.equal(sent[0].headerMedia, undefined, 'nothing extra is sent for a plain template');
+    assert.equal(res.body.headerMedia, null);
+  });
+
+  test('a file that is no longer on the server is reported plainly', async () => {
+    const f = await fixture();
+    const attachment = { url: '/uploads/gone-forever.pdf', filename: 'gone-forever.pdf' };
+
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: { ...f.body([f.guests[0]._id.toString()]), attachment },
+    });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'ATTACHMENT_MISSING');
+    assert.match(res.body.error.message, /re-upload/i);
+    assert.equal(sent.length, 0);
+  });
+
+  test('without WHATSAPP_WABA_ID an attachment is refused, naming what is missing', async () => {
+    delete process.env.WHATSAPP_WABA_ID;
+    clearTemplateCatalogCache();
+    const f = await fixture();
+
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: { ...f.body([f.guests[0]._id.toString()]), attachment: PDF() },
+    });
+
+    process.env.WHATSAPP_WABA_ID = 'WABA_ID_FOR_TEST';
+    assert.equal(res.status, 503);
+    assert.equal(res.body.error.code, 'CONFIGURATION_ERROR');
+    assert.match(res.body.error.message, /WHATSAPP_WABA_ID/);
+    assert.ok(!JSON.stringify(res.body).toLowerCase().includes('bearer'), 'no credential material');
+    assert.equal(sent.length, 0);
+  });
+
+  test('the Upcoming-only rule and authorization still come first', async () => {
+    const f = await fixture();
+    const stranger = await makeAdmin('stranger@test.test');
+
+    // Another admin's event: refused before the attachment is even looked at.
+    const denied = await call(mockUrl, {
+      token: sign(stranger, 'Admin'),
+      body: { ...f.body([f.guests[0]._id.toString()]), attachment: PDF() },
+    });
+    assert.equal(denied.status, 403);
+
+    // A completed event: same.
+    const owner = await makeAdmin('owner2@test.test');
+    const done = await makeEvent(owner._id, { eventStatus: 'Completed' });
+    const guest = await makeGuest(done, owner._id, 'Late', '+919812345699');
+    const stale = await call(mockUrl, {
+      token: sign(owner, 'Admin'),
+      body: {
+        eventId: done._id.toString(),
+        contactIds: [guest._id.toString()],
+        templateName: 'event_reminder',
+        attachment: PDF(),
+      },
+    });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.error.code, 'EVENT_NOT_ACTIVE');
+    assert.equal(sent.length, 0, 'no upload may turn into a send for a refused request');
+  });
+});
+
+// ── event_document: proactive document template ──────────────────────────────
+
+/**
+ * The template that sends a PDF to a guest who has never messaged the business
+ * number. It declares its own DOCUMENT header, so unlike the tests above it
+ * needs no WHATSAPP_WABA_ID — which is deliberately left unset here, exactly as
+ * a deployment without it would be.
+ */
+describe('event_document', () => {
+  const fsNode = require('node:fs');
+  const pathNode = require('node:path');
+  const { UPLOAD_DIR } = require('../backend/dist/middleware/mediaUpload');
+  const files: string[] = [];
+
+  const storedPdf = () => {
+    const fileName = `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-Invite.pdf`;
+    fsNode.mkdirSync(UPLOAD_DIR, { recursive: true });
+    fsNode.writeFileSync(
+      pathNode.join(UPLOAD_DIR, fileName),
+      Buffer.from('%PDF-1.4\ntrailer<</Root 1 0 R>>\n%%EOF\n')
+    );
+    files.push(fileName);
+    return { url: `/uploads/${fileName}`, filename: 'Invite.pdf' };
+  };
+
+  const documentBody = (contactIds: string[], eventId: string, attachment?: any) => ({
+    eventId,
+    contactIds,
+    templateName: 'event_document',
+    ...(attachment ? { attachment } : {}),
+  });
+
+  after(() => {
+    for (const f of files) {
+      try {
+        fsNode.unlinkSync(pathNode.join(UPLOAD_DIR, f));
+      } catch {
+        /* already gone */
+      }
+    }
+  });
+
+  test('sends the document template to every recipient, uploading the PDF once', async () => {
+    const f = await fixture();
+    const ids = f.guests.map((g: any) => g._id.toString());
+
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: documentBody(ids, f.event._id.toString(), storedPdf()),
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.sentCount, 3);
+    assert.equal(res.body.templateName, 'event_document');
+    assert.equal(res.body.languageCode, 'en');
+    assert.equal(res.body.headerMedia.kind, 'document');
+    assert.equal(res.body.headerMedia.filename, 'Invite.pdf');
+
+    assert.equal(sent.length, 3, 'one message per recipient');
+    assert.equal(
+      new Set(sent.map((m: any) => m.headerMedia.mediaId)).size,
+      1,
+      'the PDF is uploaded once and its media id reused'
+    );
+    for (const message of sent) {
+      assert.equal(message.templateName, 'event_document');
+      assert.equal(message.languageCode, 'en');
+      assert.deepEqual(message.variables, [], 'no body parameters for a template with no variables');
+      assert.equal(message.headerMedia.kind, 'document');
+      assert.equal(message.headerMedia.filename, 'Invite.pdf');
+    }
+  });
+
+  test('works without WHATSAPP_WABA_ID, because the header is declared', async () => {
+    assert.equal(process.env.WHATSAPP_WABA_ID, undefined, 'this suite runs without it');
+    const f = await fixture();
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: documentBody([f.guests[0]._id.toString()], f.event._id.toString(), storedPdf()),
+    });
+    assert.equal(res.status, 200, 'sending must not depend on the template catalog');
+  });
+
+  test('without a PDF it is refused, and nothing is sent', async () => {
+    const f = await fixture();
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: documentBody([f.guests[0]._id.toString()], f.event._id.toString()),
+    });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'ATTACHMENT_REQUIRED');
+    assert.match(res.body.error.message, /document/i);
+    assert.equal(sent.length, 0);
+  });
+
+  test('the Upcoming-only rule and authorization still come first', async () => {
+    const f = await fixture();
+    const stranger = await makeAdmin('stranger@test.test');
+
+    const denied = await call(mockUrl, {
+      token: sign(stranger, 'Admin'),
+      body: documentBody([f.guests[0]._id.toString()], f.event._id.toString(), storedPdf()),
+    });
+    assert.equal(denied.status, 403);
+
+    const owner = await makeAdmin('owner3@test.test');
+    const done = await makeEvent(owner._id, { eventStatus: 'Completed' });
+    const guest = await makeGuest(done, owner._id, 'Late', '+919812345688');
+    const stale = await call(mockUrl, {
+      token: sign(owner, 'Admin'),
+      body: documentBody([guest._id.toString()], done._id.toString(), storedPdf()),
+    });
+    assert.equal(stale.status, 409);
+    assert.equal(sent.length, 0);
+  });
+
+  test('event_reminder still sends with no header and its five values', async () => {
+    const f = await fixture();
+    const res = await call(mockUrl, { token: f.token, body: f.body([f.guests[0]._id.toString()]) });
+
+    assert.equal(res.status, 200);
+    assert.equal(sent[0].templateName, 'event_reminder');
+    assert.equal(sent[0].headerMedia, undefined, 'no header is added to a template without one');
+    assert.equal(sent[0].variables.length, 5);
+  });
+});
