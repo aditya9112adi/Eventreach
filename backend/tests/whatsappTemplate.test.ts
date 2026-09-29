@@ -560,3 +560,59 @@ test('event_document payload', async (t) => {
     assert.equal(reminder.template.components[0].parameters.length, 5);
   });
 });
+
+
+/** The exact image-template payload. */
+test('event_image payload', async (t) => {
+  const payload: any = buildTemplatePayload(
+    validateTemplateMessage({
+      to: '+919876543210',
+      templateName: 'event_image',
+      languageCode: 'en',
+      variables: [],
+      headerMedia: { kind: 'image', mediaId: 'META_MEDIA_ID' },
+    })
+  );
+
+  await t.test('is a template message, never a standalone image', () => {
+    assert.equal(payload.type, 'template');
+    assert.equal(payload.image, undefined, 'a bare image message would need an open 24h window');
+    assert.equal(payload.text, undefined, 'the approved body is never sent as free-form text');
+  });
+
+  await t.test('names the template and its language', () => {
+    assert.equal(payload.template.name, 'event_image');
+    assert.deepEqual(payload.template.language, { code: 'en' });
+  });
+
+  await t.test('carries exactly one component: the image header with the media id', () => {
+    assert.equal(payload.template.components.length, 1);
+    assert.deepEqual(payload.template.components[0], {
+      type: 'header',
+      parameters: [{ type: 'image', image: { id: 'META_MEDIA_ID' } }],
+    });
+  });
+
+  await t.test('carries NO body parameters', () => {
+    assert.equal(payload.template.components.some((c: any) => c.type === 'body'), false);
+  });
+
+  await t.test('no filename is attached to an image header', () => {
+    assert.equal(payload.template.components[0].parameters[0].image.filename, undefined);
+  });
+
+  await t.test('event_document still produces a document header with its filename', () => {
+    const doc: any = buildTemplatePayload(
+      validateTemplateMessage({
+        to: '+919876543210',
+        templateName: 'event_document',
+        languageCode: 'en',
+        variables: [],
+        headerMedia: { kind: 'document', mediaId: 'DOC_ID', filename: 'Invite.pdf' },
+      })
+    );
+    assert.deepEqual(doc.template.components[0].parameters, [
+      { type: 'document', document: { id: 'DOC_ID', filename: 'Invite.pdf' } },
+    ]);
+  });
+});

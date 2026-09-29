@@ -86,6 +86,16 @@ export const EVENT_TEMPLATES: Record<string, EventTemplateSpec> = {
     fields: [],
     headerFormat: 'DOCUMENT',
   },
+  /**
+   * Approved under the production WABA with an IMAGE header and a fixed body
+   * ("Hello, please find the event invitation attached."). Like event_document
+   * its body takes no variables, so no body component is built for it.
+   */
+  event_image: {
+    languageCode: 'en',
+    fields: [],
+    headerFormat: 'IMAGE',
+  },
 };
 
 export const resolveEventTemplate = (templateName: unknown): { name: string; spec: EventTemplateSpec } => {

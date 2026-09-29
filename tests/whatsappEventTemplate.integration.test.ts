@@ -904,3 +904,182 @@ describe('event_document', () => {
     assert.equal(sent[0].variables.length, 5);
   });
 });
+
+// ── event_image: proactive image template ────────────────────────────────────
+
+/**
+ * The same proactive path as event_document, with an IMAGE header instead of a
+ * DOCUMENT one. The upload is counted here by wrapping the real uploader, so
+ * "uploaded once and reused" and "authorization happens before the upload" are
+ * measured rather than assumed.
+ */
+describe('event_image', () => {
+  const fsNode = require('node:fs');
+  const pathNode = require('node:path');
+  const { UPLOAD_DIR } = require('../backend/dist/middleware/mediaUpload');
+  const { whatsappService } = require('../backend/dist/services/WhatsAppService');
+  const files: string[] = [];
+
+  const realUpload = whatsappService.uploadMediaToMeta.bind(whatsappService);
+  let uploads = 0;
+
+  before(() => {
+    whatsappService.uploadMediaToMeta = async (...args: any[]) => {
+      uploads += 1;
+      return realUpload(...args);
+    };
+  });
+
+  after(() => {
+    whatsappService.uploadMediaToMeta = realUpload;
+    for (const f of files) {
+      try {
+        fsNode.unlinkSync(pathNode.join(UPLOAD_DIR, f));
+      } catch {
+        /* already gone */
+      }
+    }
+  });
+
+  beforeEach(() => {
+    uploads = 0;
+  });
+
+  /** A real file on disk with the right magic bytes for its kind. */
+  const stored = (kind: 'png' | 'pdf') => {
+    const bytes =
+      kind === 'png'
+        ? Buffer.from('89504e470d0a1a0a', 'hex')
+        : Buffer.from('%PDF-1.4\ntrailer<</Root 1 0 R>>\n%%EOF\n');
+    const name = kind === 'png' ? 'Invitation.png' : 'Invite.pdf';
+    const fileName = `img-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${name}`;
+    fsNode.mkdirSync(UPLOAD_DIR, { recursive: true });
+    fsNode.writeFileSync(pathNode.join(UPLOAD_DIR, fileName), bytes);
+    files.push(fileName);
+    return { url: `/uploads/${fileName}`, filename: name };
+  };
+
+  const imageBody = (contactIds: string[], eventId: string, attachment?: any) => ({
+    eventId,
+    contactIds,
+    templateName: 'event_image',
+    ...(attachment ? { attachment } : {}),
+  });
+
+  test('sends the image template to every recipient, uploading the image once', async () => {
+    const f = await fixture();
+    const ids = f.guests.map((g: any) => g._id.toString());
+
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: imageBody(ids, f.event._id.toString(), stored('png')),
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.sentCount, 3);
+    assert.equal(res.body.templateName, 'event_image');
+    assert.equal(res.body.languageCode, 'en');
+    assert.equal(res.body.headerMedia.kind, 'image');
+
+    assert.equal(uploads, 1, 'one upload for the whole request, not one per recipient');
+    assert.equal(sent.length, 3, 'one message per recipient');
+    assert.equal(
+      new Set(sent.map((m: any) => m.headerMedia.mediaId)).size,
+      1,
+      'the same Meta media id is reused for every recipient'
+    );
+    for (const message of sent) {
+      assert.equal(message.templateName, 'event_image');
+      assert.equal(message.languageCode, 'en');
+      assert.deepEqual(message.variables, [], 'no body parameters for a template with no variables');
+      assert.equal(message.headerMedia.kind, 'image');
+      assert.equal(message.headerMedia.filename, undefined, 'only a document carries a filename');
+    }
+  });
+
+  test('without an image it is refused, and nothing is uploaded or sent', async () => {
+    const f = await fixture();
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: imageBody([f.guests[0]._id.toString()], f.event._id.toString()),
+    });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'ATTACHMENT_REQUIRED');
+    assert.match(res.body.error.message, /image/i);
+    assert.equal(uploads, 0);
+    assert.equal(sent.length, 0);
+  });
+
+  test('a PDF offered to the image template is rejected', async () => {
+    const f = await fixture();
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: imageBody([f.guests[0]._id.toString()], f.event._id.toString(), stored('pdf')),
+    });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'VALIDATION_ERROR');
+    assert.match(res.body.error.message, /image/i);
+    assert.equal(uploads, 0, 'the wrong type is caught before anything is uploaded');
+    assert.equal(sent.length, 0);
+  });
+
+  test('authorization is checked BEFORE the image is uploaded', async () => {
+    const f = await fixture();
+    const stranger = await makeAdmin('stranger@test.test');
+
+    const res = await call(mockUrl, {
+      token: sign(stranger, 'Admin'),
+      body: imageBody([f.guests[0]._id.toString()], f.event._id.toString(), stored('png')),
+    });
+
+    assert.equal(res.status, 403);
+    assert.equal(uploads, 0, 'a refused request must never reach Meta with a file');
+    assert.equal(sent.length, 0);
+  });
+
+  test('the Upcoming-only rule also precedes the upload', async () => {
+    const owner = await makeAdmin('owner4@test.test');
+    const done = await makeEvent(owner._id, { eventStatus: 'Completed' });
+    const guest = await makeGuest(done, owner._id, 'Late', '+919812345677');
+
+    const res = await call(mockUrl, {
+      token: sign(owner, 'Admin'),
+      body: imageBody([guest._id.toString()], done._id.toString(), stored('png')),
+    });
+
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error.code, 'EVENT_NOT_ACTIVE');
+    assert.equal(uploads, 0);
+    assert.equal(sent.length, 0);
+  });
+
+  test('event_document still sends a document header, unchanged', async () => {
+    const f = await fixture();
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: {
+        eventId: f.event._id.toString(),
+        contactIds: [f.guests[0]._id.toString()],
+        templateName: 'event_document',
+        attachment: stored('pdf'),
+      },
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(sent[0].templateName, 'event_document');
+    assert.equal(sent[0].headerMedia.kind, 'document');
+    assert.equal(sent[0].headerMedia.filename, 'Invite.pdf');
+  });
+
+  test('event_reminder still sends no header and its five values', async () => {
+    const f = await fixture();
+    const res = await call(mockUrl, { token: f.token, body: f.body([f.guests[0]._id.toString()]) });
+
+    assert.equal(res.status, 200);
+    assert.equal(sent[0].headerMedia, undefined);
+    assert.equal(sent[0].variables.length, 5);
+    assert.equal(uploads, 0, 'a template with no media header uploads nothing');
+  });
+});

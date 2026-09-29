@@ -368,3 +368,35 @@ test('event_document', async (t) => {
     assert.equal(buildEventTemplateVariables('event_reminder', EVENT, CONTACT).length, 5);
   });
 });
+
+
+/**
+ * event_image: an IMAGE header and, like event_document, a body with no
+ * variables. Its header format is declared, so sending needs no catalog lookup.
+ */
+test('event_image', async (t) => {
+  await t.test('is an approved template this page may send', () => {
+    assert.ok(EVENT_TEMPLATES.event_image, 'registered in the allowlist');
+    assert.equal(resolveEventTemplate('event_image').name, 'event_image');
+  });
+
+  await t.test('sends in English', () => {
+    assert.equal(EVENT_TEMPLATES.event_image.languageCode, 'en');
+  });
+
+  await t.test('declares an IMAGE header, not a document one', () => {
+    assert.equal(EVENT_TEMPLATES.event_image.headerFormat, 'IMAGE');
+  });
+
+  await t.test('has no body variables, so none are built', () => {
+    assert.deepEqual([...EVENT_TEMPLATES.event_image.fields], []);
+    assert.deepEqual(buildEventTemplateVariables('event_image', EVENT, CONTACT), []);
+  });
+
+  await t.test('the three templates keep their own shapes', () => {
+    assert.equal(EVENT_TEMPLATES.event_image.headerFormat, 'IMAGE');
+    assert.equal(EVENT_TEMPLATES.event_document.headerFormat, 'DOCUMENT');
+    assert.equal(EVENT_TEMPLATES.event_reminder.headerFormat, undefined, 'event_reminder has no media header');
+    assert.equal(EVENT_TEMPLATES.event_reminder.fields.length, 5, 'and keeps its five body values');
+  });
+});

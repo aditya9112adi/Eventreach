@@ -50,6 +50,12 @@ const TEMPLATES = [
     description:
       'Approved utility template with a fixed message and a PDF attached. Its wording is set by the approved template and cannot be edited here.',
   },
+  {
+    name: 'event_image',
+    label: 'Event image',
+    description:
+      'Approved utility template with a fixed message and an image attached. Its wording is set by the approved template and cannot be edited here.',
+  },
 ];
 
 const Composer = () => {
