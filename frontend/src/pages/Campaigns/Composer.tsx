@@ -95,6 +95,8 @@ const Composer = () => {
   // Message attachments, which are a different flow entirely.
   const [templateAttachment, setTemplateAttachment] = useState<TemplateAttachment | null>(null);
   const [isHeaderUploading, setIsHeaderUploading] = useState(false);
+  // Real bytes-sent progress from the request itself, not a timer.
+  const [headerUploadProgress, setHeaderUploadProgress] = useState(0);
   // The selection already sent. Holding it here is what stops the same guest
   // being messaged twice by a double click or an impatient second click.
   const [lastSentKey, setLastSentKey] = useState<string | null>(null);
@@ -345,19 +347,31 @@ const Composer = () => {
    */
   const handleHeaderUpload = async (file: File) => {
     setIsHeaderUploading(true);
+    setHeaderUploadProgress(0);
     setTemplateError('');
     const formData = new FormData();
     formData.append('file', file);
     try {
       const response = await api.post('/campaigns/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        // Reported by the browser as the bytes go out, so the bar reflects the
+        // real transfer rather than an animation.
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            setHeaderUploadProgress(
+              Math.round((progressEvent.loaded * 100) / progressEvent.total)
+            );
+          }
+        },
       });
       setTemplateAttachment(response.data);
     } catch (err: any) {
       setTemplateAttachment(null);
       setTemplateError(err?.response?.data?.error || describeSendError(err));
     } finally {
+      // Cleared either way: a failed upload must not leave a bar behind.
       setIsHeaderUploading(false);
+      setHeaderUploadProgress(0);
     }
   };
 
@@ -591,12 +605,36 @@ const Composer = () => {
                           maxSize={WHATSAPP_MAX_ANY_BYTES}
                           perTypeMaxBytes={WHATSAPP_MEDIA_MAX_BYTES}
                           limitSummary={whatsAppMediaLimitSummary()}
+                          disabled={isHeaderUploading}
                         />
+
+                        {/* Sits under the drop area while the file goes out,
+                            and disappears on success or failure alike. */}
+                        {isHeaderUploading && (
+                          <div className="mt-4 bg-surface border border-border rounded-lg p-4 animate-fade-in shadow-sm">
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="text-sm text-foreground font-medium tracking-wide">
+                                Uploading... {headerUploadProgress}%
+                              </span>
+                            </div>
+                            <div
+                              className="w-full bg-black/10 dark:bg-white/10 rounded-full h-2.5 overflow-hidden"
+                              role="progressbar"
+                              aria-valuenow={headerUploadProgress}
+                              aria-valuemin={0}
+                              aria-valuemax={100}
+                              aria-label="Upload progress"
+                            >
+                              <div
+                                className="bg-accent h-2.5 rounded-full transition-all duration-200 ease-out"
+                                style={{ width: headerUploadProgress + '%' }}
+                              ></div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
-                    <p className="mt-2 text-xs text-foreground/50">
-                      {isHeaderUploading ? 'Uploading...' : headerPrompt.hint}
-                    </p>
+                    <p className="mt-2 text-xs text-foreground/50">{headerPrompt.hint}</p>
                   </div>
                 )}
 

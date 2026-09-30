@@ -19,6 +19,11 @@ interface FileUploadProps {
   limitSummary?: string[];
   /** Optional preview for an already-selected file. */
   previewUrl?: string | null;
+  /**
+   * Blocks picking and dropping — used while an upload is in flight, so a
+   * second file cannot be started on top of the first.
+   */
+  disabled?: boolean;
 }
 
 const describeSize = (bytes: number): string =>
@@ -33,6 +38,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
   perTypeMaxBytes,
   limitSummary,
   previewUrl,
+  disabled = false,
 }) => {
   // A rejected file used to be dropped in complete silence, so picking an
   // oversized or unsupported file simply appeared to do nothing.
@@ -71,7 +77,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({
     onDropRejected,
     accept,
     maxSize,
-    multiple: false
+    multiple: false,
+    disabled
   });
 
   if (selectedFile) {
@@ -120,7 +127,9 @@ export const FileUpload: React.FC<FileUploadProps> = ({
         flex flex-col items-center justify-center min-h-[200px]
         ${isDragActive ? 'border-accent bg-accent/5' : 'border-border hover:border-accent/50 hover:bg-surface/50'}
         ${isDragReject ? 'border-destructive bg-destructive/10' : ''}
+        ${disabled ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}
       `}
+      aria-disabled={disabled}
     >
       <input {...getInputProps()} />
       <div className="w-12 h-12 bg-surfaceHover text-foreground/50 rounded-full flex items-center justify-center mb-4">
