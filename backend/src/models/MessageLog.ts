@@ -32,7 +32,16 @@ import mongoose, { Schema, Document } from 'mongoose';
  *               `errorReason` carry Meta's own reason.
  */
 export interface IMessageLog extends Document {
-  campaignId: mongoose.Types.ObjectId;
+  /** Absent for a proactive template send, which has no campaign. */
+  campaignId?: mongoose.Types.ObjectId;
+  /**
+   * The event this message belongs to. Campaign messages reach their event
+   * through the campaign; a proactive template send has no campaign, so it
+   * carries the event directly — which is also what authorizes reading it.
+   */
+  eventId?: mongoose.Types.ObjectId;
+  /** Set only for a template send: event_document, event_image, … */
+  templateName?: string;
   contactId: mongoose.Types.ObjectId;
   /** Denormalised so a report still names the recipient if the contact is deleted. */
   contactName?: string;
@@ -55,11 +64,24 @@ export interface IMessageLog extends Document {
 
 const messageLogSchema = new Schema(
   {
+    /**
+     * Required for a campaign message and absent for a proactive template
+     * send. Campaigns are one per event (unique index), so a template send
+     * cannot be given one of its own — it carries eventId instead.
+     */
     campaignId: {
       type: Schema.Types.ObjectId,
       ref: 'Campaign',
-      required: true,
       index: true
+    },
+    eventId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Event',
+      index: true
+    },
+    templateName: {
+      type: String,
+      trim: true
     },
     contactId: {
       type: Schema.Types.ObjectId,
@@ -103,6 +125,9 @@ messageLogSchema.index({ createdAt: -1 });
 messageLogSchema.index({ status: 1 });
 messageLogSchema.index({ campaignId: 1, status: 1 });
 messageLogSchema.index({ campaignId: 1, createdAt: -1 });
+// Serves the event-scoped Delivery Log: a proactive template send has no
+// campaign, so its rows are found by event, newest first.
+messageLogSchema.index({ eventId: 1, createdAt: -1 });
 // Every webhook callback arrives keyed by wamid and nothing else, so this is
 // the hot path for status updates. Partial rather than sparse+unique: rows
 // queued before a send attempt have no wamid at all, and a failed send never

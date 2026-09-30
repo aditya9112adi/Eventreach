@@ -172,3 +172,60 @@ export const getCampaignLogs = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch campaign logs' });
   }
 };
+
+/**
+ * GET /api/reports/event/:eventId/template-logs
+ *
+ * The Delivery Log for proactive template sends. Those have no campaign —
+ * campaigns are one per event — so their rows are found by event instead, and
+ * authorized by that same event rather than through a campaign.
+ *
+ * Deliberately a separate query from getCampaignLogs: a campaign's Delivery
+ * Log keeps returning exactly the rows it always has.
+ */
+export const getEventTemplateLogs = async (req: Request, res: Response) => {
+  try {
+    const { eventId } = req.params;
+
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const statusFilter = req.query.status as string;
+
+    // templateName is what distinguishes a proactive send from anything else
+    // that might one day carry an eventId.
+    const query: any = { eventId, templateName: { $exists: true, $ne: null } };
+    if (statusFilter && statusFilter !== 'All') {
+      // Same rule as the campaign log: Read is a timestamp, not a status.
+      if (statusFilter === 'Read') query.readAt = { $ne: null };
+      else query.status = statusFilter;
+    }
+
+    const logs = await MessageLog.find(query)
+      .populate('contactId', 'fullName phoneNumber')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+
+    const totalLogs = await MessageLog.countDocuments(query);
+
+    res.json({
+      logs,
+      pagination: {
+        page,
+        limit,
+        total: totalLogs,
+        totalPages: Math.ceil(totalLogs / limit),
+      },
+    });
+  } catch (error) {
+    console.error('Get event template logs error:', error);
+    res.status(500).json({ error: 'Failed to fetch template delivery logs' });
+  }
+};

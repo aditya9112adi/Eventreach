@@ -1083,3 +1083,263 @@ describe('event_image', () => {
     assert.equal(uploads, 0, 'a template with no media header uploads nothing');
   });
 });
+
+// ── reporting: template sends in the Delivery Log ────────────────────────────
+
+/**
+ * A proactive template send has no campaign, so its delivery row carries the
+ * event instead. The row is written BEFORE the Meta request, because Meta can
+ * deliver a status callback the instant it accepts a message and the webhook
+ * correlates on a row that must already exist.
+ */
+describe('template delivery records', () => {
+  const { MessageLog } = require('../backend/dist/models/MessageLog');
+  const webhook = require('../backend/dist/controllers/webhookController');
+  const fsNode = require('node:fs');
+  const pathNode = require('node:path');
+  const { UPLOAD_DIR } = require('../backend/dist/middleware/mediaUpload');
+  const files: string[] = [];
+
+  const storedPng = () => {
+    const fileName = `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-Invitation.png`;
+    fsNode.mkdirSync(UPLOAD_DIR, { recursive: true });
+    fsNode.writeFileSync(pathNode.join(UPLOAD_DIR, fileName), Buffer.from('89504e470d0a1a0a', 'hex'));
+    files.push(fileName);
+    return { url: `/uploads/${fileName}`, filename: 'Invitation.png' };
+  };
+
+  /** A Meta status callback, applied through the real webhook logic. */
+  const callback = (wamid: string, status: string, extra: any = {}) =>
+    webhook.__applyStatusUpdatesForTest({
+      object: 'whatsapp_business_account',
+      entry: [
+        {
+          id: 'WABA',
+          changes: [
+            {
+              field: 'messages',
+              value: {
+                statuses: [
+                  { id: wamid, status, timestamp: String(Math.floor(Date.now() / 1000)), ...extra },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+  beforeEach(async () => {
+    await MessageLog.deleteMany({});
+  });
+
+  after(() => {
+    for (const f of files) {
+      try {
+        fsNode.unlinkSync(pathNode.join(UPLOAD_DIR, f));
+      } catch {
+        /* already gone */
+      }
+    }
+  });
+
+  test('a successful send leaves one Sent row carrying event, guest and wamid', async () => {
+    const f = await fixture();
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: { eventId: f.event._id.toString(), contactIds: [f.guests[0]._id.toString()], templateName: 'event_image', attachment: storedPng() },
+    });
+    assert.equal(res.status, 200);
+
+    const logs = await MessageLog.find({}).lean();
+    assert.equal(logs.length, 1, 'exactly one row per recipient');
+    const [log] = logs;
+    assert.equal(String(log.eventId), String(f.event._id), 'the event, since there is no campaign');
+    assert.equal(log.campaignId, undefined, 'and no campaign is invented for it');
+    assert.equal(String(log.contactId), String(f.guests[0]._id));
+    assert.equal(log.contactName, 'Shubham Suryavanshi');
+    assert.equal(log.phoneNumber, '+918530808862');
+    assert.equal(log.templateName, 'event_image');
+    assert.equal(log.status, 'Sent');
+    assert.equal(log.wamid, res.body.sent[0].messageId);
+    assert.ok(log.sentAt, 'accepted-at is recorded');
+    assert.equal(log.deliveredAt, undefined, 'acceptance is not delivery');
+  });
+
+  test('event_document is recorded the same way', async () => {
+    const f = await fixture();
+    const pdfName = `log-${Date.now()}-Invite.pdf`;
+    fsNode.writeFileSync(pathNode.join(UPLOAD_DIR, pdfName), Buffer.from('%PDF-1.4\ntrailer<</Root 1 0 R>>\n%%EOF\n'));
+    files.push(pdfName);
+
+    await call(mockUrl, {
+      token: f.token,
+      body: {
+        eventId: f.event._id.toString(),
+        contactIds: [f.guests[0]._id.toString()],
+        templateName: 'event_document',
+        attachment: { url: `/uploads/${pdfName}`, filename: 'Invite.pdf' },
+      },
+    });
+
+    const log = await MessageLog.findOne({}).lean();
+    assert.equal(log.templateName, 'event_document');
+    assert.equal(log.status, 'Sent');
+  });
+
+  test('three recipients create exactly three rows, one wamid each', async () => {
+    const f = await fixture();
+    const ids = f.guests.map((g: any) => g._id.toString());
+    await call(mockUrl, {
+      token: f.token,
+      body: { eventId: f.event._id.toString(), contactIds: ids, templateName: 'event_image', attachment: storedPng() },
+    });
+
+    const logs = await MessageLog.find({}).lean();
+    assert.equal(logs.length, 3);
+    assert.equal(new Set(logs.map((l: any) => String(l.contactId))).size, 3, 'a row per guest');
+    assert.equal(new Set(logs.map((l: any) => l.wamid)).size, 3, 'each with its own wamid');
+    assert.equal(new Set(logs.map((l: any) => String(l.eventId))).size, 1, 'all on the same event');
+    for (const log of logs) assert.equal(log.templateName, 'event_image');
+  });
+
+  test('a Meta rejection is recorded as Failed on the same row, with its code', async () => {
+    const f = await fixture();
+    rejectPhones.set(
+      '+919112472833',
+      new WhatsAppTemplateError('RECIPIENT_NOT_ALLOWED', 'This number cannot receive messages.', 400, {
+        meta: { code: 131030 },
+      })
+    );
+
+    const res = await call(mockUrl, {
+      token: f.token,
+      body: { eventId: f.event._id.toString(), contactIds: f.guests.map((g: any) => g._id.toString()), templateName: 'event_image', attachment: storedPng() },
+    });
+    assert.equal(res.status, 207, 'a partial failure');
+
+    const logs = await MessageLog.find({}).lean();
+    assert.equal(logs.length, 3, 'still one row per recipient');
+    const failed = logs.filter((l: any) => l.status === 'Failed');
+    const sentRows = logs.filter((l: any) => l.status === 'Sent');
+    assert.equal(failed.length, 1);
+    assert.equal(sentRows.length, 2);
+    assert.equal(failed[0].phoneNumber, '+919112472833');
+    assert.equal(failed[0].errorCode, 131030, "Meta's own code");
+    assert.match(failed[0].errorReason, /cannot receive messages/);
+    assert.ok(failed[0].failedAt);
+    assert.equal(failed[0].wamid, undefined, 'a refused message has no wamid');
+  });
+
+  test('the row exists BEFORE the send, so an immediate callback is not lost', async () => {
+    const f = await fixture();
+    let rowAtSendTime: any = null;
+
+    // The stub stands in for Meta: whatever it sees at this moment is what a
+    // callback arriving in the same instant would find.
+    const sender = async (input: any) => {
+      rowAtSendTime = await MessageLog.findOne({ phoneNumber: input.to }).lean();
+      return { success: true, messageId: 'wamid.RACE', status: 'accepted', recipient: input.to };
+    };
+
+    const raceApp = express();
+    raceApp.use(express.json());
+    raceApp.use(requireAuth);
+    raceApp.post('/send', controller.buildEventTemplateHandler(sender, () => clock));
+    const raceServer = http.createServer(raceApp);
+    await new Promise<void>((r) => raceServer.listen(0, '127.0.0.1', () => r()));
+    const raceUrl = `http://127.0.0.1:${(raceServer.address() as any).port}/send`;
+
+    await call(raceUrl, {
+      token: f.token,
+      body: { eventId: f.event._id.toString(), contactIds: [f.guests[0]._id.toString()], templateName: 'event_image', attachment: storedPng() },
+    });
+    await new Promise<void>((r) => raceServer.close(() => r()));
+
+    assert.ok(rowAtSendTime, 'the delivery row already existed when Meta was called');
+    assert.equal(rowAtSendTime.status, 'Pending', 'as Pending, exactly as the campaign flow does');
+    assert.equal(rowAtSendTime.wamid, undefined, 'the wamid only exists after Meta answers');
+  });
+
+  test('the webhook finds a template row by wamid and walks it to Read', async () => {
+    const f = await fixture();
+    await call(mockUrl, {
+      token: f.token,
+      body: { eventId: f.event._id.toString(), contactIds: [f.guests[0]._id.toString()], templateName: 'event_image', attachment: storedPng() },
+    });
+    const wamid = (await MessageLog.findOne({}).lean()).wamid;
+
+    await callback(wamid, 'delivered');
+    let log = await MessageLog.findOne({ wamid }).lean();
+    assert.equal(log.status, 'Delivered');
+    assert.ok(log.deliveredAt);
+
+    await callback(wamid, 'read');
+    log = await MessageLog.findOne({ wamid }).lean();
+    assert.ok(log.readAt, 'read is a timestamp on a delivered row');
+    assert.equal(log.status, 'Delivered');
+
+    // And a repeat callback changes nothing and creates nothing.
+    const before = await MessageLog.countDocuments({});
+    await callback(wamid, 'delivered');
+    assert.equal(await MessageLog.countDocuments({}), before, 'no duplicate row');
+  });
+
+  test('a failed callback records Meta’s reason on the template row', async () => {
+    const f = await fixture();
+    await call(mockUrl, {
+      token: f.token,
+      body: { eventId: f.event._id.toString(), contactIds: [f.guests[0]._id.toString()], templateName: 'event_image', attachment: storedPng() },
+    });
+    const wamid = (await MessageLog.findOne({}).lean()).wamid;
+
+    await callback(wamid, 'failed', {
+      errors: [{ code: 131047, title: 'Re-engagement message' }],
+    });
+
+    const log = await MessageLog.findOne({ wamid }).lean();
+    assert.equal(log.status, 'Failed');
+    assert.equal(log.errorCode, 131047);
+    assert.equal(log.errorReason, 'Re-engagement message');
+    assert.ok(log.failedAt);
+  });
+
+  test('the Delivery Log is event-scoped, and refuses another admin’s event', async () => {
+    const f = await fixture();
+    await call(mockUrl, {
+      token: f.token,
+      body: { eventId: f.event._id.toString(), contactIds: [f.guests[0]._id.toString()], templateName: 'event_image', attachment: storedPng() },
+    });
+
+    const reportRoutes = require('../backend/dist/routes/reportRoutes').default;
+    const reportApp = express();
+    reportApp.use(express.json());
+    reportApp.use('/api/reports', reportRoutes);
+    const reportServer = http.createServer(reportApp);
+    await new Promise<void>((r) => reportServer.listen(0, '127.0.0.1', () => r()));
+    const base = `http://127.0.0.1:${(reportServer.address() as any).port}/api/reports`;
+
+    const get = (token: string | null, eventId: string) =>
+      fetch(`${base}/event/${eventId}/template-logs`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+    const mine = await get(f.token, f.event._id.toString());
+    assert.equal(mine.status, 200);
+    const body = await mine.json();
+    assert.equal(body.logs.length, 1, 'the owner sees their own template send');
+    assert.equal(body.logs[0].templateName, 'event_image');
+
+    const stranger = await makeAdmin('reportstranger@test.test');
+    const theirs = await get(sign(stranger, 'Admin'), f.event._id.toString());
+    assert.equal(theirs.status, 403, 'another admin cannot read this event’s rows');
+
+    const anon = await get(null, f.event._id.toString());
+    assert.equal(anon.status, 401);
+
+    // fetch keeps the socket alive, and close() waits for it — which leaves
+    // the whole test process hanging after the assertions have passed.
+    reportServer.closeAllConnections?.();
+    await new Promise<void>((r) => reportServer.close(() => r()));
+  });
+});

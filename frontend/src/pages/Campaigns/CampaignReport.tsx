@@ -47,6 +47,8 @@ interface LogEntry {
   _id: string;
   contactId: { fullName: string; phoneNumber: string } | null;
   contactName?: string;
+  /** Present only on a proactive template send, which has no campaign. */
+  templateName?: string;
   phoneNumber: string;
   status: string;
   errorCode?: number;
@@ -132,7 +134,32 @@ export const CampaignReportContent = ({
         api.get(`/reports/campaign/${campaignId}/logs`, { params: { status: statusFilter === 'All' ? undefined : statusFilter } })
       ]);
       setStats(statsRes.data);
-      setLogs(logsRes.data.logs);
+
+      /**
+       * Proactive template sends belong to the event rather than to this
+       * campaign, so they come from their own endpoint and are shown in the
+       * same table. Fetched after the campaign's own rows and merged by time —
+       * if it fails, the campaign report still renders exactly as before.
+       */
+      const eventId = statsRes.data?.eventDetails?._id;
+      let templateLogs: LogEntry[] = [];
+      if (eventId) {
+        try {
+          const templateRes = await api.get(`/reports/event/${eventId}/template-logs`, {
+            params: { status: statusFilter === 'All' ? undefined : statusFilter },
+          });
+          templateLogs = templateRes.data?.logs ?? [];
+        } catch (templateError) {
+          console.error('Failed to fetch template delivery rows', templateError);
+        }
+      }
+
+      setLogs(
+        [...logsRes.data.logs, ...templateLogs].sort(
+          (a: LogEntry, b: LogEntry) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        )
+      );
       setLoadError(null);
     } catch (error: any) {
       console.error('Failed to fetch report', error);
@@ -479,6 +506,11 @@ export const CampaignReportContent = ({
                         <td className="py-3 pr-4 text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(1, logs.length, index)}</td>
                         <td className="py-3 font-medium text-foreground whitespace-nowrap">
                           {log.contactId?.fullName || log.contactName || 'Unknown'}
+                          {log.templateName && (
+                            <span className="ml-2 text-[10px] uppercase tracking-wider text-foreground/40">
+                              {log.templateName}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3 text-foreground/80 font-mono text-xs whitespace-nowrap">
                           {log.contactId?.phoneNumber || log.phoneNumber}

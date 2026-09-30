@@ -484,10 +484,16 @@ async function main() {
       properties: { key: { enum: SETTINGS_KEYS }, value: strOrNull({ maxLength: SETTINGS_VALUE_MAX }) },
     }, 'strict'],
 
+    /**
+     * campaignId is NOT required: a proactive WhatsApp template send has no
+     * campaign (campaigns are one per event) and carries eventId instead.
+     * Requiring it here would have MongoDB reject those rows outright.
+     */
     ['messagelogs', {
-      bsonType: 'object', required: ['campaignId', 'contactId', 'phoneNumber', 'status'],
+      bsonType: 'object', required: ['contactId', 'phoneNumber', 'status'],
       properties: {
         campaignId: { bsonType: 'objectId' }, contactId: { bsonType: 'objectId' },
+        eventId: { bsonType: 'objectId' }, templateName: strOrNull(),
         phoneNumber: str(), status: { enum: MESSAGE_STATUSES },
         errorReason: strOrNull(),   // no length limit exists today
         createdAt: dateOrNull, updatedAt: dateOrNull,

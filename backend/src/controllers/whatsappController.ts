@@ -30,6 +30,7 @@ import { isEventAuthorized } from '../services/eventAuthService';
 import { AuditService } from '../services/AuditService';
 import { Event } from '../models/Event';
 import { Contact } from '../models/Contact';
+import { MessageLog } from '../models/MessageLog';
 import { normalizeIndianPhone } from '../utils/indianPhone';
 
 /**
@@ -617,6 +618,7 @@ export const buildEventTemplateHandler = (
       const outcomes = await mapWithConcurrency(contactIds, SEND_CONCURRENCY, async (contactId) => {
         let reservedKey: string | null = null;
         let guest: ResolvedEventTemplate | null = null;
+        let logId: any = null;
         try {
           guest = await resolveGuestVariables(context, contactId);
 
@@ -639,6 +641,31 @@ export const buildEventTemplateHandler = (
           recentSends.set(dedupeKey, now());
           reservedKey = dedupeKey;
 
+          /**
+           * The reporting row is created BEFORE the request, not after it.
+           * Meta can deliver a status callback the moment it accepts a
+           * message, and the webhook correlates on wamid against an existing
+           * row — one written afterwards would miss an early callback and sit
+           * at Sent forever. Pending is the state the campaign flow uses for
+           * exactly this window.
+           *
+           * Logging never decides whether a message is sent: a failure here is
+           * recorded and stepped over.
+           */
+          try {
+            const log = await MessageLog.create({
+              eventId: context.event._id,
+              contactId: guest.contact._id,
+              contactName: guest.contact.fullName,
+              phoneNumber: guest.contact.phoneNumber,
+              templateName: context.templateName,
+              status: 'Pending',
+            });
+            logId = log._id;
+          } catch (logError: any) {
+            console.error('WhatsApp template: could not create the delivery record:', logError?.message);
+          }
+
           const result = await send({
             to: guest.contact.phoneNumber,
             templateName: context.templateName,
@@ -646,6 +673,22 @@ export const buildEventTemplateHandler = (
             variables: guest.variables.map((variable) => variable.value),
             ...(headerMedia ? { headerMedia } : {}),
           });
+
+          /**
+           * Accepted by Meta. Recording that must never turn a delivered
+           * message into a failed one, so a write failure is logged and the
+           * send still counts as the success it was.
+           */
+          if (logId) {
+            try {
+              await MessageLog.updateOne(
+                { _id: logId },
+                { $set: { wamid: result.messageId, status: 'Sent', sentAt: new Date() } }
+              );
+            } catch (logError: any) {
+              console.error('WhatsApp template: could not record the accepted message:', logError?.message);
+            }
+          }
 
           // Every other send in the app is audited; a real WhatsApp message
           // sent from this page is no different. AuditService.log never throws.
@@ -690,6 +733,31 @@ export const buildEventTemplateHandler = (
           // WhatsAppSendError (Meta's own error code), so the category is what
           // names the failure here; Meta's number is reported separately.
           const metaCode = error instanceof WhatsAppTemplateError ? error.meta?.code : undefined;
+          /**
+           * Meta refused it. The same row is closed out as Failed with Meta's
+           * own code, so the Delivery Log shows why — and, as above, a write
+           * failure here changes nothing about the send.
+           */
+          if (logId) {
+            try {
+              await MessageLog.updateOne(
+                { _id: logId },
+                {
+                  $set: {
+                    status: 'Failed',
+                    failedAt: new Date(),
+                    ...(typeof metaCode === 'number' ? { errorCode: metaCode } : {}),
+                    errorReason: known
+                      ? (error as Error).message
+                      : 'Failed to send the WhatsApp template message.',
+                  },
+                }
+              );
+            } catch (logError: any) {
+              console.error('WhatsApp template: could not record the failure:', logError?.message);
+            }
+          }
+
           const failed: FailedRecipient = {
             contactId,
             fullName: guest?.contact?.fullName ?? null,
