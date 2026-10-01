@@ -391,3 +391,131 @@ describe('FIX 2 — contact listings paginate without breaking callers', () => {
     assert.equal(res.body.pagination.total, 3, 'must not count another event’s contacts');
   });
 });
+
+/**
+ * Event scoping of the guest list the Composer reads.
+ *
+ * The Composer's Guests dropdown is filled from GET /api/contacts/event/:id,
+ * so the event boundary has to hold in the response itself — not in anything
+ * the browser does with it afterwards. The cases below each seed TWO events
+ * and assert on what is absent as well as what is present.
+ */
+describe('contacts are scoped to the event that was asked for', () => {
+  /** Named so a leak from the other event is identifiable on sight. */
+  const seedNamed = async (eventId: any, names: string[], prefix: number) => {
+    await Contact.insertMany(
+      names.map((fullName, i) => ({
+        fullName,
+        phoneNumber: `+9199${String(prefix).padStart(3, '0')}${String(100000 + i).padStart(6, '0')}`,
+        countryCode: 'IN',
+        eventId,
+        source: 'Manual',
+        status: 'Valid',
+      }))
+    );
+  };
+
+  const twoEvents = async (email: string) => {
+    const eventA = await makeEvent({ eventName: 'Scoped A' });
+    const eventB = await makeEvent({ eventName: 'Scoped B' });
+    await seedNamed(eventA._id, ['Alice Anderson', 'Amit Agarwal'], 1);
+    await seedNamed(eventB._id, ['Bob Brown', 'Bhavna Bose', 'Balaji Rao'], 2);
+    await seedAccount('SuperAdmin', email);
+    return { eventA, eventB, token: await loginAs(email) };
+  };
+
+  test('event A returns only event A guests', async () => {
+    const { eventA, token } = await twoEvents('scope-a@example.com');
+
+    const res = await call('GET', `/api/contacts/event/${eventA._id}`, { token });
+    assert.equal(res.status, 200);
+    assert.deepEqual(
+      res.body.map((c: any) => c.fullName).sort(),
+      ['Alice Anderson', 'Amit Agarwal']
+    );
+    // Stated separately: the count alone would still pass if a swap happened.
+    assert.equal(
+      res.body.some((c: any) => /Bob|Bhavna|Balaji/.test(c.fullName)),
+      false,
+      'no guest of the other event may appear'
+    );
+  });
+
+  test('event B returns only event B guests', async () => {
+    const { eventB, token } = await twoEvents('scope-b@example.com');
+
+    const res = await call('GET', `/api/contacts/event/${eventB._id}`, { token });
+    assert.equal(res.status, 200);
+    assert.deepEqual(
+      res.body.map((c: any) => c.fullName).sort(),
+      ['Balaji Rao', 'Bhavna Bose', 'Bob Brown']
+    );
+    assert.equal(
+      res.body.some((c: any) => /Alice|Amit/.test(c.fullName)),
+      false,
+      'no guest of the other event may appear'
+    );
+  });
+
+  test('searching one event cannot surface a guest of another', async () => {
+    const { eventA, token } = await twoEvents('scope-search@example.com');
+
+    // "Bob" exists, but only in event B.
+    const byName = await call(
+      'GET',
+      `/api/contacts/event/${eventA._id}?page=1&limit=50&search=Bob`,
+      { token }
+    );
+    assert.equal(byName.status, 200);
+    assert.equal(byName.body.data.length, 0, 'the other event stays out of reach through search');
+    assert.equal(byName.body.pagination.total, 0);
+
+    // The same holds for a number that belongs to the other event.
+    const byNumber = await call(
+      'GET',
+      `/api/contacts/event/${eventA._id}?page=1&limit=50&search=99002100000`,
+      { token }
+    );
+    assert.equal(byNumber.body.data.length, 0, 'searching by number does not cross events either');
+  });
+
+  test('an event with no guests comes back empty rather than falling back to a wider list', async () => {
+    await twoEvents('scope-empty@example.com');
+    const empty = await makeEvent({ eventName: 'Nobody Invited' });
+    await seedAccount('SuperAdmin', 'scope-empty2@example.com');
+    const token = await loginAs('scope-empty2@example.com');
+
+    const plain = await call('GET', `/api/contacts/event/${empty._id}`, { token });
+    assert.equal(plain.status, 200);
+    assert.deepEqual(plain.body, [], 'an empty event is empty, not everyone');
+
+    const paged = await call('GET', `/api/contacts/event/${empty._id}?page=1&limit=10`, { token });
+    assert.equal(paged.body.data.length, 0);
+    assert.equal(paged.body.pagination.total, 0);
+  });
+
+  test('the same person invited to both events is two separate guests', async () => {
+    /**
+     * The unique index is { eventId, phoneNumber }, so one number may legitimately
+     * exist under several events as distinct documents. Each event must return its
+     * own, which is what makes a shared guest look like a leak when it is not.
+     */
+    const eventA = await makeEvent({ eventName: 'Shared A' });
+    const eventB = await makeEvent({ eventName: 'Shared B' });
+    const shared = { phoneNumber: '+919121604967', countryCode: 'IN', source: 'Manual', status: 'Valid' };
+    await Contact.insertMany([
+      { ...shared, fullName: 'Sashi', eventId: eventA._id },
+      { ...shared, fullName: 'Sashi', eventId: eventB._id },
+    ]);
+    await seedAccount('SuperAdmin', 'scope-shared@example.com');
+    const token = await loginAs('scope-shared@example.com');
+
+    const a = await call('GET', `/api/contacts/event/${eventA._id}`, { token });
+    const b = await call('GET', `/api/contacts/event/${eventB._id}`, { token });
+    assert.equal(a.body.length, 1);
+    assert.equal(b.body.length, 1);
+    assert.notEqual(a.body[0]._id, b.body[0]._id, 'they are distinct records, one per event');
+    assert.equal(a.body[0].eventId, String(eventA._id), 'each carries its own event');
+    assert.equal(b.body[0].eventId, String(eventB._id));
+  });
+});
