@@ -34,9 +34,9 @@ import {
 } from '../../utils/templateTest';
 
 /**
- * The approved WhatsApp templates this page can send. One entry for now. The
- * backend keeps the same allowlist and is what actually decides — this is only
- * what the user sees.
+ * The approved WhatsApp templates this page can send. The backend keeps the
+ * same allowlist in EVENT_TEMPLATES and is what actually decides — this is only
+ * what the user sees, so a name added here alone would be rejected on send.
  */
 const TEMPLATES = [
   {
@@ -55,6 +55,12 @@ const TEMPLATES = [
     label: 'Event image',
     description:
       'Approved utility template with a fixed message and an image attached. Its wording is set by the approved template and cannot be edited here.',
+  },
+  {
+    name: 'event_video',
+    label: 'Event video',
+    description:
+      'Approved utility template with a fixed message and an MP4 video attached. Its wording is set by the approved template and cannot be edited here.',
   },
 ];
 

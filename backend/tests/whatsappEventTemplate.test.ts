@@ -400,3 +400,37 @@ test('event_image', async (t) => {
     assert.equal(EVENT_TEMPLATES.event_reminder.fields.length, 5, 'and keeps its five body values');
   });
 });
+
+
+/**
+ * event_video: a VIDEO header and, like the other two media templates, a body
+ * with no variables. Nothing about the upload is special-cased for it — the
+ * .mp4 rule and the 16 MB ceiling come from the shared media table, and the
+ * header format is declared here so sending needs no catalog lookup.
+ */
+test('event_video', async (t) => {
+  await t.test('is an approved template this page may send', () => {
+    assert.ok(EVENT_TEMPLATES.event_video, 'registered in the allowlist');
+    assert.equal(resolveEventTemplate('event_video').name, 'event_video');
+  });
+
+  await t.test('sends in English', () => {
+    assert.equal(EVENT_TEMPLATES.event_video.languageCode, 'en');
+  });
+
+  await t.test('declares a VIDEO header, not an image or document one', () => {
+    assert.equal(EVENT_TEMPLATES.event_video.headerFormat, 'VIDEO');
+  });
+
+  await t.test('has no body variables, so none are built', () => {
+    assert.deepEqual([...EVENT_TEMPLATES.event_video.fields], []);
+    assert.deepEqual(buildEventTemplateVariables('event_video', EVENT, CONTACT), []);
+  });
+
+  await t.test('the other three templates keep their own shapes', () => {
+    assert.equal(EVENT_TEMPLATES.event_image.headerFormat, 'IMAGE');
+    assert.equal(EVENT_TEMPLATES.event_document.headerFormat, 'DOCUMENT');
+    assert.equal(EVENT_TEMPLATES.event_reminder.headerFormat, undefined, 'event_reminder has no media header');
+    assert.equal(EVENT_TEMPLATES.event_reminder.fields.length, 5, 'and keeps its five body values');
+  });
+});

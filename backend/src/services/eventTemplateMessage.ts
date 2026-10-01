@@ -96,6 +96,17 @@ export const EVENT_TEMPLATES: Record<string, EventTemplateSpec> = {
     fields: [],
     headerFormat: 'IMAGE',
   },
+  /**
+   * Approved under the production WABA with a VIDEO header and a fixed body.
+   * Its body takes no variables either, so no body component is built for it.
+   * The 16 MB ceiling and the .mp4-only rule come from the shared media table,
+   * so nothing about the upload or the payload is special-cased here.
+   */
+  event_video: {
+    languageCode: 'en',
+    fields: [],
+    headerFormat: 'VIDEO',
+  },
 };
 
 export const resolveEventTemplate = (templateName: unknown): { name: string; spec: EventTemplateSpec } => {
