@@ -123,29 +123,76 @@ export const extractFromExcel = (buffer: Buffer): RawContact[] => {
   return contacts;
 };
 
-export const extractFromPDF = async (buffer: Buffer): Promise<RawContact[]> => {
-  const data = await pdf(buffer);
-  const text = data.text;
+/**
+ * The contact number at the end of a row.
+ *
+ * Anchored to the end of the line so it is the trailing run of digits that is
+ * taken, never the Sr.No at the front. The inner class allows the spacing a
+ * real document uses — "+91 98765 43210", "(020) 1234-5678" — which is then
+ * stripped to the same digits-and-plus shape the sheet importer produces.
+ */
+const PDF_TRAILING_PHONE = /(\+?\d[\d\s().-]{7,}\d)\s*$/;
 
+/** The uploader's own Sr.No at the front of a row, with or without a separator. */
+const PDF_LEADING_SERIAL = /^(\d{1,4})\s*[.)\-:]?\s*/;
+
+/**
+ * Guest rows out of a PDF.
+ *
+ * pdf-parse returns one line per table row, with the cells run together and no
+ * delimiter between them:
+ *
+ *   Sr.NoGuest NameContact Number
+ *   1Akshat Singh+919068578590
+ *
+ * so each line is read on its own. Scanning the whole document for anything
+ * number-shaped, as this did before, throws that row structure away — which is
+ * why every guest arrived under one hardcoded placeholder name.
+ *
+ * A line with no trailing number is not a guest row. That is what skips the
+ * heading and any title above the table, without having to recognise them.
+ */
+export const parsePdfGuestRows = (text: string): RawContact[] => {
   const contacts: RawContact[] = [];
 
-  // Basic Regex for phone numbers (looks for international or local formats)
-  // This can be improved depending on the exact PDF structures
-  const phoneRegex = /(?:\+?\d{1,3}[-\s]?)?\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{4}/g;
+  const lines = String(text ?? '').split('\n');
 
-  const matches = text.match(phoneRegex);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
 
-  if (matches) {
-    for (const match of matches) {
-      contacts.push({
-        fullName: 'Unknown Guest (PDF)', // Hard to reliably extract names from unstructured PDF
-        phoneNumber: match.replace(/[^0-9+]/g, ''),
-      });
-    }
+    const phoneMatch = PDF_TRAILING_PHONE.exec(line);
+    if (!phoneMatch) continue;
+
+    // Everything before the number is the Sr.No and the name, in that order.
+    const beforePhone = line.slice(0, phoneMatch.index);
+    const serialMatch = PDF_LEADING_SERIAL.exec(beforePhone);
+
+    contacts.push({
+      // Left empty when the row carries no name, exactly as the sheet importer
+      // leaves it: the controller flags that row Invalid rather than having a
+      // placeholder invented for it here.
+      fullName: (serialMatch ? beforePhone.slice(serialMatch[0].length) : beforePhone).trim(),
+      // Same digits-and-plus reduction the sheet importer applies, so both
+      // formats reach the one phone rule this application has unchanged.
+      phoneNumber: phoneMatch[1].replace(/[^0-9+]/g, ''),
+      // The uploader's Sr.No when the row has one, otherwise the line it came
+      // from. Used only to point at a row in a validation message.
+      rowNumber: serialMatch ? Number(serialMatch[1]) : i + 1,
+    });
   }
 
-  // Remove duplicates from the raw extraction
-  const uniqueContacts = Array.from(new Map(contacts.map(c => [c.phoneNumber, c])).values());
+  /**
+   * Deliberately not de-duplicated here. The sheet importer does not either:
+   * the controller compares each row against the event and against the rest of
+   * the batch, and reports what it finds. Dropping repeats at this point hid
+   * them from that count entirely.
+   */
+  return contacts;
+};
 
-  return uniqueContacts;
+/** Reads the document, then hands its text to the row parser above. */
+export const extractFromPDF = async (buffer: Buffer): Promise<RawContact[]> => {
+  const data = await pdf(buffer);
+  return parsePdfGuestRows(data?.text ?? '');
 };

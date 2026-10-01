@@ -12,7 +12,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as xlsx from 'xlsx';
-import { extractFromExcel, ImportFormatError, IMPORT_COLUMNS } from '../src/utils/fileExtractors';
+import {
+  extractFromExcel,
+  parsePdfGuestRows,
+  ImportFormatError,
+  IMPORT_COLUMNS,
+} from '../src/utils/fileExtractors';
 import { normalizeIndianPhone } from '../src/utils/indianPhone';
 
 /** A workbook from rows of cells, exactly as a user's file would arrive. */
@@ -181,5 +186,133 @@ test('validation', async (t) => {
   await t.test('the offending row can be pointed at', () => {
     const contacts = extractFromExcel(sheetBuffer([REFERENCE[0], [1, 'Suresh', '8786564981']]));
     assert.equal(contacts[0].rowNumber, 2, 'row 1 is the heading');
+  });
+});
+
+
+/**
+ * Contact import — the PDF format.
+ *
+ *   Sr.No | Guest Name | Contact Number
+ *
+ * pdf-parse hands back one line per table row with the cells run together and
+ * no delimiter between them. The strings below are not invented: they are the
+ * text a real PDF of this table produced, captured verbatim, down to the
+ * blank leading lines and the heading with its three columns joined up.
+ *
+ * parsePdfGuestRows is the half of extractFromPDF that does the reading, split
+ * out so these cases can be written as plain text rather than as binary
+ * fixtures. extractFromPDF itself only reads the document and calls it.
+ */
+
+/** The reference list, exactly as pdf-parse renders it. */
+const PDF_REFERENCE = [
+  '',
+  '',
+  'Guest List',
+  'Sr.NoGuest NameContact Number',
+  '1Akshat Singh+919068578590',
+  '2Sashi+919121604967',
+  '3Swapnil Jagtap+919834653925',
+  '4Shankar Kshirsagar+919704038464',
+  '5Swapnil Mudgade+918766813161',
+  '6Shubham Suryavanshi+918530808862',
+  '7Aditya Shankar Kshirsagar+919112472833',
+].join('\n');
+
+test('the PDF format', async (t) => {
+  await t.test('every guest arrives under their own name', () => {
+    const contacts = parsePdfGuestRows(PDF_REFERENCE);
+
+    assert.deepEqual(
+      contacts.map((c) => [c.rowNumber, c.fullName, c.phoneNumber]),
+      [
+        [1, 'Akshat Singh', '+919068578590'],
+        [2, 'Sashi', '+919121604967'],
+        [3, 'Swapnil Jagtap', '+919834653925'],
+        [4, 'Shankar Kshirsagar', '+919704038464'],
+        [5, 'Swapnil Mudgade', '+918766813161'],
+        [6, 'Shubham Suryavanshi', '+918530808862'],
+        [7, 'Aditya Shankar Kshirsagar', '+919112472833'],
+      ]
+    );
+  });
+
+  await t.test('seven rows, and nothing else from the page', () => {
+    // The title and the heading are both above the table and both survive
+    // into the text; neither may become a guest.
+    assert.equal(parsePdfGuestRows(PDF_REFERENCE).length, 7);
+  });
+
+  await t.test('no name is ever invented', () => {
+    const names = parsePdfGuestRows(PDF_REFERENCE).map((c) => c.fullName);
+    assert.equal(names.includes('Unknown Guest (PDF)'), false);
+    assert.equal(names.every((n) => n.length > 0), true);
+  });
+
+  await t.test('the heading is not read as a guest', () => {
+    // It has no trailing number, which is the whole reason it is skipped.
+    assert.deepEqual(parsePdfGuestRows('Sr.NoGuest NameContact Number'), []);
+  });
+
+  await t.test('a row with no name keeps an empty name rather than a placeholder', () => {
+    // The controller is what rejects this row, with "Guest Name is missing".
+    // Inventing a name here is exactly what hid the gap before.
+    const [contact] = parsePdfGuestRows('+919068578590');
+    assert.equal(contact.fullName, '');
+    assert.equal(contact.phoneNumber, '+919068578590');
+  });
+
+  await t.test('a repeated number is kept, for the controller to report', () => {
+    const contacts = parsePdfGuestRows(
+      ['1Akshat Singh+919068578590', '2Akshat Singh+919068578590'].join('\n')
+    );
+    assert.equal(contacts.length, 2, 'both rows survive the extractor');
+    assert.deepEqual(contacts.map((c) => c.phoneNumber), ['+919068578590', '+919068578590']);
+  });
+
+  await t.test('spacing between the three cells does not matter', () => {
+    const spaced = parsePdfGuestRows(
+      [
+        '1  Akshat Singh  +91 90685 78590',
+        '2.  Sashi\t+919121604967',
+        '3) Swapnil Jagtap  +91-98346-53925',
+      ].join('\n')
+    );
+    assert.deepEqual(
+      spaced.map((c) => [c.rowNumber, c.fullName, c.phoneNumber]),
+      [
+        [1, 'Akshat Singh', '+919068578590'],
+        [2, 'Sashi', '+919121604967'],
+        [3, 'Swapnil Jagtap', '+919834653925'],
+      ]
+    );
+  });
+
+  await t.test('a row with no Sr.No still reads as a guest', () => {
+    const [contact] = parsePdfGuestRows('Akshat Singh+919068578590');
+    assert.equal(contact.fullName, 'Akshat Singh');
+    assert.equal(contact.phoneNumber, '+919068578590');
+  });
+
+  await t.test('the Sr.No is never mistaken for the number', () => {
+    // Both are digits and they sit on the same line with nothing between them
+    // and the name, so the trailing one has to win.
+    const [contact] = parsePdfGuestRows('12Akshat Singh+919068578590');
+    assert.equal(contact.phoneNumber, '+919068578590');
+    assert.equal(contact.fullName, 'Akshat Singh');
+    assert.equal(contact.rowNumber, 12);
+  });
+
+  await t.test('an earlier number on the line does not win over the contact number', () => {
+    // A sheet exported with a booking reference or a date beside the guest
+    // puts a second long number on the row. The contact is the one at the
+    // END of the line, which is the only thing telling them apart.
+    const [contact] = parsePdfGuestRows('4  20240115  Shankar Kshirsagar  +919704038464');
+    assert.equal(contact.phoneNumber, '+919704038464');
+  });
+
+  await t.test('an empty document yields nothing rather than throwing', () => {
+    assert.deepEqual(parsePdfGuestRows(''), []);
   });
 });
