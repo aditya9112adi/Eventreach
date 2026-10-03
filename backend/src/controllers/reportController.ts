@@ -1,7 +1,23 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import { MessageLog } from '../models/MessageLog';
 import { Campaign } from '../models/Campaign';
 import { isEventAuthorized } from '../services/eventAuthService';
+
+/**
+ * What a Delivery Log status filter means in a query.
+ *
+ * "Read" is a milestone timestamp rather than a status value (see
+ * models/MessageLog.ts), so it filters on readAt; everything else is a plain
+ * status match, and "All" (or nothing) applies no condition. Kept in one place
+ * because three Delivery Log endpoints use it and a drift between them would
+ * make the same filter answer differently depending on where it was chosen.
+ */
+const deliveryStatusCondition = (statusFilter: unknown): Record<string, any> => {
+  if (typeof statusFilter !== 'string' || !statusFilter || statusFilter === 'All') return {};
+  if (statusFilter === 'Read') return { readAt: { $ne: null } };
+  return { status: statusFilter };
+};
 
 export const getCampaignStats = async (req: Request, res: Response) => {
   try {
@@ -140,14 +156,7 @@ export const getCampaignLogs = async (req: Request, res: Response) => {
     const limit = parseInt(req.query.limit as string) || 50;
     const statusFilter = req.query.status as string;
 
-    const query: any = { campaignId };
-    if (statusFilter && statusFilter !== 'All') {
-      // "Read" is a milestone timestamp rather than a status value (see
-      // models/MessageLog.ts), so it filters on readAt; everything else is a
-      // plain status match.
-      if (statusFilter === 'Read') query.readAt = { $ne: null };
-      else query.status = statusFilter;
-    }
+    const query: any = { campaignId, ...deliveryStatusCondition(statusFilter) };
 
     const logs = await MessageLog.find(query)
       .populate('contactId', 'fullName phoneNumber')
@@ -199,12 +208,11 @@ export const getEventTemplateLogs = async (req: Request, res: Response) => {
 
     // templateName is what distinguishes a proactive send from anything else
     // that might one day carry an eventId.
-    const query: any = { eventId, templateName: { $exists: true, $ne: null } };
-    if (statusFilter && statusFilter !== 'All') {
-      // Same rule as the campaign log: Read is a timestamp, not a status.
-      if (statusFilter === 'Read') query.readAt = { $ne: null };
-      else query.status = statusFilter;
-    }
+    const query: any = {
+      eventId,
+      templateName: { $exists: true, $ne: null },
+      ...deliveryStatusCondition(statusFilter),
+    };
 
     const logs = await MessageLog.find(query)
       .populate('contactId', 'fullName phoneNumber')
@@ -227,5 +235,76 @@ export const getEventTemplateLogs = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Get event template logs error:', error);
     res.status(500).json({ error: 'Failed to fetch template delivery logs' });
+  }
+};
+
+/**
+ * GET /api/reports/event/:eventId/delivery-log
+ *
+ * Everything WhatsApp has been asked to send for ONE event, in one response:
+ * the campaign's recipients and the proactive template sends. The Event Report
+ * shows this under its event table.
+ *
+ * The two kinds of row are linked to the event differently - a campaign
+ * message reaches it through Campaign.eventId (one campaign per event) and
+ * carries no eventId of its own, while a template send carries eventId and no
+ * campaign - so this is one $or over the two existing indexes rather than the
+ * three round trips the page would otherwise make. contactId is populated by
+ * Mongoose in a single batched lookup, not one per recipient.
+ *
+ * Authorization is the event's, exactly as the campaign and template-log
+ * endpoints apply it, and the rows come straight from MessageLog: nothing is
+ * copied or counted anywhere else, so a webhook update is visible on the next
+ * read.
+ */
+export const getEventDeliveryLog = async (req: Request, res: Response) => {
+  try {
+    const { eventId } = req.params;
+
+    // Refused before it reaches a query: an id that is not an ObjectId would
+    // otherwise surface as a cast error and a 500.
+    if (!mongoose.isValidObjectId(eventId)) {
+      return res.status(400).json({ error: 'Invalid event id.' });
+    }
+
+    const currentUser = (req as any).user;
+    const authorized = await isEventAuthorized(currentUser, eventId);
+    if (!authorized) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
+    const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+    // Capped so one request cannot ask for an unbounded slice of the collection.
+    const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 500);
+
+    const campaign = await Campaign.findOne({ eventId }).select('_id').lean();
+
+    const ownedByEvent: any[] = [{ eventId, templateName: { $exists: true, $ne: null } }];
+    if (campaign) ownedByEvent.push({ campaignId: campaign._id });
+
+    const query: any = {
+      $or: ownedByEvent,
+      ...deliveryStatusCondition(req.query.status),
+    };
+
+    const [logs, total] = await Promise.all([
+      MessageLog.find(query)
+        .populate('contactId', 'fullName phoneNumber')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      MessageLog.countDocuments(query),
+    ]);
+
+    res.json({
+      eventId,
+      campaignId: campaign ? String(campaign._id) : null,
+      logs,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    console.error('Get event delivery log error:', error);
+    res.status(500).json({ error: 'Failed to fetch the delivery log' });
   }
 };

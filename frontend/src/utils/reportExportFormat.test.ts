@@ -652,7 +652,9 @@ test('no role can load a report without both dates', async (t) => {
  * wording the exporter can produce is checked against the page's own markup.
  */
 test('the exported Details match the Delivery Log table', async (t) => {
-  const page = fs.readFileSync('frontend/src/pages/Campaigns/CampaignReport.tsx', 'utf-8');
+  // The table is one shared component, used by the campaign report and by the
+  // Event Report, so its markup is read from there and not from either page.
+  const page = fs.readFileSync('frontend/src/components/ui/DeliveryLogTable.tsx', 'utf-8');
 
   const cases: Array<[string, any]> = [
     ['a failure', { status: 'Failed', errorCode: 131047, errorReason: 'Re-engagement message' }],
@@ -679,9 +681,9 @@ test('the exported Details match the Delivery Log table', async (t) => {
   }
 
   await t.test('the status label is shared outright, not re-stated', () => {
-    // describeDeliveryLog is imported by the page, so the Status column cannot
+    // describeDeliveryLog is imported by the table, so the Status column cannot
     // disagree the way Details did.
-    assert.ok(page.includes('describeDeliveryLog'), 'the page uses the shared resolver');
+    assert.ok(page.includes('describeDeliveryLog'), 'the table uses the shared resolver');
   });
 });
 

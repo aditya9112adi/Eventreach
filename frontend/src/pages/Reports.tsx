@@ -10,6 +10,7 @@ import { Button } from '../components/ui/Button';
 import { PaginationControls } from '../components/ui/PaginationControls';
 import { EventSearch } from '../components/ui/EventSearch';
 import { ReportFilterBar, type ReportFilterOption } from '../components/ui/ReportFilterBar';
+import { EventDeliveryLog } from '../components/ui/EventDeliveryLog';
 import { formatDate, formatDateTime } from '../utils/datetime';
 import { getAccessStatus } from '../utils/accessStatus';
 import { formatEventType } from '../utils/eventType';
@@ -533,6 +534,23 @@ const Reports = () => {
     [filteredRows, definition, reportOption.key, exportFilters, showToast]
   );
 
+  /**
+   * The event the Delivery Log belongs to.
+   *
+   * A Delivery Log is one event's recipients, so it needs exactly one event:
+   * the report must have been generated and have narrowed to a single row. With
+   * several events in the result there is no single log to show - the section
+   * says so instead of choosing one, and an event can still be opened in full
+   * from Select Event Name.
+   *
+   * Derived from the rows the table is already showing, so it adds no request
+   * of its own: the log fetches only once this has a value.
+   */
+  const deliveryLogEventId: string | null =
+    activeReport === 'event' && hasResults && filteredRows.length === 1
+      ? String((filteredRows[0] as any)?._id ?? '') || null
+      : null;
+
   const statusVariant = (status: string) => {
     switch (status) {
       case 'Active':
@@ -773,6 +791,26 @@ const Reports = () => {
             </>
           )}
         </div>
+      )}
+
+      {/*
+        Delivery Log: the WhatsApp recipients of the event being reported.
+        Below the event table rather than as columns of it, so the Event Report
+        keeps its nine columns. Mounted only after a report exists, and only for
+        the Event Report, so nothing is fetched on opening Reports, on switching
+        tabs, or after Clear.
+      */}
+      {activeReport === 'event' && !selectedEventId && hasResults && filteredRows.length > 0 && (
+        deliveryLogEventId ? (
+          <div className="mt-6 animate-fade-up">
+            <EventDeliveryLog key={deliveryLogEventId} eventId={deliveryLogEventId} />
+          </div>
+        ) : (
+          <p className="mt-6 text-sm text-foreground/50 text-center">
+            The Delivery Log shows one event at a time. Narrow the report to a single event,
+            or choose one under Select Event Name.
+          </p>
+        )
       )}
       </>
       )}

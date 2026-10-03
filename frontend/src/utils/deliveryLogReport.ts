@@ -103,3 +103,22 @@ export const DELIVERY_LOG_COLUMNS: ReportColumn<DeliveryLogRow>[] = [
  * needs to show.
  */
 export const deliveryLogDate = (log: DeliveryLogRow): string | undefined => log.createdAt;
+
+/**
+ * The statuses the Delivery Log can be filtered by, in the order the table has
+ * always offered them.
+ *
+ * Every value is one the backend already understands: Pending, Sent, Delivered
+ * and Failed are the stored statuses, and Read is the readAt timestamp (see
+ * models/MessageLog.ts). "Accepted" is deliberately not a value here - nothing
+ * persists it as a status. It is the label for `Sent`, which means WhatsApp
+ * accepted the message, and for the sentAt timestamp.
+ */
+export const DELIVERY_STATUS_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'All', label: 'All Statuses' },
+  { value: 'Sent', label: 'Accepted by WhatsApp' },
+  { value: 'Delivered', label: 'Delivered' },
+  { value: 'Read', label: 'Read' },
+  { value: 'Failed', label: 'Failed' },
+  { value: 'Pending', label: 'Pending' },
+];

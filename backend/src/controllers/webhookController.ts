@@ -268,7 +268,11 @@ const applyOneStatus = async (status: any): Promise<boolean> => {
     getIO().emit('message-log-updated', {
       logId: String(log._id),
       status: update.status ?? log.status,
-      campaignId: String(log.campaignId),
+      // A template send has no campaign: String(undefined) used to go out as
+      // the text "undefined", which no listener could tell from a real id.
+      campaignId: log.campaignId ? String(log.campaignId) : undefined,
+      // Lets a report scoped to an event recognise a template message's update.
+      eventId: log.eventId ? String(log.eventId) : undefined,
     });
     getIO().emit('dashboard-updated');
   } catch {
