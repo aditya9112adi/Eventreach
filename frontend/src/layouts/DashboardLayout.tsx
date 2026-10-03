@@ -24,6 +24,14 @@ import {
 import { useTheme } from '../store/themeStore';
 import { useToast } from '../components/ui/Toast';
 import { AppFooter } from '../components/ui/AppFooter';
+import {
+  createInactivityMonitor,
+  isSessionEndedBroadcast,
+  isTokenCleared,
+  INACTIVITY_MESSAGE,
+  LOGOUT_BROADCAST_KEY,
+  storeLogoutReason,
+} from '../utils/inactivity';
 
 const DashboardLayout = () => {
   const { user, logout, updateUser } = useAuth();
@@ -34,6 +42,71 @@ const DashboardLayout = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { socket, isConnected } = useSocket();
+
+  /**
+   * End an unattended session.
+   *
+   * This layout is the only thing ProtectedRoute renders once signed in, for
+   * every role, and it is never rendered on the sign-in, registration or
+   * password screens — so mounting the watch here is what keeps it off the
+   * public pages without having to name them.
+   *
+   * Held in a ref so the effect below can depend on nothing: a re-render must
+   * not tear the listeners down and build a second set.
+   */
+  const endSession = useCallback(
+    (broadcast: boolean) => {
+      if (broadcast) {
+        // Tells the other open tabs, which are reading the same localStorage.
+        try {
+          localStorage.setItem(LOGOUT_BROADCAST_KEY, String(Date.now()));
+        } catch {
+          /* storage unavailable: this tab still signs out correctly */
+        }
+      }
+      showToast('warning', INACTIVITY_MESSAGE);
+      // Survives the full page load the 401 interceptor performs once the
+      // token is gone, which router state does not.
+      storeLogoutReason(INACTIVITY_MESSAGE);
+      /**
+       * Navigate BEFORE clearing the session, and only then log out.
+       *
+       * Clearing first leaves ProtectedRoute with no user, so it redirects to
+       * /login on its own with <Navigate replace> — which lands on top of this
+       * entry and takes the message with it. Going to /login first means that
+       * guard is no longer rendering by the time the session is cleared.
+       */
+      navigate('/login', { replace: true, state: { message: INACTIVITY_MESSAGE } });
+      logout();
+    },
+    [logout, navigate, showToast]
+  );
+  const endSessionRef = useRef(endSession);
+  endSessionRef.current = endSession;
+
+  useEffect(() => {
+    const monitor = createInactivityMonitor({
+      onTimeout: () => endSessionRef.current(true),
+    });
+    monitor.start();
+
+    // A sign-out in another tab, whether from inactivity or the Logout button,
+    // must not leave this one looking signed in.
+    const onStorage = (event: StorageEvent) => {
+      if (isSessionEndedBroadcast(event.key, event.newValue) || isTokenCleared(event.key, event.newValue)) {
+        monitor.stop();
+        endSessionRef.current(false);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+
+    // Covers the Logout button and every other unmount: the timer cannot
+    // outlive the screen and sign a freshly returned user out.
+    return () => {
+      monitor.stop();
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
   useEffect(() => {
     const currentId = user?.id || (user as any)?._id;
