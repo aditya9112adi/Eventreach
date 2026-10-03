@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, CheckCircle, XCircle, Clock, Send, Users, TrendingUp, AlertTriangle, Printer, Download } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
@@ -7,6 +7,14 @@ import { Badge } from '../../components/ui/Badge';
 import { getSerialNumber } from '../../utils/pagination';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { exportToExcel, buildReportFileName } from '../../utils/reportExport';
+import {
+  DELIVERY_LOG_COLUMNS,
+  describeDeliveryLog,
+  deliveryStamp,
+  deliveryLogDate,
+} from '../../utils/deliveryLogReport';
+import { validateReportDateRange, withinRange } from '../../utils/reportSearch';
 import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../store/authStore';
 import { useSocket } from '../../contexts/SocketContext';
@@ -68,20 +76,10 @@ interface LogEntry {
  * timestamp. This resolves the milestones, newest first, into the single
  * honest label for that row.
  */
-const describeLog = (log: LogEntry): { label: string; variant: 'success' | 'error' | 'warning' | 'info' } => {
-  if (log.status === 'Failed') return { label: 'Failed', variant: 'error' };
-  if (log.readAt) return { label: 'Read', variant: 'success' };
-  if (log.deliveredAt) return { label: 'Delivered', variant: 'info' };
-  if (log.status === 'Sent' || log.sentAt) return { label: 'Accepted by WhatsApp', variant: 'info' };
-  return { label: 'Waiting to be processed', variant: 'warning' };
-};
+const describeLog = describeDeliveryLog;
 
 /** Local time, or an em dash when the milestone has not happened. */
-const stamp = (value?: string): string => {
-  if (!value) return '—';
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
-};
+const stamp = deliveryStamp;
 
 const STATUS_COLORS: Record<string, string> = {
   Sent: '#22c55e',
@@ -112,6 +110,21 @@ export const CampaignReportContent = ({
   const [stats, setStats] = useState<CampaignStats | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [statusFilter, setStatusFilter] = useState('All');
+  // The Delivery Log is a report too, so it states the period it covers.
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [dateError, setDateError] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
+
+  /**
+   * The rows inside the chosen period. withinRange is true when no range is
+   * set, so the table reads exactly as before until dates are picked; the
+   * downloads are what require them.
+   */
+  const visibleLogs = useMemo(
+    () => logs.filter((log) => withinRange(deliveryLogDate(log), startDate, endDate)),
+    [logs, startDate, endDate]
+  );
   const [isLoading, setIsLoading] = useState(true);
   // The failure used to be swallowed into console.error, leaving only a bare
   // "Report data not available." on screen with no way to tell a permission
@@ -233,7 +246,44 @@ export const CampaignReportContent = ({
       color: STATUS_COLORS[status]
     }));
 
+  /**
+   * The Delivery Log as an .xlsx, through the same writer the other reports
+   * use — so it carries the period in its header, a filter on every column and
+   * the standing notes, exactly as an Event or Contact Report does.
+   */
+  const handleDownloadExcel = async () => {
+    const problem = validateReportDateRange(startDate, endDate);
+    if (problem) {
+      setDateError(problem);
+      return;
+    }
+    setDateError('');
+    if (visibleLogs.length === 0) return;
+
+    setIsExporting(true);
+    try {
+      const name = buildReportFileName('DeliveryLog', 'Date');
+      await exportToExcel(name, 'Delivery Log', DELIVERY_LOG_COLUMNS, visibleLogs, {
+        searchValue: statusFilter === 'All' ? '' : statusFilter,
+        startDate,
+        endDate,
+      });
+    } catch (error) {
+      console.error('Delivery Log export failed', error);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const handleDownloadPDF = () => {
+    // The PDF states the same period as the spreadsheet, so it is held to the
+    // same rule rather than printing a report with no scope.
+    const problem = validateReportDateRange(startDate, endDate);
+    if (problem) {
+      setDateError(problem);
+      return;
+    }
+    setDateError('');
     if (!stats) return;
 
     const doc = new jsPDF();
@@ -248,25 +298,28 @@ export const CampaignReportContent = ({
     doc.setTextColor(100);
     doc.text(`Event Name: ${eventName}`, 14, 32);
     doc.text(`Status: ${stats.campaignStatus || 'Unknown'}`, 14, 38);
-    
+    // The period the log covers, so the document states its own scope.
+    doc.text(`Start Date: ${startDate}`, 14, 44);
+    doc.text(`End Date: ${endDate}`, 14, 50);
+
     // Add Message Content
     doc.setFontSize(12);
     doc.setTextColor(0);
-    doc.text('Message Content:', 14, 50);
-    
+    doc.text('Message Content:', 14, 62);
+
     doc.setFontSize(10);
     doc.setTextColor(80);
     const messageLines = doc.splitTextToSize(stats.messageContent || 'N/A', 180);
-    doc.text(messageLines, 14, 58);
+    doc.text(messageLines, 14, 70);
     
     // Calculate Y position for the table based on message length
-    const nextY = 58 + (messageLines.length * 5) + 10;
+    const nextY = 70 + (messageLines.length * 5) + 10;
     
     // Create Table Data. Status is the resolved milestone, not the raw stored
     // value — "Sent" in the database means WhatsApp accepted the message, and
     // printing that as "Delivered" (as this once did) overstates what is known.
     const tableColumn = ["Contact Name", "Mobile Number", "Status", "Accepted", "Delivered", "Read", "Failure"];
-    const tableRows = logs.map(log => [
+    const tableRows = visibleLogs.map(log => [
       log.contactId?.fullName || log.contactName || 'Unknown',
       log.contactId?.phoneNumber || log.phoneNumber || 'Unknown',
       describeLog(log).label,
@@ -307,14 +360,70 @@ export const CampaignReportContent = ({
                 </button>
               )}
               
-              <div className="flex items-center space-x-3">
+              <div className="flex flex-wrap items-end gap-3">
+                {/* The period this log covers. Required before either download. */}
+                <div className="flex flex-col">
+                  <label htmlFor="log-start" className="text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1">
+                    Start Date <span className="text-destructive">*</span>
+                  </label>
+                  <input
+                    id="log-start"
+                    type="date"
+                    value={startDate}
+                    max={endDate || undefined}
+                    required
+                    aria-required="true"
+                    onChange={(e) => {
+                      setStartDate(e.target.value);
+                      setDateError('');
+                    }}
+                    className="bg-surface border border-border text-foreground px-3 py-2 rounded-md text-sm focus:outline-none focus:border-accent transition-colors"
+                  />
+                </div>
+                <div className="flex flex-col">
+                  <label htmlFor="log-end" className="text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1">
+                    End Date <span className="text-destructive">*</span>
+                  </label>
+                  <input
+                    id="log-end"
+                    type="date"
+                    value={endDate}
+                    min={startDate || undefined}
+                    required
+                    aria-required="true"
+                    onChange={(e) => {
+                      setEndDate(e.target.value);
+                      setDateError('');
+                    }}
+                    className="bg-surface border border-border text-foreground px-3 py-2 rounded-md text-sm focus:outline-none focus:border-accent transition-colors"
+                  />
+                </div>
+
+                <button
+                  onClick={handleDownloadExcel}
+                  disabled={isExporting || Boolean(dateError) || !startDate || !endDate || visibleLogs.length === 0}
+                  title={dateError || undefined}
+                  className="inline-flex items-center px-4 py-2 bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed rounded-md font-medium text-sm transition-colors border border-accent/20"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Excel
+                </button>
+
                 <button 
                   onClick={handleDownloadPDF}
-                  className="inline-flex items-center px-4 py-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-md font-medium text-sm transition-colors border border-primary/20"
+                  disabled={Boolean(dateError) || !startDate || !endDate}
+                  title={dateError || undefined}
+                  className="inline-flex items-center px-4 py-2 bg-primary/10 text-primary hover:bg-primary/20 disabled:opacity-40 disabled:cursor-not-allowed rounded-md font-medium text-sm transition-colors border border-primary/20"
                 >
                   <Download className="w-4 h-4 mr-2" />
                   Download Report
                 </button>
+
+                {dateError && (
+                  <p role="alert" className="w-full text-xs font-semibold text-destructive">
+                    {dateError}
+                  </p>
+                )}
 
                 {showPrintButton && (
                   <button 
@@ -491,19 +600,19 @@ export const CampaignReportContent = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {logs.length === 0 ? (
+                {visibleLogs.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="py-8 text-center text-foreground/40">
                       No message logs found.
                     </td>
                   </tr>
                 ) : (
-                  logs.map((log, index) => {
+                  visibleLogs.map((log, index) => {
                     const state = describeLog(log);
                     return (
                       <tr key={log._id} className="hover:bg-surfaceHover transition-colors">
                         {/* The report loads only the first page of logs, so this is page 1. */}
-                        <td className="py-3 pr-4 text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(1, logs.length, index)}</td>
+                        <td className="py-3 pr-4 text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(1, visibleLogs.length, index)}</td>
                         <td className="py-3 font-medium text-foreground whitespace-nowrap">
                           {log.contactId?.fullName || log.contactName || 'Unknown'}
                           {log.templateName && (

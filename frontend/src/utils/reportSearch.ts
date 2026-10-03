@@ -1,3 +1,5 @@
+import { reportDayStart, reportDayEnd } from '@eventreach/shared';
+
 /**
  * Report generation state and filtering for the Reports page.
  *
@@ -31,14 +33,21 @@ export interface ReportRowAccessors {
   date: (row: any) => string | undefined;
 }
 
-/** Start of day / end of day so a range is inclusive of both endpoints. */
+/**
+ * Start of day / end of day so a range is inclusive of both endpoints.
+ *
+ * The bounds come from the shared report-day helpers rather than from the
+ * viewer's own clock, so the page and the API agree about which calendar day a
+ * record falls in. Reading them locally meant a browser outside IST put a
+ * record on a different side of the boundary than the server did.
+ */
 export const withinRange = (raw: string | undefined, start: string, end: string): boolean => {
   if (!start && !end) return true;
   if (!raw) return false;
   const when = new Date(raw).getTime();
   if (Number.isNaN(when)) return false;
-  if (start && when < new Date(`${start}T00:00:00`).getTime()) return false;
-  if (end && when > new Date(`${end}T23:59:59.999`).getTime()) return false;
+  if (start && when < reportDayStart(start).getTime()) return false;
+  if (end && when > reportDayEnd(end).getTime()) return false;
   return true;
 };
 
@@ -55,11 +64,42 @@ export const filterReportRows = <T>(
 ): T[] => {
   const needle = filters.searchValue.trim().toLowerCase();
   return rows.filter((row) => {
-    if (isDateMode) return withinRange(accessors.date(row), filters.startDate, filters.endDate);
+    /**
+     * The range applies to every report, whichever filter is selected.
+     * It used to apply only in the "Date" mode, so a report searched by name
+     * carried rows from outside the dates it printed in its own header.
+     * withinRange is true when no range is set, so a dateless call is
+     * unchanged.
+     */
+    if (!withinRange(accessors.date(row), filters.startDate, filters.endDate)) return false;
+    if (isDateMode) return true;
     if (!needle) return true;
     const haystack = filters.mode === 'Status' ? accessors.status(row) : accessors.text(row);
     return haystack.toLowerCase().includes(needle);
   });
+};
+
+/**
+ * Whether the two dates can produce a report.
+ *
+ * Returns the message to show, or null when the range is usable. Both dates
+ * are required for every report: a report that does not state the period it
+ * covers cannot be checked by whoever receives it, and an absent date used to
+ * be printed in the header as "-".
+ */
+export const validateReportDateRange = (startDate: string, endDate: string): string | null => {
+  const start = startDate.trim();
+  const end = endDate.trim();
+
+  // Named individually so a half-filled form says which half is missing.
+  if (!start && !end) return 'Start Date and End Date are required.';
+  if (!start) return 'Start Date is required.';
+  if (!end) return 'End Date is required.';
+
+  if (reportDayEnd(end).getTime() < reportDayStart(start).getTime()) {
+    return 'End Date cannot be earlier than Start Date.';
+  }
+  return null;
 };
 
 /** Whether the inputs differ from the ones a report was generated with. */

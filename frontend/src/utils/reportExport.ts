@@ -130,6 +130,20 @@ export const buildReportWorkbook = async <T>(
     });
   });
 
+  /**
+   * The filter covers the headings and the data, and stops there.
+   *
+   * Taken before the notes are written: a dropdown that included them would
+   * offer "Note :: This report is system generated" as a value of the first
+   * column. The metadata above the table is outside it for the same reason,
+   * which is why the table starts at its own header row rather than at A1.
+   */
+  const lastDataRow = headerRow.number + rows.length;
+  sheet.autoFilter = {
+    from: { row: headerRow.number, column: 1 },
+    to: { row: lastDataRow, column: columns.length },
+  };
+
   sheet.addRow([]);
   const noteRow = sheet.addRow([REPORT_NOTE]);
   noteRow.font = { italic: true };

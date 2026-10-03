@@ -11,6 +11,12 @@ import { getIO, emitPendingApprovalsChanged } from '../services/socketService';
 import { isEventAuthorized } from '../services/eventAuthService';
 import { sendRegistrationDecisionEmail, verifyEmailTransport } from '../utils/email';
 import { getFrontendBaseUrl, isFrontendUrlConfigured } from '../config/appUrls';
+import {
+  parseReportDateRange,
+  withinReportRange,
+  ReportDateRangeError,
+  reportDateRangeResponse,
+} from '../utils/reportDateRange';
 
 
 export const getPendingUsers = async (req: Request, res: Response) => {
@@ -241,6 +247,23 @@ export const getAccessRecords = async (req: Request, res: Response) => {
     const formattedAdmins = accessAdmins.map(a => ({ ...a, type: 'Admin' }));
 
     let records = [...formattedAdmins, ...formattedUsers];
+
+    /**
+     * The Access Report filters on accessGrantedOn, falling back to createdAt
+     * for a record that was rejected before access was ever granted — the same
+     * pair this list is already sorted by. Applied here rather than in the two
+     * queries because that fallback is not one indexable clause.
+     */
+    let range;
+    try {
+      range = parseReportDateRange(req.query);
+    } catch (error) {
+      if (error instanceof ReportDateRangeError) {
+        return res.status(400).json(reportDateRangeResponse(error));
+      }
+      throw error;
+    }
+    records = records.filter((r: any) => withinReportRange(r.accessGrantedOn || r.createdAt, range));
 
     // Approval/rejection metadata is Super Admin information only.
     if (!isSuperAdmin) {

@@ -519,3 +519,110 @@ describe('contacts are scoped to the event that was asked for', () => {
     assert.equal(b.body[0].eventId, String(eventB._id));
   });
 });
+
+/**
+ * The report date range over real HTTP.
+ *
+ * /api/contacts is the listing the Contact Report reads, and it is also what
+ * the contacts page calls. Both halves of that are asserted here: a range that
+ * makes sense filters, a range that does not is refused, and a request with no
+ * range at all is the ordinary listing it has always been.
+ *
+ * The database is shared with the cases above, so every assertion is made
+ * against this block's own four rows rather than against a total.
+ */
+describe('report date range on a shared listing', () => {
+  const MINE = ['Range Inside One', 'Range Inside Two', 'Range Before It', 'Range After It'];
+  const mineOnly = (rows: any[]) =>
+    rows.filter((c: any) => MINE.includes(c.fullName)).map((c: any) => c.fullName).sort();
+
+  const seedOn = async (eventId: any, fullName: string, createdAt: string, suffix: number) => {
+    await Contact.collection.insertOne({
+      fullName,
+      phoneNumber: `+9197${String(suffix).padStart(8, '0')}`,
+      countryCode: 'IN',
+      eventId,
+      source: 'Manual',
+      status: 'Valid',
+      createdAt: new Date(createdAt),
+      updatedAt: new Date(createdAt),
+    } as any);
+  };
+
+  // Collections are emptied before every test in this file, so each case
+  // seeds its own four rows rather than sharing them.
+  const setup = async (email: string) => {
+    const event = await makeEvent({ eventName: 'Range Event' });
+    /**
+     * Stored as UTC instants, named for the calendar day they fall on in
+     * report time (+05:30). The two "inside" rows sit at the very edges of
+     * 1-2 October IST, and the two outside ones a minute beyond them.
+     */
+    await seedOn(event._id, 'Range Inside One', '2026-09-30T18:30:00.000Z', 1); // 1 Oct 00:00 IST
+    await seedOn(event._id, 'Range Inside Two', '2026-10-02T18:29:59.000Z', 2); // 2 Oct 23:59 IST
+    await seedOn(event._id, 'Range Before It', '2026-09-30T18:29:00.000Z', 3); // 30 Sep 23:59 IST
+    await seedOn(event._id, 'Range After It', '2026-10-02T18:31:00.000Z', 4); // 3 Oct 00:01 IST
+    await seedAccount('SuperAdmin', email);
+    return loginAs(email);
+  };
+
+  test('a valid range returns only the rows inside it', async () => {
+    const token = await setup('range-ok@example.com');
+
+    const res = await call('GET', '/api/contacts?startDate=2026-10-01&endDate=2026-10-02', { token });
+    assert.equal(res.status, 200);
+    assert.deepEqual(
+      mineOnly(res.body),
+      ['Range Inside One', 'Range Inside Two'],
+      'both ends of the calendar range are inclusive, and nothing outside it is returned'
+    );
+  });
+
+  test('an end before the start is refused with 400', async () => {
+    const token = await setup('range-inverted@example.com');
+
+    const res = await call('GET', '/api/contacts?startDate=2026-10-05&endDate=2026-10-01', { token });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'End Date cannot be earlier than Start Date.');
+    assert.equal(res.body.field, 'endDate');
+  });
+
+  test('a date that is not a date is refused with 400, naming the field', async () => {
+    const token = await setup('range-bad@example.com');
+
+    const bad = await call('GET', '/api/contacts?startDate=yesterday', { token });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.field, 'startDate');
+
+    const worse = await call('GET', '/api/contacts?endDate=2026-13-45', { token });
+    assert.equal(worse.status, 400);
+    assert.equal(worse.body.field, 'endDate');
+  });
+
+  test('no range at all is still the ordinary listing', async () => {
+    const token = await setup('range-none@example.com');
+
+    // This is what the contacts page calls, and it must not start failing.
+    const res = await call('GET', '/api/contacts', { token });
+    assert.equal(res.status, 200);
+    assert.deepEqual(mineOnly(res.body), [
+      'Range After It',
+      'Range Before It',
+      'Range Inside One',
+      'Range Inside Two',
+    ]);
+  });
+
+  test('the range survives alongside search and pagination', async () => {
+    const token = await setup('range-mixed@example.com');
+
+    const res = await call(
+      'GET',
+      '/api/contacts?page=1&limit=50&search=Range%20Inside&startDate=2026-10-01&endDate=2026-10-01',
+      { token }
+    );
+    assert.equal(res.status, 200);
+    assert.deepEqual(mineOnly(res.body.data), ['Range Inside One']);
+    assert.equal(res.body.pagination.total, 1, 'the count respects the range too');
+  });
+});

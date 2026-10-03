@@ -13,6 +13,12 @@ import { auditContactDeletions } from '../services/contactDeletionService';
 import { supportsTransactions } from '../services/transactionSupport';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { getAuthorizedEventIds, isEventAuthorized } from '../services/eventAuthService';
+import {
+  parseReportDateRange,
+  dateRangeFilter,
+  ReportDateRangeError,
+  reportDateRangeResponse,
+} from '../utils/reportDateRange';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -277,6 +283,21 @@ export const getEvents = async (req: Request, res: Response) => {
     if (authorizedIds !== null) {
       query._id = { $in: authorizedIds };
     }
+
+    /**
+     * The Event Report filters on eventDate. Sending no range leaves this
+     * listing exactly as the dashboard and the event list have always read it.
+     */
+    let range;
+    try {
+      range = parseReportDateRange(req.query);
+    } catch (error) {
+      if (error instanceof ReportDateRangeError) {
+        return res.status(400).json(reportDateRangeResponse(error));
+      }
+      throw error;
+    }
+    Object.assign(query, dateRangeFilter('eventDate', range));
 
     const events = await Event.find(query).sort({ createdAt: -1 }).lean();
     res.json(events.map(serialize));

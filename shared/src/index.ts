@@ -376,3 +376,27 @@ export const indianSubscriberLength = (raw: unknown): number => {
   else if (digits.startsWith('0') && digits.length === INDIA_MOBILE_DIGITS + 1) digits = digits.slice(1);
   return Math.min(digits.length, INDIA_MOBILE_DIGITS);
 };
+
+/**
+ * The calendar day a report's Start Date / End Date means.
+ *
+ * EventReach is an India-only application and already reads and writes its
+ * calendar days in IST: event instants are built as `${date}T${time}:00+05:30`
+ * and read back through the same offset. A report has to agree with that, and
+ * the browser and the server have to agree with each other — a range resolved
+ * against the viewer's local clock in one place and against UTC in the other
+ * puts a record on different sides of the boundary depending on which layer
+ * looked at it.
+ *
+ * Both bounds are inclusive: a record stamped at the very first or very last
+ * millisecond of a chosen day is inside the range.
+ */
+export const REPORT_DAY_OFFSET = '+05:30';
+
+/** The first instant of `date` (YYYY-MM-DD), in report time. */
+export const reportDayStart = (date: string): Date =>
+  new Date(`${date}T00:00:00.000${REPORT_DAY_OFFSET}`);
+
+/** The last instant of `date` (YYYY-MM-DD), in report time. */
+export const reportDayEnd = (date: string): Date =>
+  new Date(`${date}T23:59:59.999${REPORT_DAY_OFFSET}`);

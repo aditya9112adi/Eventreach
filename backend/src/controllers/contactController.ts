@@ -4,6 +4,12 @@ import { z } from 'zod';
 import { normalizeIndianPhone } from '../utils/indianPhone';
 import { Contact } from '../models/Contact';
 import { extractFromExcel, extractFromPDF, ImportFormatError, RawContact } from '../utils/fileExtractors';
+import {
+  parseReportDateRange,
+  dateRangeFilter,
+  ReportDateRangeError,
+  reportDateRangeResponse,
+} from '../utils/reportDateRange';
 import type { ExtractedContact } from '@eventreach/shared';
 import { DEFAULT_COUNTRY_CODE } from '@eventreach/shared';
 import { AuditService } from '../services/AuditService';
@@ -600,6 +606,21 @@ export const getAllContacts = async (req: Request, res: Response) => {
     if (authorizedIds !== null) {
       query.eventId = { $in: authorizedIds };
     }
+
+    /**
+     * The Contact Report filters on createdAt, the date the guest was added.
+     * No range means the ordinary contact listing, unchanged.
+     */
+    let range;
+    try {
+      range = parseReportDateRange(req.query);
+    } catch (error) {
+      if (error instanceof ReportDateRangeError) {
+        return res.status(400).json(reportDateRangeResponse(error));
+      }
+      throw error;
+    }
+    Object.assign(query, dateRangeFilter('createdAt', range));
 
     return await sendContactList(req, res, query);
   } catch (error) {

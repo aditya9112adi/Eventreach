@@ -39,6 +39,11 @@ interface ReportFilterBarProps {
   hasGenerated?: boolean;
   /** The inputs no longer match the generated report. */
   filtersChanged?: boolean;
+  /**
+   * Why the chosen dates cannot produce a report, or '' when they can. Both
+   * dates are required, so this also blocks Search and both downloads.
+   */
+  dateError?: string;
 }
 
 const LABEL = 'text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1';
@@ -65,11 +70,15 @@ export const ReportFilterBar = ({
   isSearching = false,
   hasGenerated = true,
   filtersChanged = false,
+  dateError = '',
 }: ReportFilterBarProps) => {
   const activeOption = options.find((option) => option.key === mode) ?? options[0];
   const isDateMode = activeOption?.type === 'date';
   const hasFilter = isDateMode ? Boolean(startDate || endDate) : Boolean(searchValue);
-  const canDownload = hasGenerated && resultCount > 0 && !isExporting && !isSearching;
+  // A report must state the period it covers, so an unusable range blocks
+  // the download as firmly as having no rows does.
+  const canDownload =
+    hasGenerated && resultCount > 0 && !isExporting && !isSearching && !dateError;
   // Live filtering only: Clear appears once there is something to clear. With
   // explicit search it is always shown next to Search instead (see below).
   const showClear = hasFilter;
@@ -77,6 +86,18 @@ export const ReportFilterBar = ({
   return (
     <form
       className="glass-panel rounded-2xl p-6 animate-fade-up"
+      /**
+       * The browser's own validation is turned off so this page speaks with
+       * one voice. The date fields are still marked required for anyone
+       * reading the form, but a missing one used to be answered by Chrome with
+       * "Please fill out this field." for the roles that submit, while the
+       * roles that filter live were told "Start Date and End Date are
+       * required." by the application. The submit now always reaches
+       * onSearch, which runs the same check for everyone.
+       *
+       * This removes nothing: the server still refuses a range it cannot use.
+       */
+      noValidate
       // Enter in any field is the same explicit action as pressing Search.
       // Without onSearch this is a no-op, so live filtering is unaffected.
       onSubmit={(e) => {
@@ -130,14 +151,20 @@ export const ReportFilterBar = ({
 
         <div className="flex flex-col">
           <label className={LABEL} htmlFor="report-start">
-            Start Date
+            Start Date <span className="text-destructive">*</span>
           </label>
+          {/*
+            Enabled whichever filter is selected: every report now has to state
+            the period it covers, so these were unusable in the text modes.
+          */}
           <input
             id="report-start"
             type="date"
             value={startDate}
             max={endDate || undefined}
-            disabled={!isDateMode}
+            required
+            aria-required="true"
+            aria-invalid={Boolean(dateError) || undefined}
             onChange={(e) => onStartDateChange(e.target.value)}
             className={FIELD}
           />
@@ -145,14 +172,16 @@ export const ReportFilterBar = ({
 
         <div className="flex flex-col">
           <label className={LABEL} htmlFor="report-end">
-            End Date
+            End Date <span className="text-destructive">*</span>
           </label>
           <input
             id="report-end"
             type="date"
             value={endDate}
             min={startDate || undefined}
-            disabled={!isDateMode}
+            required
+            aria-required="true"
+            aria-invalid={Boolean(dateError) || undefined}
             onChange={(e) => onEndDateChange(e.target.value)}
             className={FIELD}
           />
@@ -162,7 +191,13 @@ export const ReportFilterBar = ({
           // Explicit search: Search and Clear always sit together, both the
           // shared Button. Clear is never a fetch — it returns to filters only.
           <div className="flex items-center gap-2">
-            <Button type="submit" isLoading={isSearching} disabled={isSearching} className="gap-2">
+            <Button
+              type="submit"
+              isLoading={isSearching}
+              disabled={isSearching}
+              title={dateError || undefined}
+              className="gap-2"
+            >
               {!isSearching && <Search className="w-4 h-4" />}
               Search
             </Button>
@@ -188,7 +223,7 @@ export const ReportFilterBar = ({
               type="button"
               onClick={onDownloadExcel}
               disabled={!canDownload}
-              title={!hasGenerated ? 'Search to generate a report first' : resultCount === 0 ? 'Nothing to download' : 'Download as Excel'}
+              title={dateError || (!hasGenerated ? 'Search to generate a report first' : resultCount === 0 ? 'Nothing to download' : 'Download as Excel')}
               className="flex items-center gap-2 bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed font-bold text-xs px-4 py-2 rounded transition-colors uppercase tracking-wider"
             >
               <FileSpreadsheet className="w-4 h-4" /> Excel
@@ -197,7 +232,7 @@ export const ReportFilterBar = ({
               type="button"
               onClick={onDownloadPdf}
               disabled={!canDownload}
-              title={!hasGenerated ? 'Search to generate a report first' : resultCount === 0 ? 'Nothing to download' : 'Download as PDF'}
+              title={dateError || (!hasGenerated ? 'Search to generate a report first' : resultCount === 0 ? 'Nothing to download' : 'Download as PDF')}
               className="flex items-center gap-2 bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed font-bold text-xs px-4 py-2 rounded transition-colors uppercase tracking-wider"
             >
               <FileText className="w-4 h-4" /> PDF
@@ -205,6 +240,12 @@ export const ReportFilterBar = ({
           </div>
         </div>
       </div>
+
+      {dateError && (
+        <p role="alert" className="mt-3 text-xs font-semibold text-destructive">
+          {dateError}
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-2 mt-4 pt-4 border-t border-border">
         {hasGenerated ? (

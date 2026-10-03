@@ -16,6 +16,7 @@ import { formatEventType } from '../utils/eventType';
 import { getPaginatedData, getSerialNumber } from '../utils/pagination';
 import {
   filterReportRows,
+  validateReportDateRange,
   filtersDiffer,
   hasResultsFor,
   selectingResetsReport,
@@ -175,6 +176,8 @@ const Reports = () => {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [isExporting, setIsExporting] = useState(false);
+  /** Why the chosen dates cannot produce a report; '' once they can. */
+  const [dateError, setDateError] = useState('');
 
   // Authorization check
   const hasReportAccess = user?.role === 'SuperAdmin' || (user?.accessExpiryDate && new Date(user.accessExpiryDate) > new Date() && !user?.isAccessCancelled);
@@ -213,7 +216,7 @@ const Reports = () => {
     }
 
     // Super Admins make no report-data request on opening Reports. The events
-    // list is loaded on demand instead — see ensureEvents below.
+    // list is loaded on demand instead — see loadEventsForSelectors below.
     if (searchFirst) return;
 
     // Needed by the "Select Event Name" picker and to name each contact's
@@ -233,13 +236,18 @@ const Reports = () => {
   liveFiltersRef.current = liveFilters;
 
   /**
-   * Super Admin: the events list, loaded only when something explicitly needs
-   * it — opening the "Select Event Name" picker, or searching the Contact
-   * Report (to name each contact's event). An Event Report search fills it from
-   * its own results, so the picker then needs no request at all.
+   * The complete authorized event list, for the "Select Event Name" picker,
+   * the campaign drill-down, and naming each contact's event in the Contact
+   * Report.
+   *
+   * Deliberately sent WITHOUT the report's date range, and deliberately not
+   * filled from the Event Report's response. The Event Report asks the server
+   * for the events inside the chosen period; using that answer as this cache
+   * would leave a contact whose event falls outside the period with no name to
+   * show, and would empty the picker of everything the report excluded.
    */
   const eventsRequested = useRef(false);
-  const ensureEvents = useCallback(() => {
+  const loadEventsForSelectors = useCallback(() => {
     if (eventsRequested.current) return;
     eventsRequested.current = true;
     api.get('/events')
@@ -255,12 +263,16 @@ const Reports = () => {
     const requestId = nextRequestId();
     dispatch({ type: 'start', reportKey: key, requestId, filters });
     try {
-      const res = await api.get(REPORTS[key].endpoint);
+      /**
+       * Every report states the period it covers, so every report request
+       * carries it. The server applies the field that report is filtered on —
+       * eventDate, createdAt or accessGrantedOn — and refuses a range it
+       * cannot use.
+       */
+      const res = await api.get(REPORTS[key].endpoint, {
+        params: { startDate: filters.startDate, endDate: filters.endDate },
+      });
       const rows = Array.isArray(res.data) ? res.data : [];
-      if (key === 'event') {
-        setEvents(rows);
-        eventsRequested.current = true;
-      }
       dispatch({ type: 'success', requestId, rows });
     } catch (err: any) {
       console.error(`Failed to fetch ${REPORTS[key].label}`, err);
@@ -272,29 +284,50 @@ const Reports = () => {
     }
   }, []);
 
-  // Original behaviour for roles other than Super Admin: load the tab's rows as
-  // soon as it opens, with the filters applied live.
+  /**
+   * Roles other than Super Admin filter live: the tab loads its own rows rather
+   * than waiting for a Search press. The date range is required of them all the
+   * same, so this path runs the identical check before it fetches anything.
+   *
+   * A tab opened before any date is chosen shows its filters and the message
+   * saying what is still needed — it does not call the API and is not reported
+   * as a failed load. Half a range behaves the same way, which is what stops
+   * "?startDate=2026-10-01&endDate=" ever being sent and coming back 400.
+   *
+   * The Event Report no longer reads the events cache here: every report,
+   * whatever the role, is generated from its own dated request.
+   */
   useEffect(() => {
     if (!hasReportAccess || searchFirst) return;
 
-    // The events list is already fetched above for the drill-down picker, so
-    // the Event Report reuses it instead of asking for the same data twice.
-    if (activeReport === 'event') {
-      const requestId = nextRequestId();
-      dispatch({ type: 'start', reportKey: 'event', requestId, filters: liveFiltersRef.current });
-      dispatch({ type: 'success', requestId, rows: events });
+    const problem = validateReportDateRange(startDate, endDate);
+    if (problem) {
+      setDateError(problem);
+      // No rows rather than stale or undated ones.
+      dispatch({ type: 'reset', reportKey: activeReport, requestId: nextRequestId() });
       return;
     }
 
+    setDateError('');
     void loadReport(activeReport, liveFiltersRef.current);
-  }, [hasReportAccess, searchFirst, activeReport, events, loadReport]);
+  }, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate]);
 
   /** Super Admin: generate the report for the current filters. */
   const runSearch = () => {
+    // Both dates are required, and the request is not made until they are
+    // usable: a report generated without them states its period as "-".
+    const problem = validateReportDateRange(startDate, endDate);
+    if (problem) {
+      setDateError(problem);
+      return;
+    }
+    setDateError('');
     setCurrentPage(1);
     setSelectedEventId('');
     // Contacts carry only an eventId; the event names come from the events list.
-    if (activeReport === 'contact') ensureEvents();
+    // The cache is what names a contact's event and backs the drill-down, and
+    // it is no longer a by-product of the Event Report's own response.
+    loadEventsForSelectors();
     void loadReport(activeReport, liveFilters);
   };
 
@@ -359,8 +392,14 @@ const Reports = () => {
     // mode that does not exist on the new tab.
     setMode(REPORTS[key].options[0].key);
     setSearchValue('');
-    setStartDate('');
-    setEndDate('');
+    /**
+     * The period is deliberately NOT reset.
+     *
+     * It is the one filter every report shares and the one every report is
+     * required to state, so clearing it on each tab made the reader re-enter
+     * the same two dates to look at the same month from another angle. The
+     * tab-specific fields above still start fresh.
+     */
     setSelectedEventId('');
     setCurrentPage(1);
     // A fresh tab starts with no report. Resetting with a new request id also
@@ -455,6 +494,14 @@ const Reports = () => {
 
   const runExport = useCallback(
     async (kind: 'excel' | 'pdf') => {
+      // Guarded here as well as on the button: the file carries the dates in
+      // its own header, so it must never be written without them.
+      const problem = validateReportDateRange(exportFilters.startDate, exportFilters.endDate);
+      if (problem) {
+        setDateError(problem);
+        showToast('warning', problem);
+        return;
+      }
       if (filteredRows.length === 0) {
         showToast('warning', 'There is nothing to download for this filter.');
         return;
@@ -529,7 +576,7 @@ const Reports = () => {
                 onChange={(id) => setSelectedEventId(id)}
                 placeholder='Search events...'
                 allowClear={true}
-                onOpen={searchFirst ? ensureEvents : undefined}
+                onOpen={searchFirst ? loadEventsForSelectors : undefined}
               />
             </div>
           </div>
@@ -578,9 +625,16 @@ const Reports = () => {
         searchValue={searchValue}
         onSearchChange={setSearchValue}
         startDate={startDate}
-        onStartDateChange={setStartDate}
+        onStartDateChange={(value) => {
+          setStartDate(value);
+          setDateError('');
+        }}
         endDate={endDate}
-        onEndDateChange={setEndDate}
+        onEndDateChange={(value) => {
+          setEndDate(value);
+          setDateError('');
+        }}
+        dateError={dateError}
         onClear={clearFilters}
         onDownloadExcel={() => runExport('excel')}
         onDownloadPdf={() => runExport('pdf')}
