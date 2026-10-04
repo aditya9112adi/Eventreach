@@ -273,16 +273,34 @@ const Reports = () => {
    * show, and would empty the picker of everything the report excluded.
    */
   const eventsRequested = useRef(false);
+  /** The picker's list is on its way, or the last attempt to load it failed. */
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsLoadFailed, setEventsLoadFailed] = useState(false);
   const loadEventsForSelectors = useCallback(() => {
     if (eventsRequested.current) return;
     eventsRequested.current = true;
+    setEventsLoading(true);
+    setEventsLoadFailed(false);
     api.get('/events')
       .then((res) => setEvents(res.data))
       .catch((err) => {
         eventsRequested.current = false; // allow a retry on the next open
+        setEventsLoadFailed(true);
         console.error('Failed to fetch events', err);
-      });
+      })
+      .finally(() => setEventsLoading(false));
   }, []);
+
+  /**
+   * The Access and Contact Reports' "Select Event Name" filter is part of the
+   * report's filters, so its list is fetched as soon as one of those tabs is
+   * shown rather than when the picker is first opened. Opening it then lists
+   * the events straight away instead of an empty dropdown while the request
+   * is still on its way. This is the events list only, never report data.
+   */
+  useEffect(() => {
+    if (searchFirst && showReport && eventScoped) loadEventsForSelectors();
+  }, [searchFirst, showReport, eventScoped, loadEventsForSelectors]);
 
   /** Fetches a report's rows as one run. */
   const loadReport = useCallback(async (key: ReportKey, filters: ReportFilters) => {
@@ -681,7 +699,16 @@ const Reports = () => {
                 onChange={(id) => setReportEventId(id)}
                 placeholder='All events'
                 allowClear={true}
-                onOpen={searchFirst ? loadEventsForSelectors : undefined}
+                // Retried on open while the list is still empty - for every
+                // role, so a failed load never leaves the filter unusable.
+                onOpen={events.length === 0 ? loadEventsForSelectors : undefined}
+                emptyText={
+                  eventsLoading
+                    ? 'Loading events...'
+                    : eventsLoadFailed
+                      ? 'Could not load events. Close and reopen to try again.'
+                      : 'No events found'
+                }
               />
             </div>
           </div>

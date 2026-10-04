@@ -13,9 +13,15 @@ interface EventSearchProps {
   allowClear?: boolean;
   /** Called when the dropdown opens — lets a page load its options on demand. */
   onOpen?: () => void;
+  /**
+   * What the list says when it has no events to offer. Defaults to "No events
+   * found"; a page still loading its options can say so instead, so an empty
+   * list is never mistaken for "there are no events".
+   */
+  emptyText?: string;
 }
 
-export const EventSearch = ({ events, value, onChange, placeholder = 'Search events...', allowClear = true, onOpen }: EventSearchProps) => {
+export const EventSearch = ({ events, value, onChange, placeholder = 'Search events...', allowClear = true, onOpen, emptyText = 'No events found' }: EventSearchProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -115,7 +121,7 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
               {filteredEvents.length === 0 ? (
                 <div className="px-4 py-6 text-sm text-center text-foreground/50 flex flex-col items-center gap-2">
                   <Search className="w-5 h-5 opacity-20" />
-                  No events found
+                  {emptyText}
                 </div>
               ) : (
                 filteredEvents.map(evt => (

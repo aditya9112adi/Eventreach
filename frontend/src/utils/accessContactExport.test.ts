@@ -368,3 +368,56 @@ test('Reports.tsx wiring', async (t) => {
     assert.ok(reports.includes('}, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId]);'));
   });
 });
+
+// ─── the Access/Contact event picker always has its events ───────────────────
+
+test('the Select Event Name picker on Access and Contact lists the events', async (t) => {
+  const eventSearch = read('frontend/src/components/ui/EventSearch.tsx');
+  const picker = between(reports, '{showReport && eventScoped && (', '</div>\n          </div>\n        )}');
+  const loader = between(reports, 'const loadEventsForSelectors = useCallback(', '/** Fetches a report\'s rows as one run. */');
+
+  await t.test('its list is fetched as soon as the Access or Contact tab is shown, not on first open', () => {
+    // The bug: a Super Admin's list was only requested when the picker was
+    // opened, so the open dropdown showed nothing but "All Events" until the
+    // response arrived - or for good, if it failed.
+    assert.ok(reports.includes('if (searchFirst && showReport && eventScoped) loadEventsForSelectors();'));
+    assert.ok(reports.includes('}, [searchFirst, showReport, eventScoped, loadEventsForSelectors]);'));
+  });
+
+  await t.test('the list comes from the complete authorized events list, mapped by _id', () => {
+    assert.ok(loader.includes("api.get('/events')"), 'the plain /events list, no report range');
+    assert.ok(loader.includes('.then((res) => setEvents(res.data))'));
+    assert.ok(picker.includes('events={events}'));
+    // EventSearch selects by _id and shows "EVT-... | name".
+    assert.ok(eventSearch.includes('onClick={() => { onChange(evt._id);'));
+    assert.ok(eventSearch.includes('{evt.eventId} | </span> : null}'));
+    assert.ok(eventSearch.includes('{evt.eventName}'));
+  });
+
+  await t.test('while loading it says so, and a failed load says so too', () => {
+    assert.ok(loader.includes('setEventsLoading(true);'));
+    assert.ok(loader.includes('.finally(() => setEventsLoading(false));'));
+    assert.ok(loader.includes('setEventsLoadFailed(true);'));
+    assert.ok(picker.includes("? 'Loading events...'"));
+    assert.ok(picker.includes("? 'Could not load events. Close and reopen to try again.'"));
+    assert.ok(eventSearch.includes("emptyText = 'No events found'"), 'other pickers keep their wording');
+    assert.ok(eventSearch.includes('{emptyText}'));
+  });
+
+  await t.test('an empty list is retried when the picker is opened, for every role', () => {
+    assert.ok(picker.includes('onOpen={events.length === 0 ? loadEventsForSelectors : undefined}'));
+    assert.ok(loader.includes('eventsRequested.current = false; // allow a retry on the next open'));
+  });
+
+  await t.test('"All events" stays the default and the choice is stored for the next Search', () => {
+    assert.ok(picker.includes("placeholder='All events'"));
+    assert.ok(reports.includes("const [reportEventId, setReportEventId] = useState<string>('');"));
+    assert.ok(reports.includes("eventId: eventScoped ? reportEventId : ''"));
+  });
+
+  await t.test('the Event Report picker is unchanged', () => {
+    const eventPicker = between(reports, "{showReport && activeReport === 'event' && (", '{showReport && eventScoped && (');
+    assert.ok(eventPicker.includes('onOpen={searchFirst ? loadEventsForSelectors : undefined}'));
+    assert.equal(eventPicker.includes('emptyText'), false);
+  });
+});
