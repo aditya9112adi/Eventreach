@@ -78,6 +78,48 @@ export const getAuthorizedEventIds = async (user?: AuthUserInfo): Promise<string
 };
 
 /**
+ * Everyone who can reach one event, by the same rules getAuthorizedEventIds
+ * applies from the other side - for the Access Report filtered to an event.
+ *
+ * Users: assigned to it (assignedEventId, assignedUserId, assignedUserIds) or
+ * its creator. Admins: its adminId or creator, and the managing Admin of any
+ * User assigned to it - an Admin's scope includes the events of the Users
+ * they manage. Two queries whatever the number of people; nothing per user.
+ *
+ * Returns null when the event does not exist.
+ */
+export const getEventAccessHolders = async (
+  eventId: string
+): Promise<{ userIds: string[]; adminIds: string[] } | null> => {
+  const event: any = await Event.findById(eventId)
+    .select('adminId createdBy assignedUserId assignedUserIds')
+    .lean();
+  if (!event) return null;
+
+  const named = [event.assignedUserId, ...(event.assignedUserIds || [])].filter(Boolean).map(String);
+  const creator = event.createdBy ? String(event.createdBy) : null;
+
+  const users = await User.find({
+    $or: [
+      { assignedEventId: eventId },
+      { _id: { $in: [...named, ...(creator ? [creator] : [])] } },
+    ],
+  })
+    .select('_id adminId assignedEventId')
+    .lean();
+
+  const adminIds = new Set<string>([event.adminId, event.createdBy].filter(Boolean).map(String));
+  for (const u of users as any[]) {
+    const assigned = String(u.assignedEventId || '') === String(eventId) || named.includes(String(u._id));
+    // Only an assignment extends to the managing Admin; a User's own event
+    // (createdBy) does not, exactly as getAuthorizedEventIds has it.
+    if (assigned && u.adminId) adminIds.add(String(u.adminId));
+  }
+
+  return { userIds: (users as any[]).map((u) => String(u._id)), adminIds: Array.from(adminIds) };
+};
+
+/**
  * Checks if a specific event is within the authorized scope of the user.
  */
 export const isEventAuthorized = async (

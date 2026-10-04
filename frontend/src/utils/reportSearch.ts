@@ -22,7 +22,25 @@ export interface ReportFilters {
   searchValue: string;
   startDate: string;
   endDate: string;
+  /**
+   * The one event the Access or Contact Report was generated for (its _id);
+   * empty or absent for all events. The server applies it - see
+   * reportEventParam - and the downloads state it.
+   */
+  eventId?: string;
 }
+
+/** The reports whose generated filters may name one event. */
+export const EVENT_SCOPED_REPORTS: ReadonlyArray<ReportKey> = ['access', 'contact'];
+
+/**
+ * The event part of a report request: for the Access and Contact Reports
+ * generated for one event, { eventId }; otherwise nothing. The event goes to
+ * the server, which authorizes it and reads only that event's records - it is
+ * never a filter applied afterwards in the browser.
+ */
+export const reportEventParam = (key: ReportKey, filters: ReportFilters): { eventId?: string } =>
+  EVENT_SCOPED_REPORTS.includes(key) && filters.eventId ? { eventId: filters.eventId } : {};
 
 export interface ReportRowAccessors {
   /** Free-text field the text filters search. */
@@ -108,7 +126,8 @@ export const filtersDiffer = (a: ReportFilters | null, b: ReportFilters): boolea
   a.mode !== b.mode ||
   a.searchValue !== b.searchValue ||
   a.startDate !== b.startDate ||
-  a.endDate !== b.endDate;
+  a.endDate !== b.endDate ||
+  (a.eventId ?? '') !== (b.eventId ?? '');
 
 // ── Run state ────────────────────────────────────────────────────────────────
 

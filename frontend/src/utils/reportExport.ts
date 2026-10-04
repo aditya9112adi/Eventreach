@@ -30,6 +30,12 @@ export interface ReportMeta {
   startDate?: string;
   endDate?: string;
   /**
+   * The event an Access or Contact Report was generated for ("EVT-000006 |
+   * Valentines", or "All Events"), printed as a fourth filter line. Left out,
+   * the report states the three lines it always has.
+   */
+  event?: string;
+  /**
    * Lines to print in place of the three filter lines, for a document that is
    * not the result of a search - an event's Delivery Log states the event it
    * belongs to rather than a search value and a date range.
@@ -49,6 +55,7 @@ export const buildMetaRows = (meta: ReportMeta = {}): Array<[string, string]> =>
         ['Search Value', meta.searchValue?.trim() || '-'],
         ['Start Date', meta.startDate?.trim() || '-'],
         ['End Date', meta.endDate?.trim() || '-'],
+        ...(meta.event !== undefined ? [['Event', meta.event.trim() || '-'] as [string, string]] : []),
       ];
 
 /**

@@ -608,6 +608,22 @@ export const getAllContacts = async (req: Request, res: Response) => {
     }
 
     /**
+     * Optional ?eventId=: the Contact Report for one event. Refused unless the
+     * caller may see that event, and applied in the query, so only that
+     * event's contacts are read. Without it, every authorized event as before.
+     */
+    const eventId = req.query.eventId;
+    if (eventId !== undefined && eventId !== '') {
+      if (typeof eventId !== 'string' || !mongoose.isValidObjectId(eventId)) {
+        return res.status(400).json({ error: 'Invalid event id.' });
+      }
+      if (authorizedIds !== null && !authorizedIds.includes(eventId)) {
+        return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+      }
+      query.eventId = eventId;
+    }
+
+    /**
      * The Contact Report filters on createdAt, the date the guest was added.
      * No range means the ordinary contact listing, unchanged.
      */

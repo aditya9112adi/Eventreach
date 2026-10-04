@@ -23,6 +23,8 @@ import {
   hasResultsFor,
   selectingResetsReport,
   parseReportType,
+  reportEventParam,
+  EVENT_SCOPED_REPORTS,
   initialReportRun,
   reportRunReducer,
   type ReportFilters,
@@ -164,6 +166,12 @@ const Reports = () => {
   const [reportChosen, setReportChosen] = useState<boolean>(() => user?.role !== 'SuperAdmin');
   const [events, setEvents] = useState<any[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string>('');
+  /**
+   * The Access and Contact Reports' "Select Event Name" filter: the event the
+   * next report is generated for. Separate from selectedEventId, which is the
+   * Event Report's View drill-down, so neither can steer the other.
+   */
+  const [reportEventId, setReportEventId] = useState<string>('');
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [loadingCampaign, setLoadingCampaign] = useState(false);
   /**
@@ -224,6 +232,7 @@ const Reports = () => {
   );
 
   const definition = REPORTS[activeReport];
+  const eventScoped = EVENT_SCOPED_REPORTS.includes(activeReport);
 
   useEffect(() => {
     if (!hasReportAccess) {
@@ -244,8 +253,8 @@ const Reports = () => {
   }, [hasReportAccess, searchFirst, navigate, showToast]);
 
   const liveFilters: ReportFilters = useMemo(
-    () => ({ mode, searchValue, startDate, endDate }),
-    [mode, searchValue, startDate, endDate]
+    () => ({ mode, searchValue, startDate, endDate, eventId: eventScoped ? reportEventId : '' }),
+    [mode, searchValue, startDate, endDate, eventScoped, reportEventId]
   );
   // Read by the auto-load effect below without making it a dependency: for
   // roles that filter live, editing a filter must not trigger a reload.
@@ -287,7 +296,7 @@ const Reports = () => {
        * cannot use.
        */
       const res = await api.get(REPORTS[key].endpoint, {
-        params: { startDate: filters.startDate, endDate: filters.endDate },
+        params: { startDate: filters.startDate, endDate: filters.endDate, ...reportEventParam(key, filters) },
       });
       const rows = Array.isArray(res.data) ? res.data : [];
       dispatch({ type: 'success', requestId, rows });
@@ -327,7 +336,7 @@ const Reports = () => {
 
     setDateError('');
     void loadReport(activeReport, liveFiltersRef.current);
-  }, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate]);
+  }, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId]);
 
   /** Super Admin: generate the report for the current filters. */
   const runSearch = () => {
@@ -392,6 +401,15 @@ const Reports = () => {
     return map;
   }, [events]);
 
+  /** "EVT-000006 | Valentines", as a download names the event it was scoped to. */
+  const eventLabelById = useCallback(
+    (id: string) => {
+      const evt: any = events.find((e: any) => String(e._id) === String(id));
+      return evt ? [evt.eventId, evt.eventName].filter(Boolean).join(' | ') : String(id);
+    },
+    [events]
+  );
+
   /**
    * Contacts come back with only `eventId`, so the event name is resolved from
    * the events already loaded for this user rather than adding a populate to
@@ -421,6 +439,7 @@ const Reports = () => {
     // mode that does not exist on the new tab.
     setMode(REPORTS[key].options[0].key);
     setSearchValue('');
+    setReportEventId('');
     /**
      * The period is deliberately NOT reset.
      *
@@ -438,6 +457,7 @@ const Reports = () => {
 
   const clearFilters = () => {
     setSearchValue('');
+    setReportEventId('');
     setStartDate('');
     setEndDate('');
     if (searchFirst) {
@@ -464,6 +484,7 @@ const Reports = () => {
     }
     setReportChosen(false);
     setSearchValue('');
+    setReportEventId('');
     setStartDate('');
     setEndDate('');
     setSelectedEventId('');
@@ -545,6 +566,10 @@ const Reports = () => {
           searchValue: exportFilters.searchValue,
           startDate: exportFilters.startDate,
           endDate: exportFilters.endDate,
+          // The generated report's event, never the picker's current value.
+          ...(EVENT_SCOPED_REPORTS.includes(activeReport)
+            ? { event: exportFilters.eventId ? eventLabelById(exportFilters.eventId) : 'All Events' }
+            : {}),
         };
         if (activeReport === 'event') {
           /**
@@ -577,7 +602,7 @@ const Reports = () => {
         setIsExporting(false);
       }
     },
-    [filteredRows, definition, activeReport, reportOption.key, exportFilters, showToast]
+    [filteredRows, definition, activeReport, reportOption.key, exportFilters, eventLabelById, showToast]
   );
 
   /**
@@ -637,6 +662,24 @@ const Reports = () => {
                 value={selectedEventId}
                 onChange={(id) => setSelectedEventId(id)}
                 placeholder='Search events...'
+                allowClear={true}
+                onOpen={searchFirst ? loadEventsForSelectors : undefined}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Access and Contact Reports: the same picker, as the report's event
+            filter. It takes effect when the report is generated. */}
+        {showReport && eventScoped && (
+          <div className="flex flex-col sm:flex-row items-start sm:items-end gap-3 relative z-50">
+            <div className='flex flex-col w-[260px]'>
+              <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Select Event Name</label>
+              <EventSearch
+                events={events}
+                value={reportEventId}
+                onChange={(id) => setReportEventId(id)}
+                placeholder='All events'
                 allowClear={true}
                 onOpen={searchFirst ? loadEventsForSelectors : undefined}
               />

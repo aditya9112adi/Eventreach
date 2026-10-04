@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import { z } from 'zod';
 import { validatePassword } from '@eventreach/shared';
@@ -8,7 +9,7 @@ import { Event } from '../models/Event';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { getIO, emitPendingApprovalsChanged } from '../services/socketService';
-import { isEventAuthorized } from '../services/eventAuthService';
+import { isEventAuthorized, getEventAccessHolders } from '../services/eventAuthService';
 import { sendRegistrationDecisionEmail, verifyEmailTransport } from '../utils/email';
 import { getFrontendBaseUrl, isFrontendUrlConfigured } from '../config/appUrls';
 import {
@@ -220,6 +221,29 @@ export const getAccessRecords = async (req: Request, res: Response) => {
       userQuery.adminId = currentUser?.id;
     }
 
+    /**
+     * Optional ?eventId=: the report for one event - the Users and Admins who
+     * can reach it. The caller must be authorized for that event, and the
+     * scope is part of the queries below, so no other event's records are
+     * read, let alone returned. Without it the report is as it always was.
+     */
+    const eventId = req.query.eventId;
+    let adminScope: any = null;
+    if (eventId !== undefined && eventId !== '') {
+      if (typeof eventId !== 'string' || !mongoose.isValidObjectId(eventId)) {
+        return res.status(400).json({ error: 'Invalid event id.' });
+      }
+      if (!(await isEventAuthorized(currentUser, eventId))) {
+        return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+      }
+      const holders = await getEventAccessHolders(eventId);
+      if (!holders) {
+        return res.status(404).json({ error: 'Event not found.' });
+      }
+      userQuery._id = { $in: holders.userIds };
+      adminScope = { _id: { $in: holders.adminIds } };
+    }
+
     const accessUsers = await User.find(userQuery)
       .populate('assignedEventId', 'eventName')
       .select('-passwordHash')
@@ -228,6 +252,7 @@ export const getAccessRecords = async (req: Request, res: Response) => {
     const accessAdmins = isSuperAdmin
       ? await Admin.find({
           role: { $ne: 'SuperAdmin' },
+          ...(adminScope || {}),
           $or: [
             { accessGrantedOn: { $exists: true } },
             { status: 'Rejected' }
