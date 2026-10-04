@@ -19,6 +19,8 @@ export interface DeliveryLogRow {
   contactId?: { fullName?: string; phoneNumber?: string } | null;
   contactName?: string;
   phoneNumber?: string;
+  /** The personalised text a campaign sent. A template send has none: Meta renders it. */
+  messageText?: string;
   status?: string;
   templateName?: string;
   sentAt?: string;
@@ -121,4 +123,32 @@ export const DELIVERY_STATUS_FILTERS: ReadonlyArray<{ value: string; label: stri
   { value: 'Read', label: 'Read' },
   { value: 'Failed', label: 'Failed' },
   { value: 'Pending', label: 'Pending' },
+];
+
+/**
+ * The Delivery Log as a downloadable document: the same columns the table
+ * shows, plus what was sent.
+ *
+ * A campaign message stores the personalised text it carried, so that goes in
+ * Message. A template message stores only the approved template's name - its
+ * wording is rendered by Meta and never held here - so that goes in Template,
+ * and Message is a dash rather than words this system never had.
+ *
+ * Contact is the plain name: the table appends the template to it for want of
+ * a column, which this document has.
+ */
+export const EVENT_DELIVERY_EXPORT_COLUMNS: ReportColumn<DeliveryLogRow>[] = [
+  { header: 'Contact', value: (r) => r.contactId?.fullName || r.contactName || 'Unknown', width: 22 },
+  // Wide enough that a 13-character number and "event_document" each sit on
+  // one line in the PDF - at less, both broke mid-token. Message takes the
+  // narrower share instead: it is the column meant to wrap.
+  { header: 'Phone', value: (r) => r.contactId?.phoneNumber || r.phoneNumber || '-', width: 24 },
+  { header: 'Template', value: (r) => r.templateName || '-', width: 24 },
+  { header: 'Message', value: (r) => (r.messageText && r.messageText.trim()) || '—', width: 40 },
+  { header: 'Status', value: (r) => describeDeliveryLog(r).label, width: 18 },
+  { header: 'Accepted', value: (r) => deliveryStamp(r.sentAt), width: 20 },
+  { header: 'Delivered', value: (r) => deliveryStamp(r.deliveredAt), width: 20 },
+  { header: 'Read', value: (r) => deliveryStamp(r.readAt), width: 20 },
+  { header: 'Failed', value: (r) => deliveryStamp(r.failedAt), width: 20 },
+  { header: 'Details', value: (r) => describeDeliveryDetail(r), width: 28 },
 ];

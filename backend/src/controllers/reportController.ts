@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { MessageLog } from '../models/MessageLog';
 import { Campaign } from '../models/Campaign';
-import { isEventAuthorized } from '../services/eventAuthService';
+import { isEventAuthorized, getAuthorizedEventIds } from '../services/eventAuthService';
 
 /**
  * What a Delivery Log status filter means in a query.
@@ -305,6 +305,102 @@ export const getEventDeliveryLog = async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Get event delivery log error:', error);
+    res.status(500).json({ error: 'Failed to fetch the delivery log' });
+  }
+};
+
+/** The most events one batch request may name; the Event Report export sends them in chunks of this. */
+export const MAX_REPORT_EVENTS = 1000;
+
+/**
+ * POST /api/reports/events/delivery-log   body: { eventIds: string[], page?, limit? }
+ *
+ * The Delivery Log of EVERY event in a generated Event Report, in one request,
+ * for the report's own Excel and PDF. The events are the ones the report
+ * listed - the client sends their ids - so a search or date filter that
+ * narrowed the report narrows this too, and nothing outside it is read.
+ *
+ * Same rows as GET /event/:eventId/delivery-log, for many events at once:
+ * one Campaign lookup for all the events, then one MessageLog query that is an
+ * $or of "template sends of these events" and "messages of these campaigns".
+ * The number of queries is fixed - it does not grow with the events or the
+ * recipients. Each row is labelled with the event it belongs to, because a
+ * campaign message carries no eventId of its own.
+ *
+ * POST rather than GET because a report can list hundreds of events and their
+ * ids do not belong in a URL. Nothing is written.
+ *
+ * Authorization: every requested event must be one the caller may see. One
+ * that is not refuses the whole request rather than quietly dropping it, so a
+ * document can never look complete while missing an event.
+ */
+export const getEventsDeliveryLog = async (req: Request, res: Response) => {
+  try {
+    const raw = req.body?.eventIds;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return res.status(400).json({ error: 'eventIds must be a non-empty list.' });
+    }
+    if (raw.some((id: unknown) => typeof id !== 'string' || !mongoose.isValidObjectId(id))) {
+      return res.status(400).json({ error: 'Invalid event id.' });
+    }
+    const eventIds: string[] = Array.from(new Set(raw as string[]));
+    if (eventIds.length > MAX_REPORT_EVENTS) {
+      return res.status(400).json({ error: `At most ${MAX_REPORT_EVENTS} events per request.` });
+    }
+
+    const currentUser = (req as any).user;
+    if (!currentUser?.id) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+    // Resolved once for the whole list, not once per event.
+    const authorized = await getAuthorizedEventIds(currentUser);
+    if (authorized !== null) {
+      const allowed = new Set(authorized);
+      if (eventIds.some((id) => !allowed.has(id))) {
+        return res.status(403).json({ error: 'Access denied. You do not have access to one or more of these events.' });
+      }
+    }
+
+    const page = Math.max(parseInt(req.body?.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.body?.limit) || 500, 1), 1000);
+
+    const objectIds = eventIds.map((id) => new mongoose.Types.ObjectId(id));
+    const campaigns = await Campaign.find({ eventId: { $in: objectIds } }).select('_id eventId').lean();
+    const eventOfCampaign = new Map<string, string>(
+      campaigns.map((c: any) => [String(c._id), String(c.eventId)])
+    );
+
+    const ownedByEvents: any[] = [{ eventId: { $in: objectIds }, templateName: { $exists: true, $ne: null } }];
+    if (campaigns.length > 0) ownedByEvents.push({ campaignId: { $in: campaigns.map((c: any) => c._id) } });
+    const query: any = { $or: ownedByEvents };
+
+    const [logs, total] = await Promise.all([
+      MessageLog.find(query)
+        .populate('contactId', 'fullName phoneNumber')
+        // _id breaks ties so consecutive pages never overlap or skip a row.
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      MessageLog.countDocuments(query),
+    ]);
+
+    const requested = new Set(eventIds);
+    const labelled = logs.map((log: any) => {
+      // A template send names its event; a campaign message reaches it
+      // through its campaign.
+      const own = log.templateName && log.eventId ? String(log.eventId) : null;
+      const eventId = own && requested.has(own) ? own : eventOfCampaign.get(String(log.campaignId)) ?? own;
+      return { ...log, eventId };
+    });
+
+    res.json({
+      eventIds,
+      logs: labelled,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    console.error('Get events delivery log error:', error);
     res.status(500).json({ error: 'Failed to fetch the delivery log' });
   }
 };

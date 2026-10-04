@@ -29,6 +29,12 @@ export interface ReportMeta {
   searchValue?: string;
   startDate?: string;
   endDate?: string;
+  /**
+   * Lines to print in place of the three filter lines, for a document that is
+   * not the result of a search - an event's Delivery Log states the event it
+   * belongs to rather than a search value and a date range.
+   */
+  rows?: Array<[string, string]>;
 }
 
 /** Shown at the foot of every report, in both formats. Wording is fixed. */
@@ -36,11 +42,14 @@ export const REPORT_NOTE = 'Note :: This report is system generated';
 export const REPORT_CREDIT = 'Designed & developed by SmartStack Soft Solutions';
 
 /** The three filter lines, always present so a report states its own scope. */
-export const buildMetaRows = (meta: ReportMeta = {}): Array<[string, string]> => [
-  ['Search Value', meta.searchValue?.trim() || '-'],
-  ['Start Date', meta.startDate?.trim() || '-'],
-  ['End Date', meta.endDate?.trim() || '-'],
-];
+export const buildMetaRows = (meta: ReportMeta = {}): Array<[string, string]> =>
+  meta.rows && meta.rows.length > 0
+    ? meta.rows
+    : [
+        ['Search Value', meta.searchValue?.trim() || '-'],
+        ['Start Date', meta.startDate?.trim() || '-'],
+        ['End Date', meta.endDate?.trim() || '-'],
+      ];
 
 /**
  * Builds the download name, e.g. "AccessReport_UserName_21082026".
@@ -79,20 +88,37 @@ const ALL_BORDERS = { top: THIN_BORDER, left: THIN_BORDER, bottom: THIN_BORDER, 
  * in a test — cell by cell, including the fonts, fills and borders — without a
  * browser.
  */
-export const buildReportWorkbook = async <T>(
-  title: string,
-  columns: ReportColumn<T>[],
-  rows: T[],
-  meta: ReportMeta = {}
-): Promise<any> => {
-  // exceljs is CommonJS: the bundler hands back a namespace carrying Workbook
-  // directly, node puts the same object under `default`. Accept either, so the
-  // workbook can be built in a test as well as in the browser.
+/**
+ * exceljs is CommonJS: the bundler hands back a namespace carrying Workbook
+ * directly, node puts the same object under `default`. Accept either, so the
+ * workbook can be built in a test as well as in the browser.
+ */
+const newWorkbook = async (): Promise<any> => {
   const imported: any = await import('exceljs');
   const ExcelJS = imported.default ?? imported;
   const workbook = new ExcelJS.Workbook();
   workbook.created = new Date();
-  const sheet = workbook.addWorksheet(title.slice(0, 31) || 'Report');
+  return workbook;
+};
+
+/** Excel refuses a sheet name over 31 characters. */
+const sheetName = (name: string) => name.slice(0, 31) || 'Report';
+
+/**
+ * One report table on its own sheet: title, the lines stating its scope, the
+ * highlighted and bordered table with a filter on every column, and the two
+ * standing notes. Every report sheet in the application is written by this, so
+ * a second sheet in a workbook looks exactly like a report on its own.
+ */
+const addReportSheet = <T>(
+  workbook: any,
+  name: string,
+  title: string,
+  columns: ReportColumn<T>[],
+  rows: T[],
+  meta: ReportMeta = {}
+): any => {
+  const sheet = workbook.addWorksheet(sheetName(name));
 
   sheet.columns = columns.map((column) => ({
     key: column.header,
@@ -152,7 +178,118 @@ export const buildReportWorkbook = async <T>(
   // Keeps the headings visible while scrolling a long report.
   sheet.views = [{ state: 'frozen', ySplit: headerRow.number }];
 
+  return sheet;
+};
+
+export const buildReportWorkbook = async <T>(
+  title: string,
+  columns: ReportColumn<T>[],
+  rows: T[],
+  meta: ReportMeta = {}
+): Promise<any> => {
+  const workbook = await newWorkbook();
+  addReportSheet(workbook, title, title, columns, rows, meta);
   return workbook;
+};
+
+/** One sheet of a multi-sheet report: written exactly as a report on its own. */
+export interface ReportSheet<T = any> {
+  name: string;
+  title: string;
+  columns: ReportColumn<T>[];
+  rows: T[];
+  meta?: ReportMeta;
+}
+
+/**
+ * Several report tables, one per sheet, in the order given. The Event Report
+ * uses it for its events on the first sheet and their Delivery Log on the
+ * second; with one sheet it is the same workbook buildReportWorkbook writes.
+ */
+export const buildMultiSheetWorkbook = async (sheets: ReportSheet[]): Promise<any> => {
+  const workbook = await newWorkbook();
+  for (const sheet of sheets) {
+    addReportSheet(workbook, sheet.name, sheet.title, sheet.columns, sheet.rows, sheet.meta ?? {});
+  }
+  return workbook;
+};
+
+/**
+ * A two-sheet workbook: a details sheet of label/value lines, then a report
+ * table on the second sheet. The Delivery Log export uses it - the event on
+ * the first sheet, its messages on the second - so the table is not pushed
+ * down by a block of event fields and keeps its own filter row.
+ */
+export interface DetailsAndTableWorkbook<T> {
+  detailsSheet: string;
+  detailsTitle: string;
+  details: Array<[string, string]>;
+  tableSheet: string;
+  tableTitle: string;
+  columns: ReportColumn<T>[];
+  rows: T[];
+  tableMeta?: ReportMeta;
+}
+
+export const buildDetailsAndTableWorkbook = async <T>(
+  options: DetailsAndTableWorkbook<T>
+): Promise<any> => {
+  const workbook = await newWorkbook();
+  const sheet = workbook.addWorksheet(sheetName(options.detailsSheet));
+  sheet.columns = [{ width: 24 }, { width: 70 }];
+
+  const titleRow = sheet.addRow([options.detailsTitle]);
+  titleRow.font = { bold: true, size: 14 };
+  titleRow.alignment = { horizontal: 'center' };
+  sheet.mergeCells(titleRow.number, 1, titleRow.number, 2);
+  sheet.addRow([]);
+
+  for (const [label, value] of options.details) {
+    const row = sheet.addRow([label, value]);
+    row.getCell(1).font = { bold: true };
+    row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
+    // A long venue or note wraps inside its cell instead of running off it.
+    row.getCell(2).alignment = { wrapText: true, vertical: 'top' };
+    row.eachCell({ includeEmpty: true }, (cell: any) => {
+      cell.border = ALL_BORDERS;
+    });
+  }
+
+  sheet.addRow([]);
+  const noteRow = sheet.addRow([REPORT_NOTE]);
+  noteRow.font = { italic: true };
+  sheet.addRow([REPORT_CREDIT]);
+
+  addReportSheet(
+    workbook,
+    options.tableSheet,
+    options.tableTitle,
+    options.columns,
+    options.rows,
+    options.tableMeta ?? {}
+  );
+  return workbook;
+};
+
+const saveWorkbook = async (workbook: any, fileName: string): Promise<void> => {
+  const buffer = await workbook.xlsx.writeBuffer();
+  saveBlob(
+    new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    }),
+    `${fileName}.xlsx`
+  );
+};
+
+export const exportDetailsAndTableToExcel = async <T>(
+  fileName: string,
+  options: DetailsAndTableWorkbook<T>
+): Promise<void> => {
+  await saveWorkbook(await buildDetailsAndTableWorkbook(options), fileName);
+};
+
+export const exportMultiSheetToExcel = async (fileName: string, sheets: ReportSheet[]): Promise<void> => {
+  await saveWorkbook(await buildMultiSheetWorkbook(sheets), fileName);
 };
 
 export const exportToExcel = async <T>(
@@ -162,14 +299,7 @@ export const exportToExcel = async <T>(
   rows: T[],
   meta: ReportMeta = {}
 ): Promise<void> => {
-  const workbook = await buildReportWorkbook(title, columns, rows, meta);
-  const buffer = await workbook.xlsx.writeBuffer();
-  saveBlob(
-    new Blob([buffer], {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    }),
-    `${fileName}.xlsx`
-  );
+  await saveWorkbook(await buildReportWorkbook(title, columns, rows, meta), fileName);
 };
 
 /**
@@ -194,8 +324,6 @@ export const buildReportPdf = async <T>(
   // Nine columns do not fit across a portrait page without squashing.
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
-  const margin = 12;
 
   // Title: centred, bold, underlined — as the report reads in Excel.
   doc.setFont('helvetica', 'bold');
@@ -208,25 +336,44 @@ export const buildReportPdf = async <T>(
 
   // The filters this report was generated from: bold label, plain value, in
   // two aligned columns the way the spreadsheet lays them out.
-  doc.setFontSize(10);
-  let y = 27;
-  for (const [label, value] of buildMetaRows(meta)) {
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(20);
-    doc.text(label, margin, y);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(60);
-    doc.text(String(value), margin + 34, y);
-    y += 6;
-  }
+  const y = drawPdfMetaRows(doc, meta, 27);
 
+  autoTable(doc, {
+    ...pdfTableOptions(doc, columns, rows),
+    startY: y + 4,
+    // Drawn per page so the notes are present however far the table runs.
+    didDrawPage: () => drawPdfFooter(doc),
+  });
+
+  return doc;
+};
+
+const PDF_MARGIN = 12;
+
+/** The two standing notes, at the foot of a page. */
+const drawPdfFooter = (doc: any) => {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const footerY = doc.internal.pageSize.getHeight() - 8;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(90);
+  doc.text(REPORT_NOTE, PDF_MARGIN, footerY);
+  doc.text(REPORT_CREDIT, pageWidth - PDF_MARGIN, footerY, { align: 'right' });
+};
+
+/**
+ * How every report table in a PDF is laid out, so a section appended to a
+ * report looks exactly like the report above it.
+ */
+const pdfTableOptions = <T>(doc: any, columns: ReportColumn<T>[], rows: T[]) => {
+  const margin = PDF_MARGIN;
   /**
    * Column widths, shared out across the page in the proportions each report
    * already declares for Excel. Without this every column gets an equal slice,
    * which wraps "02 Oct 2026" onto two lines while a one-word Status column
    * sits half empty.
    */
-  const usable = pageWidth - margin * 2;
+  const usable = doc.internal.pageSize.getWidth() - margin * 2;
   const declared = columns.map((column) => column.width ?? 20);
   const totalDeclared = declared.reduce((sum, width) => sum + width, 0);
   const columnStyles: Record<number, any> = {};
@@ -234,8 +381,7 @@ export const buildReportPdf = async <T>(
     columnStyles[index] = { cellWidth: (width / totalDeclared) * usable };
   });
 
-  autoTable(doc, {
-    startY: y + 4,
+  return {
     head: [columns.map((column) => column.header)],
     body: rows.map((row) => columns.map((column) => String(column.value(row)))),
     columnStyles,
@@ -264,17 +410,104 @@ export const buildReportPdf = async <T>(
     rowPageBreak: 'avoid',
     margin: { left: margin, right: margin, bottom: 18 },
     tableWidth: 'auto',
-    didDrawPage: () => {
-      // Drawn per page so the notes are present however far the table runs.
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      doc.setTextColor(90);
-      const footerY = pageHeight - 8;
-      doc.text(REPORT_NOTE, margin, footerY);
-      doc.text(REPORT_CREDIT, pageWidth - margin, footerY, { align: 'right' });
-    },
-  });
+  };
+};
 
+/** The scope lines under a PDF title: bold label, plain value, wrapped. Returns the next y. */
+const drawPdfMetaRows = (doc: any, meta: ReportMeta, startY: number): number => {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  doc.setFontSize(10);
+  let y = startY;
+  for (const [label, value] of buildMetaRows(meta)) {
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(20);
+    doc.text(label, PDF_MARGIN, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(60);
+    // Wrapped rather than run off the page: an event's venue or a note can be
+    // longer than the space beside its label, and none of it may be lost.
+    const lines: string[] = doc.splitTextToSize(String(value), pageWidth - PDF_MARGIN * 2 - 34);
+    doc.text(lines, PDF_MARGIN + 34, y);
+    y += 6 + Math.max(0, lines.length - 1) * 4.5;
+  }
+  return y;
+};
+
+/** One titled table of a grouped PDF section; `empty` is said when it has no rows. */
+export interface PdfGroup<T> {
+  heading: string;
+  rows: T[];
+  empty: string;
+}
+
+/**
+ * Appends a section to a PDF that already holds a report: it starts on a new
+ * page with its own title and scope lines, then one headed table per group -
+ * the Event Report's Delivery Log, one table per event. A group with no rows
+ * says so in a line instead of printing an empty table.
+ *
+ * The tables wrap and run onto as many pages as they need, exactly like the
+ * report's own; the standing notes are written once on every page the
+ * section adds.
+ */
+export const appendGroupedPdfSection = async <T>(
+  doc: any,
+  title: string,
+  columns: ReportColumn<T>[],
+  groups: PdfGroup<T>[],
+  meta: ReportMeta = {}
+): Promise<any> => {
+  const autotable: any = await import('jspdf-autotable');
+  const autoTable = autotable.default ?? autotable.autoTable ?? autotable;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const bottom = doc.internal.pageSize.getHeight() - 18;
+  const margin = PDF_MARGIN;
+
+  doc.addPage();
+  const firstPage = doc.getNumberOfPages();
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(20);
+  doc.text(title, pageWidth / 2, 16, { align: 'center' });
+  const titleWidth = doc.getTextWidth(title);
+  doc.setLineWidth(0.4);
+  doc.line((pageWidth - titleWidth) / 2, 18, (pageWidth + titleWidth) / 2, 18);
+
+  let y = drawPdfMetaRows(doc, meta, 27) + 4;
+
+  for (const group of groups) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(20);
+    const headingLines: string[] = doc.splitTextToSize(group.heading, pageWidth - margin * 2);
+    // A heading is never left alone at the foot of a page: it moves to the
+    // next one with room for at least the table's header and a row under it.
+    if (y + headingLines.length * 5 + 22 > bottom) {
+      doc.addPage();
+      y = 16;
+    }
+    doc.text(headingLines, margin, y);
+    y += headingLines.length * 5;
+
+    if (group.rows.length === 0) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(10);
+      doc.setTextColor(90);
+      doc.text(group.empty, margin, y + 1);
+      y += 12;
+      continue;
+    }
+
+    autoTable(doc, { ...pdfTableOptions(doc, columns, group.rows), startY: y });
+    y = doc.lastAutoTable.finalY + 10;
+  }
+
+  // Every page this section added gets the notes once: none of them had them.
+  for (let page = firstPage; page <= doc.getNumberOfPages(); page++) {
+    doc.setPage(page);
+    drawPdfFooter(doc);
+  }
   return doc;
 };
 

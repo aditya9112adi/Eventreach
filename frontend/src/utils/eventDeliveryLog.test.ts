@@ -1,5 +1,5 @@
 /**
- * The Delivery Log under the Event Report.
+ * The Delivery Log, reached from the Event Report's View button.
  *
  * The status and label rules are exercised directly. The React wiring cannot
  * be rendered here - this repo has no DOM test runner - so it is asserted from
@@ -98,72 +98,117 @@ test('the Event Report keeps its columns', async (t) => {
     }
   });
 
-  await t.test('the exports are still the event table alone', () => {
+  // The exports now carry the Delivery Log of the report's events (see
+  // eventReportExport.test.ts) - after the event table, never in place of it.
+  await t.test('the exports still lead with the event table, its columns unchanged', () => {
     const exportBlock = between(reports, 'const runExport', 'const statusVariant');
     assert.ok(exportBlock.includes('definition.columns'), 'the report definition supplies the columns');
-    assert.ok(!exportBlock.includes('EventDeliveryLog') && !exportBlock.includes('delivery-log'),
-      'the export does not pull delivery data in');
+    assert.equal(exportBlock.includes('EventDeliveryLog'), false, 'no log component is involved');
+    assert.equal(exportBlock.includes('/reports/event/'), false, 'never the per-event endpoint, one request per event');
   });
 });
 
-test('the log is fetched only once a report exists', async (t) => {
-  const section = between(reports, 'Delivery Log: the WhatsApp recipients', '</>\n      )}');
+test('the Event Report page shows no Delivery Log', async (t) => {
+  // Everything that renders when no event has been opened with View.
+  const tablePage = between(reports, "{activeReport === 'event' && selectedEventId ? (", 'export default Reports');
+  const listBranch = tablePage.slice(tablePage.indexOf('      ) : (\n        <div className="glass-panel rounded-2xl p-6'));
 
-  await t.test('it is shown only for the Event Report', () => {
-    assert.ok(section.includes("activeReport === 'event'"));
+  await t.test('the event table renders with no log beside or below it', () => {
+    assert.ok(listBranch.length > 0, 'the table branch is found');
+    assert.equal(listBranch.includes('EventDeliveryLog'), false, 'no event log under the table');
+    assert.equal(listBranch.includes('DeliveryLogTable'), false, 'no log table under it either');
   });
 
-  await t.test('and only after a report has been generated', () => {
-    assert.ok(section.includes('hasResults'), 'no generated report, no log');
-    assert.ok(section.includes('filteredRows.length > 0'), 'and there is something to belong to');
+  await t.test('the under-table section and its one-event rule are gone', () => {
+    assert.equal(reports.includes('deliveryLogEventId'), false);
+    assert.equal(reports.includes('shows one event at a time'), false);
   });
 
-  await t.test('Reports itself never calls the delivery-log endpoint', () => {
-    // Only the component, mounted under those conditions, does.
-    assert.equal(reports.includes('delivery-log'), false, 'opening Reports cannot fetch it');
-    assert.equal(reports.includes('api.get(`/reports/event'), false);
+  await t.test('Reports fetches no log on its own - only the export button reads one', () => {
+    // The View page's component reads one event's log; Reports itself reads
+    // the batch endpoint only inside the export handler, when clicked.
+    assert.equal(reports.includes('api.get(`/reports/event'), false, 'opening Reports cannot fetch it');
+    const exportBlock = between(reports, 'const runExport', 'const statusVariant');
+    const everywhere = (reports.match(/delivery-log/g) || []).length;
+    const inExport = (exportBlock.match(/delivery-log/g) || []).length;
+    assert.equal(everywhere, inExport, 'every delivery-log request in Reports is in the export handler');
   });
 
-  await t.test('the drill-down and the log are never both showing', () => {
-    assert.ok(section.includes('!selectedEventId'), 'the full campaign report keeps its own log');
+  await t.test('a generated report starts no log request of its own', () => {
+    const run = between(reports, 'const runSearch', 'useEffect(() => {\n    if (!selectedEventId)');
+    assert.equal(run.includes('EventDeliveryLog') || run.includes('delivery-log'), false);
   });
 
-  await t.test('Clear and a tab switch both discard the report, which unmounts the log', () => {
+  await t.test('Clear and a tab switch both close any opened event', () => {
     const clear = between(reports, 'const clearFilters', 'const activeOption');
     const switchStart = reports.indexOf('const switchReport');
     const switching = reports.slice(switchStart, reports.indexOf('\n  };', switchStart));
-    assert.ok(clear.includes("dispatch({ type: 'reset'"), 'Clear resets the run');
-    assert.ok(switching.includes("dispatch({ type: 'reset'"), 'switching resets the run');
-    assert.ok(!switching.includes('EventDeliveryLog') && !switching.includes('delivery-log'),
-      'and switching starts no log request of its own');
-  });
-
-  await t.test('the Access and Contact reports never show it', () => {
-    // The Event Report condition is what the whole section is gated by, and
-    // it comes before anything is rendered.
-    assert.ok(section.indexOf("activeReport === 'event'") < section.indexOf('<EventDeliveryLog'));
-    assert.equal((section.match(/activeReport === /g) || []).length, 1, 'no other report is named');
+    assert.ok(clear.includes("setSelectedEventId('')"), 'Clear leaves the View page');
+    assert.ok(switching.includes("setSelectedEventId('')"), 'so does switching report');
   });
 });
 
-test('the log belongs to exactly one event', async (t) => {
-  const derive = between(reports, 'const deliveryLogEventId', 'const statusVariant');
+test('View opens the event, and the Delivery Log lives there', async (t) => {
+  const drill = between(reports, "{activeReport === 'event' && selectedEventId ? (", '      ) : (\n        <div className="glass-panel rounded-2xl p-6');
 
-  await t.test('it needs a report that has narrowed to a single event', () => {
-    assert.ok(derive.includes('filteredRows.length === 1'));
-    assert.ok(derive.includes('_id'), 'the id comes from the event row itself');
+  await t.test('the existing View button still opens the event', () => {
+    assert.ok(reports.includes('onClick={() => setSelectedEventId(row._id)}'));
+    assert.ok(reports.includes("activeReport === 'event' && selectedEventId ?"), 'the View page replaces the table');
   });
 
-  await t.test('with several events it says so rather than choosing one', () => {
-    assert.ok(reports.includes('shows one event at a time'));
+  await t.test('an event with a sent campaign opens the existing campaign view', () => {
+    assert.ok(drill.includes('<CampaignReportContent'), 'the campaign details page, unchanged');
+    assert.ok(campaignPage.includes('<DeliveryLogTable'), 'which carries the Delivery Log');
   });
 
-  await t.test('the component is keyed by event, so one event\'s rows never linger under another', () => {
-    assert.ok(reports.includes('key={deliveryLogEventId}'));
+  await t.test('that view already includes the event\'s template sends, so they are not lost', () => {
+    assert.ok(campaignPage.includes('/reports/event/${eventId}/template-logs'));
   });
 
-  await t.test('the request is scoped to that event in its URL', () => {
-    assert.ok(container.includes('/reports/event/${eventId}/delivery-log'));
+  await t.test('an event with no sent campaign shows its Delivery Log instead of an empty panel', () => {
+    // Whitespace-insensitive: the View page may lay the props out over several lines.
+    const log = drill.replace(/\s+/g, ' ');
+    assert.ok(/<EventDeliveryLog key=\{selectedEventId\} eventId=\{String\(selectedEventId\)\}[^>]*\/>/.test(log));
+    assert.equal(drill.includes('No Reports Available'), false, 'View always leads to a Delivery Log');
+  });
+
+  await t.test('exactly one log per opened event: the two branches are exclusive', () => {
+    const campaignAt = drill.indexOf('<CampaignReportContent');
+    const elseAt = drill.indexOf(') : (', campaignAt);
+    const eventLogAt = drill.indexOf('<EventDeliveryLog');
+    assert.ok(drill.includes(') : campaignId ? ('), 'a campaign decides which one renders');
+    assert.ok(campaignAt < elseAt && elseAt < eventLogAt, 'the event log is only the else branch');
+    assert.equal((drill.match(/<EventDeliveryLog/g) || []).length, 1);
+    assert.equal((drill.match(/<CampaignReportContent/g) || []).length, 1);
+  });
+
+  await t.test('the opened event is the one the log is scoped to', () => {
+    assert.ok(drill.includes('eventId={String(selectedEventId)}'), 'the id View set, nothing else');
+    assert.ok(container.includes('/reports/event/${eventId}/delivery-log'), 'and the request is scoped by it');
+  });
+
+  await t.test('it is keyed by event, so one event\'s rows never linger under another', () => {
+    assert.ok(drill.includes('key={selectedEventId}'));
+  });
+
+  await t.test('the way back is kept', () => {
+    assert.ok(drill.includes('Back to All Events'));
+    assert.ok(drill.includes("onClick={() => setSelectedEventId('')}"));
+    assert.ok(drill.includes("onBack={() => setSelectedEventId('')}"), 'from the campaign view too');
+  });
+
+  await t.test('no branch is chosen until the campaign lookup has answered for this event', () => {
+    // Observed live before this guard: the first render after View had no
+    // campaign yet, mounted the event log, and fired a request it threw away.
+    assert.ok(drill.includes('loadingCampaign || campaignCheckedFor !== selectedEventId ?'));
+    const effect = between(reports, 'useEffect(() => {\n    if (!selectedEventId) {', '}, [selectedEventId]);');
+    assert.ok(effect.includes('setCampaignCheckedFor(selectedEventId)'), 'the lookup records whom it answered for');
+    assert.ok(effect.includes('if (cancelled) return;'), 'and a stale answer for another event is dropped');
+    assert.ok(effect.includes('cancelled = true;'), 'when the opened event changes');
+  });
+
+  await t.test('the opened event is named, from the complete events cache', () => {
+    assert.ok(drill.includes('eventNameById.get(String(selectedEventId))'));
   });
 });
 

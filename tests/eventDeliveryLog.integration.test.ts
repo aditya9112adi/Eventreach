@@ -640,3 +640,262 @@ describe('the Event Report\'s own data is untouched by the log', () => {
     assert.deepEqual(after.body, before.body);
   });
 });
+
+/**
+ * The export reads an event's whole log page by page, so the pages must fit
+ * together exactly: no message twice, none missed, and none from another event
+ * slipping in on a later page.
+ */
+describe('paging, as the View page export reads it', () => {
+  test('consecutive pages are disjoint and together are the whole log', async () => {
+    const event = await makeEvent('Paged');
+    const campaign = await Campaign.create({ eventId: event._id, messageText: 'Hi', status: 'Completed' });
+    for (let i = 0; i < 7; i++) {
+      const at = new Date(Date.UTC(2026, 9, 1, 10, i));
+      if (i % 2 === 0) await campaignRow(campaign, event, `C${i}`, { status: 'Sent', createdAt: at });
+      else await templateRow(event, `T${i}`, { status: 'Sent', createdAt: at });
+    }
+
+    const pages = [];
+    for (let page = 1; page <= 3; page++) {
+      pages.push((await log(event._id, `?page=${page}&limit=3`)).body);
+    }
+    const seen = pages.flatMap((p: any) => p.logs.map((l: any) => l.contactName));
+    assert.deepEqual(pages.map((p: any) => p.logs.length), [3, 3, 1]);
+    assert.equal(new Set(seen).size, 7, 'no message twice');
+    assert.deepEqual(seen.slice().sort(), ['C0', 'C2', 'C4', 'C6', 'T1', 'T3', 'T5']);
+    assert.equal(pages[0].pagination.total, 7, 'every page reports the same total');
+    assert.equal(pages[2].pagination.total, 7);
+  });
+
+  test('a page beyond the end is empty, which is where the export stops', async () => {
+    const event = await makeEvent('Short');
+    await templateRow(event, 'Only One');
+    const res = await log(event._id, '?page=5&limit=3');
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.logs, []);
+    assert.equal(res.body.pagination.total, 1);
+  });
+
+  test('a later page never reaches into another event', async () => {
+    const mine = await makeEvent('Mine Paged');
+    const theirs = await makeEvent('Theirs Paged');
+    for (let i = 0; i < 4; i++) await templateRow(mine, `Mine ${i}`);
+    for (let i = 0; i < 4; i++) await templateRow(theirs, `Theirs ${i}`);
+
+    const all = [];
+    for (let page = 1; page <= 3; page++) {
+      all.push(...(await log(mine._id, `?page=${page}&limit=2`)).body.logs);
+    }
+    assert.equal(all.length, 4);
+    assert.equal(all.some((l: any) => /Theirs/.test(l.contactName)), false);
+  });
+
+  test('the page size the export asks for is honoured, and anything larger is capped', async () => {
+    const event = await makeEvent('Capped');
+    await templateRow(event, 'Guest');
+    assert.equal((await log(event._id, '?limit=500')).body.pagination.limit, 500);
+    assert.equal((await log(event._id, '?limit=100000')).body.pagination.limit, 500, 'never unbounded');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('the Event Report\'s batch Delivery Log (POST /api/reports/events/delivery-log)', () => {
+  const batch = (eventIds: any[], extra: Record<string, any> = {}, token: string | undefined = superToken) =>
+    call('POST', '/api/reports/events/delivery-log', { body: { eventIds: eventIds.map(String), ...extra }, token });
+
+  const byEvent = (res: { body: any }) => {
+    const out: Record<string, string[]> = {};
+    for (const l of res.body.logs) (out[l.eventId] ??= []).push(l.contactName);
+    for (const k of Object.keys(out)) out[k].sort();
+    return out;
+  };
+
+  /** A: 2 messages (campaign + template), B: 3 (campaign + 2 template), C: 0. */
+  const seedABC = async () => {
+    const a = await makeEvent('Alpha');
+    const b = await makeEvent('Beta');
+    const c = await makeEvent('Gamma');
+    const ca = await Campaign.create({ eventId: a._id, messageText: 'Hi A', status: 'Completed' });
+    const cb = await Campaign.create({ eventId: b._id, messageText: 'Hi B', status: 'Completed' });
+    await campaignRow(ca, a, 'A Campaign', { status: 'Delivered', messageText: 'Hi A Campaign' });
+    await templateRow(a, 'A Template', { status: 'Sent' });
+    await campaignRow(cb, b, 'B Campaign', { status: 'Failed', errorReason: 'Re-engagement message' });
+    await templateRow(b, 'B Template 1', { status: 'Delivered', readAt: new Date() });
+    await templateRow(b, 'B Template 2', { status: 'Pending', templateName: 'event_image' });
+    return { a, b, c };
+  };
+
+  test('A, B and C in one request: 2 under A, 3 under B, none under C', async () => {
+    const { a, b, c } = await seedABC();
+    const res = await batch([a._id, b._id, c._id]);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.logs.length, 5);
+    assert.equal(res.body.pagination.total, 5);
+    assert.deepEqual(byEvent(res), {
+      [String(a._id)]: ['A Campaign', 'A Template'],
+      [String(b._id)]: ['B Campaign', 'B Template 1', 'B Template 2'],
+    });
+    assert.equal(res.body.logs.some((l: any) => l.eventId === String(c._id)), false);
+  });
+
+  test('every row is labelled with its event, campaign messages included', async () => {
+    const { a, b } = await seedABC();
+    const res = await batch([a._id, b._id]);
+    const campaignRows = res.body.logs.filter((l: any) => l.campaignId);
+    assert.equal(campaignRows.length, 2);
+    for (const row of res.body.logs) assert.ok([String(a._id), String(b._id)].includes(row.eventId));
+    assert.equal(res.body.logs.find((l: any) => l.contactName === 'A Campaign').eventId, String(a._id));
+    assert.equal(res.body.logs.find((l: any) => l.contactName === 'B Campaign').eventId, String(b._id));
+  });
+
+  test('campaign-only, template-only and mixed events each return their own kind', async () => {
+    const campaignOnly = await makeEvent('Campaign Only');
+    const templateOnly = await makeEvent('Template Only');
+    const mixed = await makeEvent('Mixed');
+    const c1 = await Campaign.create({ eventId: campaignOnly._id, messageText: 'Hi', status: 'Completed' });
+    const c3 = await Campaign.create({ eventId: mixed._id, messageText: 'Hi', status: 'Completed' });
+    await campaignRow(c1, campaignOnly, 'Camp Guest', { messageText: 'Personal text' });
+    await templateRow(templateOnly, 'Temp Guest');
+    await campaignRow(c3, mixed, 'Mixed Camp');
+    await templateRow(mixed, 'Mixed Temp');
+
+    const res = await batch([campaignOnly._id, templateOnly._id, mixed._id]);
+    assert.deepEqual(byEvent(res), {
+      [String(campaignOnly._id)]: ['Camp Guest'],
+      [String(templateOnly._id)]: ['Temp Guest'],
+      [String(mixed._id)]: ['Mixed Camp', 'Mixed Temp'],
+    });
+    const camp = res.body.logs.find((l: any) => l.contactName === 'Camp Guest');
+    assert.equal(camp.messageText, 'Personal text');
+    assert.equal(camp.contactId.fullName, 'Camp Guest', 'the contact is populated');
+    assert.equal(res.body.logs.find((l: any) => l.contactName === 'Temp Guest').templateName, 'event_document');
+  });
+
+  test('only the requested events are read - an unlisted event never appears', async () => {
+    const { a, b } = await seedABC();
+    const outside = await makeEvent('Outside');
+    const co = await Campaign.create({ eventId: outside._id, messageText: 'Hi', status: 'Completed' });
+    await campaignRow(co, outside, 'Outside Campaign');
+    await templateRow(outside, 'Outside Template');
+
+    const res = await batch([a._id, b._id]);
+    assert.equal(res.body.logs.length, 5);
+    assert.equal(JSON.stringify(res.body).includes('Outside'), false);
+  });
+
+  test('one event alone, and one event with no messages', async () => {
+    const { b, c } = await seedABC();
+    const one = await batch([b._id]);
+    assert.deepEqual(Object.keys(byEvent(one)), [String(b._id)]);
+    assert.equal(one.body.logs.length, 3);
+
+    const none = await batch([c._id]);
+    assert.equal(none.status, 200);
+    assert.deepEqual(none.body.logs, []);
+    assert.equal(none.body.pagination.total, 0);
+  });
+
+  test('pages are disjoint and together are the whole log, across events', async () => {
+    const { a, b, c } = await seedABC();
+    const seen: string[] = [];
+    for (let page = 1; page <= 3; page++) {
+      seen.push(...(await batch([a._id, b._id, c._id], { page, limit: 2 })).body.logs.map((l: any) => String(l._id)));
+    }
+    assert.equal(seen.length, 5);
+    assert.equal(new Set(seen).size, 5);
+  });
+
+  test('the page size is capped at 1000', async () => {
+    const { a } = await seedABC();
+    assert.equal((await batch([a._id], { limit: 1000 })).body.pagination.limit, 1000);
+    assert.equal((await batch([a._id], { limit: 100000 })).body.pagination.limit, 1000);
+  });
+
+  test('a bad request is refused: no ids, a malformed id, too many ids', async () => {
+    assert.equal((await call('POST', '/api/reports/events/delivery-log', { body: {}, token: superToken })).status, 400);
+    assert.equal((await batch([])).status, 400);
+    assert.equal((await batch(['not-an-id'])).status, 400);
+    const tooMany = Array.from({ length: 1001 }, () => new mongoose.Types.ObjectId());
+    assert.equal((await batch(tooMany)).status, 400);
+  });
+
+  test('no token is refused', async () => {
+    const { a } = await seedABC();
+    const res = await call('POST', '/api/reports/events/delivery-log', { body: { eventIds: [String(a._id)] } });
+    assert.equal(res.status, 401);
+    assert.equal(JSON.stringify(res.body ?? {}).includes('A Campaign'), false);
+  });
+
+  test('an Admin gets the log of their own events, and is refused if any event is not theirs', async () => {
+    const admin = await Admin.create({
+      name: 'Batch Owner', email: 'batch-owner@example.com',
+      passwordHash: await bcrypt.hash('TestPass123', 10),
+      role: 'Admin', status: 'Active', accessGrantedOn: new Date(),
+    });
+    const token = tokenFor(admin, 'Admin');
+    const owned1 = await makeEvent('Owned 1', { createdBy: admin._id });
+    const owned2 = await makeEvent('Owned 2', { createdBy: admin._id });
+    const foreign = await makeEvent('Foreign');
+    await templateRow(owned1, 'Owned Guest 1');
+    await templateRow(owned2, 'Owned Guest 2');
+    await templateRow(foreign, 'Foreign Secret');
+
+    const ok = await batch([owned1._id, owned2._id], {}, token);
+    assert.equal(ok.status, 200);
+    assert.deepEqual(ok.body.logs.map((l: any) => l.contactName).sort(), ['Owned Guest 1', 'Owned Guest 2']);
+
+    const refused = await batch([owned1._id, foreign._id], {}, token);
+    assert.equal(refused.status, 403, 'refused whole, never quietly trimmed');
+    assert.equal(JSON.stringify(refused.body).includes('Owned Guest'), false);
+    assert.equal(JSON.stringify(refused.body).includes('Foreign Secret'), false);
+  });
+
+  test('no N+1: twelve events with many messages cost exactly as many queries as two', async () => {
+    const HOUSEKEEPING = new Set(['createIndex', 'createIndexes', 'ensureIndex', 'dropIndex', 'listIndexes', 'indexes']);
+    const opsFor = async (eventIds: any[]) => {
+      const ops: string[] = [];
+      mongoose.set('debug', (collection: string, method: string) => {
+        if (!HOUSEKEEPING.has(method)) ops.push(`${collection}.${method}`);
+      });
+      try {
+        const res = await batch(eventIds);
+        assert.equal(res.status, 200);
+        return { ops, rows: res.body.logs.length };
+      } finally {
+        mongoose.set('debug', false);
+      }
+    };
+    const seedEvents = async (count: number, perEvent: number) => {
+      const events = [];
+      for (let i = 0; i < count; i++) {
+        const event = await makeEvent(`Cost ${count}-${i}`);
+        const campaign = await Campaign.create({ eventId: event._id, messageText: 'Hi', status: 'Completed' });
+        for (let j = 0; j < perEvent; j++) {
+          if (j % 2 === 0) await campaignRow(campaign, event, `C${count}-${i}-${j}`);
+          else await templateRow(event, `T${count}-${i}-${j}`);
+        }
+        events.push(event._id);
+      }
+      return events;
+    };
+
+    const two = await opsFor(await seedEvents(2, 2));
+    const twelve = await opsFor(await seedEvents(12, 4));
+    assert.equal(two.rows, 4);
+    assert.equal(twelve.rows, 48);
+    assert.equal(twelve.ops.length, two.ops.length,
+      `queries must not grow with events or messages (2 events: ${two.ops.join(', ')} | 12 events: ${twelve.ops.join(', ')})`);
+    assert.ok(twelve.ops.length <= 5, `a handful of queries, got ${twelve.ops.length}: ${twelve.ops.join(', ')}`);
+  });
+
+  test('the per-event endpoint the View page uses is unchanged', async () => {
+    const { a, b } = await seedABC();
+    const view = await log(a._id);
+    assert.deepEqual(names(view), ['A Campaign', 'A Template']);
+    assert.equal(JSON.stringify(view.body).includes('B Campaign'), false);
+    const other = await log(b._id);
+    assert.deepEqual(names(other), ['B Campaign', 'B Template 1', 'B Template 2']);
+  });
+});

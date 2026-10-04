@@ -24,7 +24,18 @@ const PAGE_LIMIT = 200;
  * together (GET /reports/event/:eventId/delivery-log), so the cost does not
  * grow with the number of recipients.
  */
-export const EventDeliveryLog = ({ eventId }: { eventId: string }) => {
+export const EventDeliveryLog = ({
+  eventId,
+  onAllTotal,
+}: {
+  eventId: string;
+  /**
+   * Told how many messages the event has in all, each time the unfiltered log
+   * loads. Lets the View page enable its downloads without asking the server a
+   * second time. Changes nothing on screen.
+   */
+  onAllTotal?: (total: number) => void;
+}) => {
   const [logs, setLogs] = useState<DeliveryLogRow[]>([]);
   const [total, setTotal] = useState(0);
   const [campaignId, setCampaignId] = useState<string | null>(null);
@@ -36,6 +47,9 @@ export const EventDeliveryLog = ({ eventId }: { eventId: string }) => {
   // Only the newest request may write to the screen. A slow answer for an
   // earlier filter must not land on top of a faster one for the current one.
   const latestRequest = useRef(0);
+  // Held in a ref so a new callback from the parent does not refetch the log.
+  const onAllTotalRef = useRef(onAllTotal);
+  onAllTotalRef.current = onAllTotal;
 
   const load = useCallback(
     async (silent = false) => {
@@ -51,6 +65,9 @@ export const EventDeliveryLog = ({ eventId }: { eventId: string }) => {
         if (latestRequest.current !== requestId) return;
         setLogs(res.data?.logs ?? []);
         setTotal(res.data?.pagination?.total ?? 0);
+        // Only the unfiltered count says whether the event has messages at all;
+        // "no Read messages" is not "no messages".
+        if (statusFilter === 'All') onAllTotalRef.current?.(res.data?.pagination?.total ?? 0);
         setCampaignId(res.data?.campaignId ?? null);
         setError(null);
       } catch (err: any) {

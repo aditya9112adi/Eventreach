@@ -11,6 +11,7 @@ import { PaginationControls } from '../components/ui/PaginationControls';
 import { EventSearch } from '../components/ui/EventSearch';
 import { ReportFilterBar, type ReportFilterOption } from '../components/ui/ReportFilterBar';
 import { EventDeliveryLog } from '../components/ui/EventDeliveryLog';
+import { EventDeliveryExport } from '../components/ui/EventDeliveryExport';
 import { formatDate, formatDateTime } from '../utils/datetime';
 import { getAccessStatus } from '../utils/accessStatus';
 import { formatEventType } from '../utils/eventType';
@@ -33,6 +34,11 @@ import {
   exportToPdf,
   type ReportColumn,
 } from '../utils/reportExport';
+import {
+  exportEventReportExcel,
+  exportEventReportPdf,
+  fetchReportDeliveryRows,
+} from '../utils/eventReportExport';
 
 interface ReportDefinition {
   key: ReportKey;
@@ -160,6 +166,16 @@ const Reports = () => {
   const [selectedEventId, setSelectedEventId] = useState<string>('');
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [loadingCampaign, setLoadingCampaign] = useState(false);
+  /**
+   * The event the campaign lookup last finished for. View's two branches - the
+   * campaign view, or the event's own Delivery Log - can only be chosen once
+   * the lookup for the opened event has answered; before that the page shows
+   * its spinner. Without this, the first render after View had no campaign yet
+   * and briefly mounted the event log, firing a request it then threw away.
+   */
+  const [campaignCheckedFor, setCampaignCheckedFor] = useState<string>('');
+  /** How many messages the opened event has in all; null until its log loads. */
+  const [viewedEventMessages, setViewedEventMessages] = useState<number | null>(null);
 
   // The generated report for the tab on screen: nothing, loading, loaded or
   // failed, plus the filters it was generated with. See utils/reportSearch.ts.
@@ -335,12 +351,18 @@ const Reports = () => {
   useEffect(() => {
     if (!selectedEventId) {
       setCampaignId(null);
+      setCampaignCheckedFor('');
       return;
     }
 
+    // Opening another event before this answers must not let this answer
+    // decide which view - and so whose Delivery Log - the new event shows.
+    let cancelled = false;
+    setViewedEventMessages(null);
     setLoadingCampaign(true);
     api.get(`/campaigns/event/${selectedEventId}`)
       .then(res => {
+        if (cancelled) return;
         // Returns campaign or empty draft.
         // We only show report if it actually exists and has an _id (meaning it was saved/sent)
         if (res.data && res.data._id && res.data.status !== 'Draft') {
@@ -350,12 +372,18 @@ const Reports = () => {
         }
       })
       .catch(err => {
+        if (cancelled) return;
         console.error('Failed to fetch campaign for event', err);
         setCampaignId(null);
       })
       .finally(() => {
+        if (cancelled) return;
         setLoadingCampaign(false);
+        setCampaignCheckedFor(selectedEventId);
       });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedEventId]);
 
   const eventNameById = useMemo(() => {
@@ -518,7 +546,25 @@ const Reports = () => {
           startDate: exportFilters.startDate,
           endDate: exportFilters.endDate,
         };
-        if (kind === 'excel') {
+        if (activeReport === 'event') {
+          /**
+           * The Event Report carries the WhatsApp Delivery Log of every event
+           * it lists. The events are filteredRows - the very rows the table
+           * shows after the search and dates - so the log covers those and
+           * nothing else, and all their ids go in one batch request rather
+           * than one per event. A failure here fails the download: a report
+           * missing part of its log must not look complete.
+           */
+          const deliveryRows = await fetchReportDeliveryRows(
+            filteredRows.map((row: any) => String(row._id)),
+            async (eventIds, page, limit) => {
+              const res = await api.post('/reports/events/delivery-log', { eventIds, page, limit });
+              return { logs: res.data?.logs ?? [], total: res.data?.pagination?.total ?? 0 };
+            }
+          );
+          const write = kind === 'excel' ? exportEventReportExcel : exportEventReportPdf;
+          await write(name, definition.label, definition.columns, filteredRows, deliveryRows, meta);
+        } else if (kind === 'excel') {
           await exportToExcel(name, definition.label, definition.columns, filteredRows, meta);
         } else {
           await exportToPdf(name, definition.label, definition.columns, filteredRows, meta);
@@ -531,25 +577,23 @@ const Reports = () => {
         setIsExporting(false);
       }
     },
-    [filteredRows, definition, reportOption.key, exportFilters, showToast]
+    [filteredRows, definition, activeReport, reportOption.key, exportFilters, showToast]
   );
 
   /**
-   * The event the Delivery Log belongs to.
-   *
-   * A Delivery Log is one event's recipients, so it needs exactly one event:
-   * the report must have been generated and have narrowed to a single row. With
-   * several events in the result there is no single log to show - the section
-   * says so instead of choosing one, and an event can still be opened in full
-   * from Select Event Name.
-   *
-   * Derived from the rows the table is already showing, so it adds no request
-   * of its own: the log fetches only once this has a value.
+   * The event View has opened, for its downloads: found in this report's own
+   * rows first and the complete events cache second, and described by the same
+   * columns the Event Report table uses - so the document words the event
+   * exactly as the table does.
    */
-  const deliveryLogEventId: string | null =
-    activeReport === 'event' && hasResults && filteredRows.length === 1
-      ? String((filteredRows[0] as any)?._id ?? '') || null
-      : null;
+  const viewedEvent: any = selectedEventId
+    ? [...(activeReport === 'event' ? run.rows : []), ...events].find(
+        (evt: any) => String(evt?._id) === String(selectedEventId)
+      ) ?? null
+    : null;
+  const viewedEventDetails: Array<[string, string]> = viewedEvent
+    ? REPORTS.event.columns.map((column) => [column.header, String(column.value(viewedEvent))] as [string, string])
+    : [['Event', eventNameById.get(String(selectedEventId)) || String(selectedEventId)]];
 
   const statusVariant = (status: string) => {
     switch (status) {
@@ -671,7 +715,7 @@ const Reports = () => {
 
       {/* Event Report keeps its original campaign drill-down. */}
       {activeReport === 'event' && selectedEventId ? (
-        loadingCampaign ? (
+        loadingCampaign || campaignCheckedFor !== selectedEventId ? (
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
           </div>
@@ -686,16 +730,41 @@ const Reports = () => {
             />
           </div>
         ) : (
-          <div className="glass-panel p-16 flex flex-col items-center justify-center text-center rounded-2xl border border-dashed border-border/50 animate-fade-in">
-            <FileText className="w-16 h-16 text-foreground/20 mb-4" />
-            <h3 className="text-xl font-bold text-foreground/70 mb-2">No Reports Available</h3>
-            <p className="text-foreground/50">There are no sent or completed campaigns for this event yet.</p>
-            <button
-              onClick={() => setSelectedEventId('')}
-              className="mt-6 text-accent hover:text-accent/80 font-medium text-sm transition-colors"
-            >
-              ← Back to All Events
-            </button>
+          /*
+            No sent campaign: the campaign view above has nothing to show, but the
+            event can still have recipients - proactive template sends belong to
+            the event, not to a campaign. View shows their Delivery Log here so
+            every event's messages are reachable from View. The campaign view's
+            own Delivery Log already includes these rows, so an event only ever
+            gets one log.
+          */
+          <div className="space-y-4 animate-fade-up">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <h3 className="text-lg font-sans font-bold text-foreground uppercase tracking-wider truncate">
+                {eventNameById.get(String(selectedEventId)) || 'Event'}
+              </h3>
+              <div className="flex flex-wrap items-center gap-3 shrink-0">
+                {/* Beside the heading, not inside the log, so the log is unchanged. */}
+                <EventDeliveryExport
+                  key={selectedEventId}
+                  eventId={String(selectedEventId)}
+                  eventCode={String(viewedEvent?.eventId || '')}
+                  eventDetails={viewedEventDetails}
+                  hasMessages={viewedEventMessages === null ? null : viewedEventMessages > 0}
+                />
+                <button
+                  onClick={() => setSelectedEventId('')}
+                  className="text-accent hover:text-accent/80 font-medium text-sm transition-colors"
+                >
+                  ← Back to All Events
+                </button>
+              </div>
+            </div>
+            <EventDeliveryLog
+              key={selectedEventId}
+              eventId={String(selectedEventId)}
+              onAllTotal={setViewedEventMessages}
+            />
           </div>
         )
       ) : (
@@ -793,25 +862,6 @@ const Reports = () => {
         </div>
       )}
 
-      {/*
-        Delivery Log: the WhatsApp recipients of the event being reported.
-        Below the event table rather than as columns of it, so the Event Report
-        keeps its nine columns. Mounted only after a report exists, and only for
-        the Event Report, so nothing is fetched on opening Reports, on switching
-        tabs, or after Clear.
-      */}
-      {activeReport === 'event' && !selectedEventId && hasResults && filteredRows.length > 0 && (
-        deliveryLogEventId ? (
-          <div className="mt-6 animate-fade-up">
-            <EventDeliveryLog key={deliveryLogEventId} eventId={deliveryLogEventId} />
-          </div>
-        ) : (
-          <p className="mt-6 text-sm text-foreground/50 text-center">
-            The Delivery Log shows one event at a time. Narrow the report to a single event,
-            or choose one under Select Event Name.
-          </p>
-        )
-      )}
       </>
       )}
     </div>
