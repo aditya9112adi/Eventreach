@@ -49,7 +49,29 @@ export interface ReportRowAccessors {
   status: (row: any) => string;
   /** Date the date-range filter uses. */
   date: (row: any) => string | undefined;
+  /**
+   * How the "Status" filter matches, for a report whose statuses contain one
+   * another. Left out, it is the plain "contains" match every report has
+   * always used.
+   */
+  statusMatches?: (status: string, needle: string) => boolean;
 }
+
+/**
+ * A status matched from the start of a word - the whole status or any word in
+ * it - case-insensitively.
+ *
+ * For the Contact Report, whose statuses are Valid, Invalid and Duplicate:
+ * a "contains" match let "valid" match "Invalid" as well, so a search for
+ * Valid contacts returned the invalid ones too. Typing the start of a status
+ * still works ("inv", "dup").
+ */
+export const matchesStatusWord = (status: string, needle: string): boolean => {
+  const value = status.toLowerCase();
+  const wanted = needle.trim().toLowerCase();
+  if (!wanted) return true;
+  return value.startsWith(wanted) || value.split(/[^a-z0-9]+/).some((word) => word.startsWith(wanted));
+};
 
 /**
  * Start of day / end of day so a range is inclusive of both endpoints.
@@ -92,6 +114,9 @@ export const filterReportRows = <T>(
     if (!withinRange(accessors.date(row), filters.startDate, filters.endDate)) return false;
     if (isDateMode) return true;
     if (!needle) return true;
+    if (filters.mode === 'Status' && accessors.statusMatches) {
+      return accessors.statusMatches(accessors.status(row), needle);
+    }
     const haystack = filters.mode === 'Status' ? accessors.status(row) : accessors.text(row);
     return haystack.toLowerCase().includes(needle);
   });

@@ -19,6 +19,7 @@ import { formatEventType } from '../utils/eventType';
 import { getPaginatedData, getSerialNumber } from '../utils/pagination';
 import {
   filterReportRows,
+  matchesStatusWord,
   validateReportDateRange,
   filtersDiffer,
   hasResultsFor,
@@ -63,6 +64,8 @@ interface ReportDefinition {
   text: (row: any) => string;
   /** Status the "Status" filter matches and the table shows. */
   status: (row: any) => string;
+  /** How that status is matched, where plain "contains" is ambiguous. */
+  statusMatches?: (status: string, needle: string) => boolean;
   /** Date the "Date" range filters on. */
   date: (row: any) => string | undefined;
   columns: ReportColumn<any>[];
@@ -149,6 +152,9 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     ],
     text: (row) => `${value(row.fullName)} ${value(row.phoneNumber)} ${value(row.email)}`,
     status: (row) => value(row.status, '-'),
+    // "Valid" is part of "Invalid": the status is matched from the start of a
+    // word, so a search for Valid contacts does not return the invalid ones.
+    statusMatches: matchesStatusWord,
     date: (row) => row.createdAt,
     eventIds: contactRecordEventIds,
     countLabel: 'Contacts',
