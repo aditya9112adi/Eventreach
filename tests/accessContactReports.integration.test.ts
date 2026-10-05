@@ -320,3 +320,145 @@ describe('the cost of a scoped report', () => {
     assert.ok(large.contacts.ops.length <= 3, `contact queries: ${large.contacts.ops.join(', ')}`);
   });
 });
+
+describe('Access Report one row per event: accessEventIds', () => {
+  const holdersOf = (res: { body: any }, eventId: any) =>
+    res.body.filter((r: any) => (r.accessEventIds || []).includes(String(eventId))).map((r: any) => r.name).sort();
+
+  test('every record says which events it reaches', async () => {
+    const res = await access(RANGE);
+    assert.equal(res.status, 200);
+    assert.ok(res.body.every((r: any) => Array.isArray(r.accessEventIds)));
+    const by = (name: string) => res.body.find((r: any) => r.name === name).accessEventIds;
+    assert.deepEqual(by('Rahul A1'), [String(fx.A._id)], 'assignedEventId');
+    assert.deepEqual(by('Listed A4'), [String(fx.A._id)], 'on the event\'s own user list');
+    assert.deepEqual(by('Bina B1'), [String(fx.B._id)]);
+    assert.ok(by('Admin X').includes(String(fx.A._id)), 'the event\'s Admin');
+    assert.equal(by('Admin X').includes(String(fx.B._id)), false);
+    assert.ok(by('Admin Y').includes(String(fx.B._id)));
+  });
+
+  test('the rows agree exactly with each event\'s own View endpoint', async () => {
+    // Two events with no adminId, reached by Admin Y only through Users they
+    // manage: one by assignedEventId, one by the event's own user list.
+    const G = await mkEvent('Guest Lecture', { createdBy: fx.superAdmin._id });
+    const H = await mkEvent('Hackathon', { createdBy: fx.superAdmin._id });
+    await mkUser('Gita G1', { adminId: fx.adminY._id, assignedEventId: G._id, accessGrantedOn: at('2026-10-06') });
+    const listed = await mkUser('Hari H1', { adminId: fx.adminY._id, accessGrantedOn: at('2026-10-06') });
+    await Event.updateOne({ _id: H._id }, { $set: { assignedUserIds: [listed._id] } });
+
+    const all = await access(RANGE);
+    assert.deepEqual(holdersOf(all, G._id), ['Admin Y', 'Gita G1'], 'Admin Y through an assigned User');
+    assert.deepEqual(holdersOf(all, H._id), ['Admin Y', 'Hari H1'], 'Admin Y through a listed User');
+    for (const event of [fx.A, fx.B, fx.C, G, H]) {
+      const scoped = await access(`${RANGE}&eventId=${event._id}`);
+      assert.deepEqual(holdersOf(all, event._id), names(scoped), `event ${event.eventName}`);
+    }
+  });
+
+  test('with dates, the events follow the records the dates kept', async () => {
+    const res = await access('startDate=2026-10-01&endDate=2026-10-02');
+    assert.deepEqual(holdersOf(res, fx.A._id), ['Admin X', 'Priya A2', 'Rahul A1']);
+    assert.deepEqual(holdersOf(res, fx.B._id), ['Bina B1'], 'Admin Y was granted on 3 Oct');
+  });
+
+  test('a report for one event lists that event alone on every record', async () => {
+    const res = await access(`${RANGE}&eventId=${fx.A._id}`);
+    assert.ok(res.body.length > 0);
+    assert.ok(res.body.every((r: any) => r.accessEventIds.length === 1 && r.accessEventIds[0] === String(fx.A._id)));
+  });
+
+  test('an Admin is only offered events they may open', async () => {
+    // A User managed by Admin X created an event of their own: the User reaches
+    // it, but it is not within Admin X's scope, so X's report must not offer it.
+    const creator = await mkUser('Creator F', { adminId: fx.adminX._id, accessGrantedOn: at('2026-10-07') });
+    const F = await mkEvent('Fringe Event', { createdBy: creator._id });
+
+    const asSuper = (await access(RANGE)).body.find((r: any) => r.name === 'Creator F');
+    assert.deepEqual(asSuper.accessEventIds, [String(F._id)], 'a Super Admin sees the User reaches F');
+
+    const asX = await access(RANGE, fx.xToken);
+    const row = asX.body.find((r: any) => r.name === 'Creator F');
+    assert.deepEqual(row.accessEventIds, [], 'Admin X is not offered F');
+    assert.equal((await access(`${RANGE}&eventId=${F._id}`, fx.xToken)).status, 403, 'and could not open it');
+    for (const r of asX.body) {
+      for (const id of r.accessEventIds) {
+        assert.equal((await access(`${RANGE}&eventId=${id}`, fx.xToken)).status, 200, `every offered event opens (${id})`);
+      }
+    }
+  });
+
+  test('no N+1: grouping 40 more records across 10 more events costs the same queries', async () => {
+    const HOUSEKEEPING = new Set(['createIndex', 'createIndexes', 'ensureIndex', 'dropIndex', 'listIndexes', 'indexes']);
+    const opsFor = async () => {
+      const ops: string[] = [];
+      mongoose.set('debug', (collection: string, method: string) => {
+        if (!HOUSEKEEPING.has(method)) ops.push(`${collection}.${method}`);
+      });
+      try {
+        const res = await access(RANGE);
+        assert.equal(res.status, 200);
+        return { ops, rows: res.body.length };
+      } finally {
+        mongoose.set('debug', false);
+      }
+    };
+    const before = await opsFor();
+    for (let e = 0; e < 10; e++) {
+      const admin = await mkAdmin(`Grouping Admin ${e}`, 'Admin', '2026-10-08');
+      const event = await mkEvent(`Grouping Event ${e}`, { adminId: admin._id });
+      for (let u = 0; u < 3; u++) {
+        await mkUser(`Grouping User ${e}-${u}`, { adminId: admin._id, assignedEventId: event._id, accessGrantedOn: at('2026-10-08') });
+      }
+    }
+    const after = await opsFor();
+    assert.equal(after.rows, before.rows + 40);
+    assert.equal(after.ops.length, before.ops.length, `${before.ops.join(', ')} | ${after.ops.join(', ')}`);
+  });
+});
+
+describe('Contact Report one row per event', () => {
+  test('every contact names its one event, so it groups under it alone', async () => {
+    const res = await contacts(RANGE);
+    assert.ok(res.body.every((c: any) => c.eventId));
+    const a = res.body.filter((c: any) => String(c.eventId) === String(fx.A._id)).map((c: any) => c.fullName).sort();
+    const scoped = await contacts(`${RANGE}&eventId=${fx.A._id}`);
+    assert.deepEqual(a, names(scoped), 'the grouped rows equal the event\'s own View endpoint');
+  });
+});
+
+describe('the event View request: the event id alone', () => {
+  test('Access: every record of the event, including ones outside the report\'s dates', async () => {
+    await mkUser('Early A0', { adminId: fx.adminX._id, assignedEventId: fx.A._id, accessGrantedOn: at('2026-09-15') });
+    const report = await access(`${RANGE}&eventId=${fx.A._id}`);
+    assert.equal(names(report).includes('Early A0'), false, 'the October report leaves it out');
+
+    const view = await access(`eventId=${fx.A._id}`);
+    assert.equal(view.status, 200);
+    assert.ok(names(view).includes('Early A0'), 'the View still shows it');
+    for (const name of ['Admin X', 'Amit A3', 'Listed A4', 'Priya A2', 'Rahul A1']) assert.ok(names(view).includes(name), name);
+    assert.equal(names(view).some((n: string) => /B\d|Admin Y/.test(n)), false, 'nothing from another event');
+  });
+
+  test('Contact: every contact of the event, including ones outside the report\'s dates', async () => {
+    await mkContact(fx.A, 'Contact A0', '2026-09-15');
+    const report = await contacts(`${RANGE}&eventId=${fx.A._id}`);
+    assert.equal(names(report).includes('Contact A0'), false);
+
+    const view = await contacts(`eventId=${fx.A._id}`);
+    assert.equal(view.status, 200);
+    assert.ok(names(view).includes('Contact A0'));
+    assert.ok(view.body.every((c: any) => String(c.eventId) === String(fx.A._id)));
+  });
+
+  test('an event the caller may not see is still refused, with no records', async () => {
+    const a = await access(`eventId=${fx.B._id}`, fx.xToken);
+    assert.equal(a.status, 403);
+    assert.equal(JSON.stringify(a.body).includes('Bina'), false);
+    const c = await contacts(`eventId=${fx.B._id}`, fx.xToken);
+    assert.equal(c.status, 403);
+    assert.equal(JSON.stringify(c.body).includes('Contact B'), false);
+    assert.equal((await access(`eventId=${fx.A._id}`, fx.uA1Token)).status, 403, 'a User cannot read access records');
+    assert.equal((await get(`/api/contacts?eventId=${fx.A._id}`)).status, 401, 'no token');
+  });
+});

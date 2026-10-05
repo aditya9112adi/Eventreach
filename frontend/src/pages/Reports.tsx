@@ -12,6 +12,7 @@ import { EventSearch } from '../components/ui/EventSearch';
 import { ReportFilterBar, type ReportFilterOption } from '../components/ui/ReportFilterBar';
 import { EventDeliveryLog } from '../components/ui/EventDeliveryLog';
 import { EventDeliveryExport } from '../components/ui/EventDeliveryExport';
+import { ReportEventView } from '../components/ui/ReportEventView';
 import { formatDate, formatDateTime } from '../utils/datetime';
 import { getAccessStatus } from '../utils/accessStatus';
 import { formatEventType } from '../utils/eventType';
@@ -37,6 +38,12 @@ import {
   type ReportColumn,
 } from '../utils/reportExport';
 import {
+  groupRecordsByEvent,
+  countUnlinkedRecords,
+  accessRecordEventIds,
+  contactRecordEventIds,
+} from '../utils/reportEventGroups';
+import {
   exportEventReportExcel,
   exportEventReportPdf,
   fetchReportDeliveryRows,
@@ -59,6 +66,13 @@ interface ReportDefinition {
   /** Date the "Date" range filters on. */
   date: (row: any) => string | undefined;
   columns: ReportColumn<any>[];
+  /**
+   * Access and Contact Reports: the events a record belongs to, so the report
+   * is shown one row per event, and what the row's count and View call them.
+   */
+  eventIds?: (row: any) => string[];
+  countLabel?: string;
+  detailsTitle?: string;
 }
 
 const value = (input: unknown, fallback = ''): string =>
@@ -108,6 +122,9 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     text: (row) => `${value(row.name)} ${value(row.email)}`,
     status: (row) => getAccessStatus(row),
     date: (row) => row.accessGrantedOn || row.createdAt,
+    eventIds: accessRecordEventIds,
+    countLabel: 'Access Records',
+    detailsTitle: 'Access Details',
     columns: [
       { header: 'Name', value: (r) => value(r.name, '-'), width: 24 },
       { header: 'Email', value: (r) => value(r.email, '-'), width: 30 },
@@ -133,6 +150,9 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     text: (row) => `${value(row.fullName)} ${value(row.phoneNumber)} ${value(row.email)}`,
     status: (row) => value(row.status, '-'),
     date: (row) => row.createdAt,
+    eventIds: contactRecordEventIds,
+    countLabel: 'Contacts',
+    detailsTitle: 'Contact Details',
     columns: [
       { header: 'Full Name', value: (r) => value(r.fullName, '-'), width: 26 },
       {
@@ -172,6 +192,12 @@ const Reports = () => {
    * Event Report's View drill-down, so neither can steer the other.
    */
   const [reportEventId, setReportEventId] = useState<string>('');
+  /**
+   * The event an Access or Contact Report row was opened for with View - the
+   * same in-page View the Event Report has, on its own state so neither
+   * report's View can open the other's.
+   */
+  const [scopedViewEventId, setScopedViewEventId] = useState<string>('');
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [loadingCampaign, setLoadingCampaign] = useState(false);
   /**
@@ -368,6 +394,7 @@ const Reports = () => {
     setDateError('');
     setCurrentPage(1);
     setSelectedEventId('');
+    setScopedViewEventId('');
     // Contacts carry only an eventId; the event names come from the events list.
     // The cache is what names a contact's event and backs the drill-down, and
     // it is no longer a by-product of the Event Report's own response.
@@ -467,6 +494,7 @@ const Reports = () => {
      * tab-specific fields above still start fresh.
      */
     setSelectedEventId('');
+    setScopedViewEventId('');
     setCurrentPage(1);
     // A fresh tab starts with no report. Resetting with a new request id also
     // discards any response still on its way for the previous tab.
@@ -476,6 +504,7 @@ const Reports = () => {
   const clearFilters = () => {
     setSearchValue('');
     setReportEventId('');
+    setScopedViewEventId('');
     setStartDate('');
     setEndDate('');
     if (searchFirst) {
@@ -506,6 +535,7 @@ const Reports = () => {
     setStartDate('');
     setEndDate('');
     setSelectedEventId('');
+    setScopedViewEventId('');
     setCurrentPage(1);
     dispatch({ type: 'reset', reportKey: 'event', requestId: nextRequestId() });
   }, [searchFirst, requestedType]);
@@ -528,9 +558,29 @@ const Reports = () => {
     [decoratedRows, definition, reportFilters, reportOption]
   );
 
+  /**
+   * Access and Contact Reports: one row per event that holds at least one of
+   * the matched records, shown with the Event Report's own columns, a count
+   * and View. The Event Report keeps its rows as they are. The downloads are
+   * unchanged either way: they are written from filteredRows, record by record.
+   */
+  const eventIdsOf = eventScoped ? definition.eventIds : undefined;
+  const eventRows = useMemo(
+    () => (eventIdsOf ? groupRecordsByEvent(filteredRows, eventIdsOf, events) : []),
+    [eventIdsOf, filteredRows, events]
+  );
+  const unlinkedRecords = eventIdsOf ? countUnlinkedRecords(filteredRows, eventIdsOf) : 0;
+  const tableRows: any[] = eventIdsOf ? eventRows : filteredRows;
+  const tableColumns: ReportColumn<any>[] = eventIdsOf
+    ? [
+        ...REPORTS.event.columns,
+        { header: definition.countLabel || 'Records', value: (r) => value(r.recordCount, '0'), width: 14 },
+      ]
+    : definition.columns;
+
   const pagedRows = useMemo(
-    () => getPaginatedData(filteredRows, currentPage, rowsPerPage),
-    [filteredRows, currentPage, rowsPerPage]
+    () => getPaginatedData(tableRows, currentPage, rowsPerPage),
+    [tableRows, currentPage, rowsPerPage]
   );
 
   // With live filtering the row set changes as the inputs change, so start
@@ -544,9 +594,9 @@ const Reports = () => {
   }, [rowsPerPage]);
 
   useEffect(() => {
-    const totalPages = Math.ceil(filteredRows.length / rowsPerPage);
+    const totalPages = Math.ceil(tableRows.length / rowsPerPage);
     if (currentPage > totalPages && totalPages > 0) setCurrentPage(totalPages);
-  }, [filteredRows.length, currentPage, rowsPerPage]);
+  }, [tableRows.length, currentPage, rowsPerPage]);
 
   const fileNamePreview = useMemo(
     () => buildReportFileName(definition.fileName, reportOption.key),
@@ -637,6 +687,18 @@ const Reports = () => {
   const viewedEventDetails: Array<[string, string]> = viewedEvent
     ? REPORTS.event.columns.map((column) => [column.header, String(column.value(viewedEvent))] as [string, string])
     : [['Event', eventNameById.get(String(selectedEventId)) || String(selectedEventId)]];
+
+  /** The Access/Contact event opened with View, worded as the Event Report words it. */
+  const scopedViewEvent: any = scopedViewEventId
+    ? events.find((evt: any) => String(evt?._id) === String(scopedViewEventId)) ?? null
+    : null;
+  const scopedViewDetails: Array<[string, string]> = scopedViewEvent
+    ? REPORTS.event.columns.map((column) => [column.header, String(column.value(scopedViewEvent))] as [string, string])
+    : [['Event', String(scopedViewEventId)]];
+  const decorateContact = useCallback(
+    (row: any) => ({ ...row, eventName: eventNameById.get(String(row.eventId)) ?? '' }),
+    [eventNameById]
+  );
 
   const statusVariant = (status: string) => {
     switch (status) {
@@ -837,6 +899,24 @@ const Reports = () => {
             />
           </div>
         )
+      ) : eventScoped && scopedViewEventId && reportFilters ? (
+        /*
+          Access/Contact View: the generated report decided which event rows
+          exist; the View is that event alone - its details and every one of
+          its records, scoped and authorized by the server.
+        */
+        <ReportEventView
+          key={`${activeReport}:${scopedViewEventId}`}
+          eventId={scopedViewEventId}
+          eventName={scopedViewEvent?.eventName || ''}
+          eventDetails={scopedViewDetails}
+          title={definition.detailsTitle || 'Details'}
+          endpoint={definition.endpoint}
+          columns={definition.columns}
+          decorate={activeReport === 'contact' ? decorateContact : undefined}
+          statusVariant={statusVariant}
+          onBack={() => setScopedViewEventId('')}
+        />
       ) : (
         <div className="glass-panel rounded-2xl p-6 animate-spring-up">
           <div className="flex items-center justify-between mb-6">
@@ -858,9 +938,11 @@ const Reports = () => {
                 Select your filters and search to generate a report.
               </p>
             </div>
-          ) : filteredRows.length === 0 ? (
+          ) : tableRows.length === 0 ? (
             <p className="text-foreground/40 text-center py-8">
-              {searchFirst
+              {filteredRows.length > 0
+                ? 'None of the matching records belong to an event. They are included in the downloads.'
+                : searchFirst
                 ? 'No reports found for the selected filters.'
                 : run.rows.length === 0
                   ? `No ${definition.label.toLowerCase()} data found.`
@@ -875,7 +957,7 @@ const Reports = () => {
                     {/* On screen only. The column definitions also drive the Excel
                         and PDF exports and are untouched, so exports are unchanged. */}
                     <th className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs whitespace-nowrap pr-4 w-20">Sr No</th>
-                    {definition.columns.map((column) => (
+                    {tableColumns.map((column) => (
                       <th
                         key={column.header}
                         className="pb-3 font-semibold text-foreground/60 uppercase tracking-wide text-xs whitespace-nowrap pr-4"
@@ -883,7 +965,7 @@ const Reports = () => {
                         {column.header}
                       </th>
                     ))}
-                    {activeReport === 'event' && (
+                    {(activeReport === 'event' || eventScoped) && (
                       <th className="pb-3 font-semibold text-foreground/60"></th>
                     )}
                   </tr>
@@ -892,7 +974,7 @@ const Reports = () => {
                   {pagedRows.map((row: any, index: number) => (
                     <tr key={row._id} className="hover:bg-surfaceHover transition-colors group">
                       <td className="py-4 pr-4 text-foreground/50 tabular-nums whitespace-nowrap">{getSerialNumber(currentPage, rowsPerPage, index)}</td>
-                      {definition.columns.map((column) => {
+                      {tableColumns.map((column) => {
                         const cell = String(column.value(row));
                         return (
                           <td
@@ -915,6 +997,14 @@ const Reports = () => {
                           </Button>
                         </td>
                       )}
+                      {eventScoped && (
+                        <td className="py-4 text-right">
+                          {/* The Event Report's View, for this event's access/contact records. */}
+                          <Button variant="secondary" className="text-xs py-1.5 px-3" onClick={() => setScopedViewEventId(row._id)}>
+                            View
+                          </Button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -923,10 +1013,15 @@ const Reports = () => {
             <PaginationControls
               currentPage={currentPage}
               rowsPerPage={rowsPerPage}
-              totalItems={filteredRows.length}
+              totalItems={tableRows.length}
               onPageChange={setCurrentPage}
               onRowsChange={setRowsPerPage}
             />
+            {unlinkedRecords > 0 && (
+              <p className="text-xs text-foreground/50 mt-3">
+                {unlinkedRecords} matching {unlinkedRecords === 1 ? 'record is' : 'records are'} not linked to any event; included in the downloads.
+              </p>
+            )}
             </>
           )}
         </div>

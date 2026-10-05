@@ -120,6 +120,59 @@ export const getEventAccessHolders = async (
 };
 
 /**
+ * The events each Access Report record can reach - getEventAccessHolders read
+ * from the other side, for many people at once - so the report can be shown
+ * one row per event.
+ *
+ * Same rules: a User reaches the event they are assigned to (assignedEventId,
+ * assignedUserId, assignedUserIds) or created; an Admin reaches the events
+ * whose adminId or creator they are, and every event assigned to a User they
+ * manage. Two queries whatever the number of people; nothing per record.
+ *
+ * Returns record id -> event ids. A record that reaches no event is absent.
+ */
+export const getAccessEventIdsByRecord = async (
+  userRecords: Array<{ _id: any; assignedEventId?: any }>,
+  adminRecordIds: string[]
+): Promise<Map<string, string[]>> => {
+  const userIds = userRecords.map((u) => String(u._id));
+  const managed: any[] = adminRecordIds.length
+    ? await User.find({ adminId: { $in: adminRecordIds } }).select('_id adminId assignedEventId').lean()
+    : [];
+  const managerOf = new Map<string, string>(managed.map((m) => [String(m._id), String(m.adminId)]));
+  const people = Array.from(new Set([...userIds, ...managerOf.keys()]));
+
+  const clauses: any[] = [];
+  if (adminRecordIds.length) clauses.push({ adminId: { $in: adminRecordIds } }, { createdBy: { $in: adminRecordIds } });
+  if (people.length) clauses.push({ assignedUserId: { $in: people } }, { assignedUserIds: { $in: people } });
+  if (userIds.length) clauses.push({ createdBy: { $in: userIds } });
+  const events: any[] = clauses.length
+    ? await Event.find({ $or: clauses }).select('_id adminId createdBy assignedUserId assignedUserIds').lean()
+    : [];
+
+  const reach = new Map<string, Set<string>>();
+  const add = (person: unknown, eventId: unknown) => {
+    if (!person || !eventId) return;
+    const key = String(person);
+    if (!reach.has(key)) reach.set(key, new Set());
+    reach.get(key)!.add(String(eventId));
+  };
+
+  for (const u of userRecords) add(u._id, u.assignedEventId);
+  for (const m of managed) add(m.adminId, m.assignedEventId);
+  for (const e of events) {
+    add(e.adminId, e._id);
+    add(e.createdBy, e._id);
+    for (const named of [e.assignedUserId, ...(e.assignedUserIds || [])].filter(Boolean)) {
+      add(named, e._id);
+      add(managerOf.get(String(named)), e._id);
+    }
+  }
+
+  return new Map(Array.from(reach, ([person, ids]) => [person, Array.from(ids)]));
+};
+
+/**
  * Checks if a specific event is within the authorized scope of the user.
  */
 export const isEventAuthorized = async (

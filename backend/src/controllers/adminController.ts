@@ -9,7 +9,12 @@ import { Event } from '../models/Event';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { getIO, emitPendingApprovalsChanged } from '../services/socketService';
-import { isEventAuthorized, getEventAccessHolders } from '../services/eventAuthService';
+import {
+  isEventAuthorized,
+  getEventAccessHolders,
+  getAccessEventIdsByRecord,
+  getAuthorizedEventIds,
+} from '../services/eventAuthService';
 import { sendRegistrationDecisionEmail, verifyEmailTransport } from '../utils/email';
 import { getFrontendBaseUrl, isFrontendUrlConfigured } from '../config/appUrls';
 import {
@@ -289,6 +294,28 @@ export const getAccessRecords = async (req: Request, res: Response) => {
       throw error;
     }
     records = records.filter((r: any) => withinReportRange(r.accessGrantedOn || r.createdAt, range));
+
+    /**
+     * accessEventIds: the events each record can reach, so the report can be
+     * shown one row per event. A report for one event is that event alone.
+     * Otherwise it is worked out for every record at once by the same rules
+     * the per-event report uses, and limited to events the caller may see -
+     * so every event a row offers opens with View instead of a 403.
+     */
+    if (adminScope) {
+      records = records.map((r: any) => ({ ...r, accessEventIds: [String(eventId)] }));
+    } else {
+      const reach = await getAccessEventIdsByRecord(
+        records.filter((r: any) => r.type === 'User'),
+        records.filter((r: any) => r.type === 'Admin').map((r: any) => String(r._id))
+      );
+      const visible = await getAuthorizedEventIds(currentUser);
+      const allowed = visible === null ? null : new Set(visible);
+      records = records.map((r: any) => ({
+        ...r,
+        accessEventIds: (reach.get(String(r._id)) || []).filter((id) => allowed === null || allowed.has(id)),
+      }));
+    }
 
     // Approval/rejection metadata is Super Admin information only.
     if (!isSuperAdmin) {
