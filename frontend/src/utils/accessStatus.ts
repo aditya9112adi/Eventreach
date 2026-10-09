@@ -8,6 +8,9 @@
  */
 export type AccessStatus = 'Rejected' | 'Cancelled' | 'Scheduled' | 'Expired' | 'Active';
 
+/** Every status, in the order the Access Report's Status filter offers them. */
+export const ACCESS_STATUSES: ReadonlyArray<AccessStatus> = ['Active', 'Scheduled', 'Expired', 'Cancelled', 'Rejected'];
+
 export const getAccessStatus = (record: any): AccessStatus => {
   if (record?.status === 'Rejected') return 'Rejected';
   if (record?.isAccessCancelled) return 'Cancelled';
@@ -16,3 +19,15 @@ export const getAccessStatus = (record: any): AccessStatus => {
   if (record?.accessExpiryDate && now > new Date(record.accessExpiryDate)) return 'Expired';
   return 'Active';
 };
+
+/**
+ * The status an Access Report record was generated with: the server works it
+ * out once, when the report is generated, and sends it as accessStatus. The
+ * table, the Status filter and the downloads read that value, so a report
+ * never recalculates a time-dependent status after it was generated. A record
+ * without one (any other listing) falls back to deriving it here.
+ */
+export const accessStatusOf = (record: any): AccessStatus =>
+  (ACCESS_STATUSES as ReadonlyArray<string>).includes(record?.accessStatus)
+    ? (record.accessStatus as AccessStatus)
+    : getAccessStatus(record);

@@ -462,3 +462,170 @@ describe('the event View request: the event id alone', () => {
     assert.equal((await get(`/api/contacts?eventId=${fx.A._id}`)).status, 401, 'no token');
   });
 });
+
+describe('Access Report filters: event, username, status and dates together', () => {
+  const DAY = 24 * 3600 * 1000;
+  const future = () => new Date(Date.now() + 30 * DAY);
+  const past = () => new Date(Date.now() - 30 * DAY);
+  const K_RANGE = 'startDate=2026-10-01&endDate=2026-10-31';
+
+  // Event K and its people, named so no earlier fixture can match them.
+  before(async () => {
+    fx.adminK = await mkAdmin('Kestrel Admin', 'Admin', '2026-10-05');
+    fx.K = await mkEvent('Kite Festival', { adminId: fx.adminK._id });
+    fx.L = await mkEvent('Lantern Night', { adminId: fx.adminK._id });
+    const kUser = (name: string, extra: Record<string, any>) =>
+      mkUser(name, { adminId: fx.adminK._id, assignedEventId: fx.K._id, ...extra });
+    fx.kActive = await kUser('Kavya Kite', { accessGrantedOn: at('2026-10-06'), accessExpiryDate: future() });
+    fx.kActive2 = await kUser('Kunal Kite', { email: 'kunal.special@kites.test', accessGrantedOn: at('2026-10-12'), accessExpiryDate: future() });
+    fx.kScheduled = await kUser('Keya Kite', { accessGrantedOn: at('2026-10-07'), accessStartDate: future(), accessExpiryDate: future() });
+    fx.kExpired = await kUser('Kabir Kite', { accessGrantedOn: at('2026-10-08'), accessExpiryDate: past() });
+    fx.kCancelled = await kUser('Kiara Kite', { accessGrantedOn: at('2026-10-09'), isAccessCancelled: true });
+    fx.kRejected = await kUser('Krish Kite', { status: 'Rejected' });
+    await User.collection.updateOne({ _id: fx.kRejected._id }, { $set: { createdAt: at('2026-10-10') } });
+    // Lantern Night: same names pattern, another event.
+    fx.lActive = await mkUser('Lila Kite', { adminId: fx.adminK._id, assignedEventId: fx.L._id, accessGrantedOn: at('2026-10-06'), accessExpiryDate: future() });
+    // End-date boundary (the report's days are IST): 20 Oct 00:00, 23:59:59, and 21 Oct 00:00.
+    fx.kDayStart = await kUser('Kian Boundary Start', { accessGrantedOn: new Date('2026-10-19T18:30:00.000Z') });
+    fx.kDayEnd = await kUser('Kian Boundary End', { accessGrantedOn: new Date('2026-10-20T18:29:59.000Z') });
+    fx.kNextDay = await kUser('Kian Boundary Next', { accessGrantedOn: new Date('2026-10-20T18:30:00.000Z') });
+  });
+
+  const kNames = (res: { body: any }) => names(res).filter((n: string) => /Kite|Kian|Kestrel/.test(n));
+
+  test('event only: the event\'s access records, nothing from another event', async () => {
+    const res = await access(`${K_RANGE}&eventId=${fx.K._id}`);
+    assert.equal(res.status, 200);
+    assert.ok(names(res).includes('Kavya Kite'));
+    assert.equal(names(res).includes('Lila Kite'), false, 'Lantern Night\'s user never appears');
+    assert.ok(res.body.every((r: any) => r.type === 'Admin' || r.assignedEventId === String(fx.K._id)));
+  });
+
+  test('username only: a name or an email, case-insensitive, anywhere in it', async () => {
+    assert.deepEqual(kNames(await access(`${K_RANGE}&username=kavya`)), ['Kavya Kite']);
+    assert.deepEqual(kNames(await access(`${K_RANGE}&username=KITE`)).filter((n: string) => n.endsWith('Kite')).length, 7,
+      'every Kite name, across both events');
+    assert.deepEqual(kNames(await access(`${K_RANGE}&username=special%40kites`)), ['Kunal Kite'], 'by email');
+    assert.deepEqual(kNames(await access(`${K_RANGE}&username=Kestrel`)), ['Kestrel Admin'], 'Admins are searched too');
+  });
+
+  test('username is literal text, never a pattern', async () => {
+    assert.deepEqual(kNames(await access(`${K_RANGE}&username=K.v`)), [], '"." is a dot, not any character');
+    assert.equal((await access(`${K_RANGE}&username=${encodeURIComponent('(.*')}`)).status, 200, 'no regex error');
+  });
+
+  test('status only: the effective status the report shows', async () => {
+    const only = async (status: string) => kNames(await access(`${K_RANGE}&eventId=${fx.K._id}&status=${status}`));
+    assert.deepEqual(await only('Scheduled'), ['Keya Kite']);
+    assert.deepEqual(await only('Expired'), ['Kabir Kite']);
+    assert.deepEqual(await only('Cancelled'), ['Kiara Kite']);
+    assert.deepEqual(await only('Rejected'), ['Krish Kite']);
+    const active = await only('Active');
+    assert.ok(active.includes('Kavya Kite') && active.includes('Kunal Kite') && active.includes('Kestrel Admin'));
+    assert.equal(active.some((n: string) => ['Keya Kite', 'Kabir Kite', 'Kiara Kite', 'Krish Kite'].includes(n)), false);
+  });
+
+  test('date range only: the end date is included up to 23:59:59, the next day is not', async () => {
+    const day = kNames(await access(`startDate=2026-10-20&endDate=2026-10-20&eventId=${fx.K._id}`));
+    assert.deepEqual(day, ['Kian Boundary End', 'Kian Boundary Start']);
+    assert.ok(kNames(await access(`startDate=2026-10-21&endDate=2026-10-21&eventId=${fx.K._id}`)).includes('Kian Boundary Next'));
+    assert.deepEqual(kNames(await access(`startDate=2026-10-06&endDate=2026-10-06`)).sort(), ['Kavya Kite', 'Lila Kite']);
+  });
+
+  test('all four together: event + username + status + dates', async () => {
+    const res = await access(`startDate=2026-10-01&endDate=2026-10-10&eventId=${fx.K._id}&username=kite&status=Active`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(kNames(res), ['Kavya Kite'], 'Kunal (12 Oct) is outside the dates; the others are not Active; Lila is another event');
+  });
+
+  test('no record matches: an empty report, not an error', async () => {
+    const res = await access(`${K_RANGE}&eventId=${fx.K._id}&username=nobody-at-all&status=Active`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, []);
+  });
+
+  test('invalid filters are refused', async () => {
+    assert.equal((await access(`${K_RANGE}&status=Sleeping`)).status, 400);
+    assert.equal((await access(`${K_RANGE}&status[$ne]=Active`)).status, 400);
+    assert.equal((await access(`${K_RANGE}&username[]=a&username[]=b`)).status, 400);
+    assert.equal((await access(`${K_RANGE}&username=${'x'.repeat(101)}`)).status, 400);
+    assert.equal((await access('startDate=2026-10-31&endDate=2026-10-01')).status, 400, 'a reversed range, as before');
+  });
+
+  test('filters never widen what a role may see', async () => {
+    const xToken = fx.xToken;
+    // Admin X manages none of the Kite people, so a username search finds none of them.
+    assert.deepEqual(kNames(await access(`${K_RANGE}&username=kite`, xToken)), []);
+    // Event K belongs to Kestrel Admin: Admin X is refused whatever filters come with it.
+    const refused = await access(`${K_RANGE}&eventId=${fx.K._id}&username=kavya&status=Active`, xToken);
+    assert.equal(refused.status, 403);
+    assert.equal(JSON.stringify(refused.body).includes('Kavya'), false);
+    assert.equal((await access(`${K_RANGE}&username=kavya`, fx.uA1Token)).status, 403, 'a User cannot read access records');
+  });
+
+  test('Kestrel Admin sees their own people with the filters, and no Admin rows', async () => {
+    const token = tokenFor(fx.adminK, 'Admin');
+    const res = await access(`${K_RANGE}&eventId=${fx.K._id}&status=Active`, token);
+    assert.equal(res.status, 200);
+    assert.ok(names(res).includes('Kavya Kite'));
+    assert.equal(res.body.some((r: any) => r.type === 'Admin'), false);
+  });
+
+  test('the filters add no queries (no N+1)', async () => {
+    const HOUSEKEEPING = new Set(['createIndex', 'createIndexes', 'ensureIndex', 'dropIndex', 'listIndexes', 'indexes']);
+    const opsFor = async (query: string) => {
+      const ops: string[] = [];
+      mongoose.set('debug', (collection: string, method: string) => {
+        if (!HOUSEKEEPING.has(method)) ops.push(`${collection}.${method}`);
+      });
+      try {
+        assert.equal((await access(query)).status, 200);
+        return ops;
+      } finally {
+        mongoose.set('debug', false);
+      }
+    };
+    const plain = await opsFor(`${K_RANGE}&eventId=${fx.K._id}`);
+    const filtered = await opsFor(`${K_RANGE}&eventId=${fx.K._id}&username=kite&status=Active`);
+    assert.equal(filtered.length, plain.length, `${plain.join(', ')} | ${filtered.join(', ')}`);
+  });
+});
+
+describe('Access Report: the same server filtering for every role, a status fixed at generation', () => {
+  const K_RANGE = 'startDate=2026-10-01&endDate=2026-10-31';
+
+  test('every record carries the status it was generated with, and the Status filter matches it', async () => {
+    const all = await access(`${K_RANGE}&eventId=${fx.K._id}`);
+    assert.ok(all.body.length > 0);
+    assert.ok(all.body.every((r: any) => ['Active', 'Scheduled', 'Expired', 'Cancelled', 'Rejected'].includes(r.accessStatus)));
+    const by = (name: string) => all.body.find((r: any) => r.name === name).accessStatus;
+    assert.equal(by('Kavya Kite'), 'Active');
+    assert.equal(by('Keya Kite'), 'Scheduled');
+    assert.equal(by('Kabir Kite'), 'Expired');
+    assert.equal(by('Kiara Kite'), 'Cancelled');
+    assert.equal(by('Krish Kite'), 'Rejected');
+    for (const status of ['Active', 'Expired']) {
+      const filtered = await access(`${K_RANGE}&eventId=${fx.K._id}&status=${status}`);
+      assert.ok(filtered.body.length > 0);
+      assert.ok(filtered.body.every((r: any) => r.accessStatus === status), status);
+    }
+  });
+
+  test('an Admin\'s username and status are filtered by the server, within their own Users', async () => {
+    const token = tokenFor(fx.adminK, 'Admin');
+    const res = await access(`${K_RANGE}&username=kavya&status=Active`, token);
+    assert.equal(res.status, 200);
+    assert.deepEqual(names(res), ['Kavya Kite']);
+    const lantern = await access(`${K_RANGE}&eventId=${fx.L._id}&username=kite`, token);
+    assert.deepEqual(names(lantern), ['Lila Kite'], 'another of their events, still only its own records');
+  });
+
+  test('an Admin cannot reach another Admin\'s records through the filters', async () => {
+    const token = tokenFor(fx.adminK, 'Admin');
+    // Admin X's Users are invisible to Kestrel Admin, whatever is searched.
+    assert.deepEqual(names(await access(`${K_RANGE}&username=rahul`, token)), []);
+    assert.equal((await access(`${K_RANGE}&eventId=${fx.A._id}&username=rahul&status=Active`, token)).status, 403);
+    assert.equal((await access(`${K_RANGE}&status=Bogus`, token)).status, 400, 'the same validation for an Admin');
+    assert.equal((await access(`${K_RANGE}&username[]=a`, token)).status, 400);
+  });
+});

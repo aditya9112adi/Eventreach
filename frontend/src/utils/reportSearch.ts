@@ -28,6 +28,12 @@ export interface ReportFilters {
    * reportEventParam - and the downloads state it.
    */
   eventId?: string;
+  /**
+   * The Access Report's Status filter: one effective status (Active,
+   * Scheduled, Expired, Cancelled, Rejected), or empty for all. It applies
+   * together with the search value, the dates and the event.
+   */
+  status?: string;
 }
 
 /** The reports whose generated filters may name one event. */
@@ -41,6 +47,20 @@ export const EVENT_SCOPED_REPORTS: ReadonlyArray<ReportKey> = ['access', 'contac
  */
 export const reportEventParam = (key: ReportKey, filters: ReportFilters): { eventId?: string } =>
   EVENT_SCOPED_REPORTS.includes(key) && filters.eventId ? { eventId: filters.eventId } : {};
+
+/**
+ * The Access Report's username and status, for the server to apply with the
+ * event and the dates - so the report, and the downloads written from it, are
+ * the server's filtered records. Empty filters are not sent.
+ */
+export const reportAccessParams = (key: ReportKey, filters: ReportFilters): { username?: string; status?: string } => {
+  if (key !== 'access') return {};
+  const username = filters.searchValue.trim();
+  return {
+    ...(username ? { username } : {}),
+    ...(filters.status ? { status: filters.status } : {}),
+  };
+};
 
 export interface ReportRowAccessors {
   /** Free-text field the text filters search. */
@@ -112,6 +132,9 @@ export const filterReportRows = <T>(
      * unchanged.
      */
     if (!withinRange(accessors.date(row), filters.startDate, filters.endDate)) return false;
+    // A chosen status (the Access Report's own Status filter) must match
+    // exactly, whatever the text search - the filters combine.
+    if (filters.status && accessors.status(row) !== filters.status) return false;
     if (isDateMode) return true;
     if (!needle) return true;
     if (filters.mode === 'Status' && accessors.statusMatches) {
@@ -152,7 +175,8 @@ export const filtersDiffer = (a: ReportFilters | null, b: ReportFilters): boolea
   a.searchValue !== b.searchValue ||
   a.startDate !== b.startDate ||
   a.endDate !== b.endDate ||
-  (a.eventId ?? '') !== (b.eventId ?? '');
+  (a.eventId ?? '') !== (b.eventId ?? '') ||
+  (a.status ?? '') !== (b.status ?? '');
 
 // ── Run state ────────────────────────────────────────────────────────────────
 

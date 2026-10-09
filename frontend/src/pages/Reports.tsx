@@ -14,7 +14,7 @@ import { EventDeliveryLog } from '../components/ui/EventDeliveryLog';
 import { EventDeliveryExport } from '../components/ui/EventDeliveryExport';
 import { ReportEventView } from '../components/ui/ReportEventView';
 import { formatDate, formatDateTime } from '../utils/datetime';
-import { getAccessStatus } from '../utils/accessStatus';
+import { accessStatusOf, ACCESS_STATUSES } from '../utils/accessStatus';
 import { formatEventType } from '../utils/eventType';
 import { getPaginatedData, getSerialNumber } from '../utils/pagination';
 import {
@@ -26,6 +26,7 @@ import {
   selectingResetsReport,
   parseReportType,
   reportEventParam,
+  reportAccessParams,
   EVENT_SCOPED_REPORTS,
   initialReportRun,
   reportRunReducer,
@@ -75,6 +76,11 @@ interface ReportDefinition {
    */
   eventIds?: (row: any) => string[];
   countLabel?: string;
+  /**
+   * The Access Report: a Status dropdown applied together with the search box,
+   * the dates and the event - instead of choosing one filter at a time.
+   */
+  statusChoices?: ReadonlyArray<string>;
   detailsTitle?: string;
 }
 
@@ -117,13 +123,14 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     icon: ShieldCheck,
     fileName: 'AccessReport',
     endpoint: '/admin/users/access-records',
-    options: [
-      { key: 'UserName', label: 'UserName', type: 'text' },
-      { key: 'Status', label: 'Status', type: 'text' },
-      { key: 'Date', label: 'Date', type: 'date' },
-    ],
+    // UserName, Status and the dates all apply together: the search box is the
+    // username, Status has its own dropdown, and the period is always required.
+    // Choosing one of them at a time made combining them impossible, and the
+    // "Date" choice switched the username search off while still showing it.
+    options: [{ key: 'UserName', label: 'UserName', type: 'text' }],
+    statusChoices: ACCESS_STATUSES,
     text: (row) => `${value(row.name)} ${value(row.email)}`,
-    status: (row) => getAccessStatus(row),
+    status: (row) => accessStatusOf(row),
     date: (row) => row.accessGrantedOn || row.createdAt,
     eventIds: accessRecordEventIds,
     countLabel: 'Access Records',
@@ -132,7 +139,7 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
       { header: 'Name', value: (r) => value(r.name, '-'), width: 24 },
       { header: 'Email', value: (r) => value(r.email, '-'), width: 30 },
       { header: 'Role', value: (r) => value(r.role || r.type, '-'), width: 14 },
-      { header: 'Status', value: (r) => getAccessStatus(r), width: 14 },
+      { header: 'Status', value: (r) => accessStatusOf(r), width: 14 },
       { header: 'Assigned Event', value: (r) => value(r.assignedEventName, '-'), width: 26 },
       { header: 'Access Granted On', value: (r) => formatDateTime(r.accessGrantedOn, '-'), width: 24 },
       { header: 'Access Start', value: (r) => formatDateTime(r.accessStartDate, '-'), width: 24 },
@@ -230,6 +237,8 @@ const Reports = () => {
 
   const [mode, setMode] = useState<string>('EventName');
   const [searchValue, setSearchValue] = useState('');
+  /** The Access Report's Status dropdown; '' is all statuses. */
+  const [accessStatusFilter, setAccessStatusFilter] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [isExporting, setIsExporting] = useState(false);
@@ -254,6 +263,13 @@ const Reports = () => {
   const showReport = !searchFirst || reportChosen;
   const [searchParams] = useSearchParams();
   const requestedType = parseReportType(searchParams.get('type'), canViewAccessReport);
+  /**
+   * ?eventId= with an Access or Contact type: the event to open the report
+   * on - the "Access Report" link of an event uses it. Only a well-formed id
+   * is taken; the server still decides whether this user may see the event.
+   */
+  const rawRequestedEventId = searchParams.get('eventId') || '';
+  const requestedEventId = /^[a-f0-9]{24}$/i.test(rawRequestedEventId) ? rawRequestedEventId : '';
 
   const visibleReports = useMemo(
     () =>
@@ -285,8 +301,15 @@ const Reports = () => {
   }, [hasReportAccess, searchFirst, navigate, showToast]);
 
   const liveFilters: ReportFilters = useMemo(
-    () => ({ mode, searchValue, startDate, endDate, eventId: eventScoped ? reportEventId : '' }),
-    [mode, searchValue, startDate, endDate, eventScoped, reportEventId]
+    () => ({
+      mode,
+      searchValue,
+      startDate,
+      endDate,
+      eventId: eventScoped ? reportEventId : '',
+      status: definition.statusChoices ? accessStatusFilter : '',
+    }),
+    [mode, searchValue, startDate, endDate, eventScoped, reportEventId, definition, accessStatusFilter]
   );
   // Read by the auto-load effect below without making it a dependency: for
   // roles that filter live, editing a filter must not trigger a reload.
@@ -334,6 +357,21 @@ const Reports = () => {
     if (searchFirst && showReport && eventScoped) loadEventsForSelectors();
   }, [searchFirst, showReport, eventScoped, loadEventsForSelectors]);
 
+  /**
+   * Roles that filter live (an Admin) have no Search button, and the Access
+   * Report's username and status are applied by the server. So the report is
+   * reloaded when the username has rested for a moment, or the status changes
+   * - not on every keystroke. Super Admins search explicitly, as before.
+   */
+  const [debouncedUsername, setDebouncedUsername] = useState('');
+  useEffect(() => {
+    if (searchFirst || activeReport !== 'access') return;
+    const timer = setTimeout(() => setDebouncedUsername(searchValue.trim()), 400);
+    return () => clearTimeout(timer);
+  }, [searchFirst, activeReport, searchValue]);
+  const liveAccessQuery =
+    !searchFirst && activeReport === 'access' ? `${debouncedUsername}\u0000${accessStatusFilter}` : '';
+
   /** Fetches a report's rows as one run. */
   const loadReport = useCallback(async (key: ReportKey, filters: ReportFilters) => {
     const requestId = nextRequestId();
@@ -346,7 +384,14 @@ const Reports = () => {
        * cannot use.
        */
       const res = await api.get(REPORTS[key].endpoint, {
-        params: { startDate: filters.startDate, endDate: filters.endDate, ...reportEventParam(key, filters) },
+        params: {
+          startDate: filters.startDate,
+          endDate: filters.endDate,
+          ...reportEventParam(key, filters),
+          // The Access Report's username and status are applied by the server,
+          // for every role and within each role's own scope.
+          ...reportAccessParams(key, filters),
+        },
       });
       const rows = Array.isArray(res.data) ? res.data : [];
       dispatch({ type: 'success', requestId, rows });
@@ -386,7 +431,7 @@ const Reports = () => {
 
     setDateError('');
     void loadReport(activeReport, liveFiltersRef.current);
-  }, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId]);
+  }, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId, liveAccessQuery]);
 
   /** Super Admin: generate the report for the current filters. */
   const runSearch = () => {
@@ -490,6 +535,7 @@ const Reports = () => {
     // mode that does not exist on the new tab.
     setMode(REPORTS[key].options[0].key);
     setSearchValue('');
+    setAccessStatusFilter('');
     setReportEventId('');
     /**
      * The period is deliberately NOT reset.
@@ -509,6 +555,7 @@ const Reports = () => {
 
   const clearFilters = () => {
     setSearchValue('');
+    setAccessStatusFilter('');
     setReportEventId('');
     setScopedViewEventId('');
     setStartDate('');
@@ -529,14 +576,28 @@ const Reports = () => {
    */
   const switchReportRef = useRef(switchReport);
   switchReportRef.current = switchReport;
+  /**
+   * An event link: pick the event in "Select Event Name" and open its View -
+   * the event's details and its records, scoped and authorized by the server.
+   * The View needs no dates, so it opens straight away; Search then generates
+   * the dated report for the same event.
+   */
+  const openRequestedEvent = (key: ReportKey) => {
+    if (!requestedEventId || !EVENT_SCOPED_REPORTS.includes(key)) return;
+    setReportEventId(requestedEventId);
+    setScopedViewEventId(requestedEventId);
+  };
+
   useEffect(() => {
     if (!searchFirst) return;
     if (requestedType) {
       switchReportRef.current(requestedType);
+      openRequestedEvent(requestedType);
       return;
     }
     setReportChosen(false);
     setSearchValue('');
+    setAccessStatusFilter('');
     setReportEventId('');
     setStartDate('');
     setEndDate('');
@@ -544,7 +605,20 @@ const Reports = () => {
     setScopedViewEventId('');
     setCurrentPage(1);
     dispatch({ type: 'reset', reportKey: 'event', requestId: nextRequestId() });
-  }, [searchFirst, requestedType]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchFirst, requestedType, requestedEventId]);
+
+  /**
+   * Roles that filter live open on the Event Report; a link naming a report
+   * type (an event's "Access Report" link) opens that report instead. Without
+   * ?type= nothing changes.
+   */
+  useEffect(() => {
+    if (searchFirst || !requestedType) return;
+    switchReportRef.current(requestedType);
+    openRequestedEvent(requestedType);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchFirst, requestedType, requestedEventId]);
 
   const activeOption =
     definition.options.find((option) => option.key === mode) ?? definition.options[0];
@@ -552,7 +626,11 @@ const Reports = () => {
   // Super Admins see the report for the filters it was generated with, so the
   // table and the downloads keep matching what was searched even if the inputs
   // are edited afterwards. Other roles filter live, as before.
-  const reportFilters: ReportFilters | null = searchFirst ? (hasResults ? run.applied : null) : liveFilters;
+  // The Access Report, whichever the role, shows the server's answer to its
+  // last request and the filters that request was made with - so a username
+  // still being typed cannot leave the table, or a download, out of step.
+  const reportFilters: ReportFilters | null =
+    searchFirst || activeReport === 'access' ? (hasResults ? run.applied : null) : liveFilters;
   const reportOption =
     definition.options.find((option) => option.key === reportFilters?.mode) ?? activeOption;
 
@@ -604,10 +682,20 @@ const Reports = () => {
     if (currentPage > totalPages && totalPages > 0) setCurrentPage(totalPages);
   }, [tableRows.length, currentPage, rowsPerPage]);
 
-  const fileNamePreview = useMemo(
-    () => buildReportFileName(definition.fileName, reportOption.key),
-    [definition.fileName, reportOption.key]
+  /**
+   * The Access Report's downloads are named for the event they cover -
+   * AccessReport_EVT000006_09102026, or AccessReport_AllEvents_09102026 -
+   * from the generated filters. The other reports keep their names.
+   */
+  const downloadLabel = useCallback(
+    (filters: ReportFilters | null): string => {
+      if (activeReport !== 'access') return reportOption.key;
+      const evt: any = filters?.eventId ? events.find((e: any) => String(e._id) === String(filters.eventId)) : null;
+      return filters?.eventId ? evt?.eventId || 'Event' : 'AllEvents';
+    },
+    [activeReport, reportOption.key, events]
   );
+  const fileNamePreview = buildReportFileName(definition.fileName, downloadLabel(reportFilters ?? liveFilters));
 
   // filteredRows is built from reportFilters; the export must use the same
   // object, never the live inputs, or a download could claim filters the table
@@ -633,7 +721,7 @@ const Reports = () => {
 
       setIsExporting(true);
       try {
-        const name = buildReportFileName(definition.fileName, reportOption.key);
+        const name = buildReportFileName(definition.fileName, downloadLabel(exportFilters));
         // The very filters the visible table was built from, so the download
         // states its own scope and can never describe a different dataset.
         const meta = {
@@ -641,6 +729,7 @@ const Reports = () => {
           startDate: exportFilters.startDate,
           endDate: exportFilters.endDate,
           // The generated report's event, never the picker's current value.
+          ...(definition.statusChoices ? { status: exportFilters.status || 'All Statuses' } : {}),
           ...(EVENT_SCOPED_REPORTS.includes(activeReport)
             ? { event: exportFilters.eventId ? eventLabelById(exportFilters.eventId) : 'All Events' }
             : {}),
@@ -676,7 +765,7 @@ const Reports = () => {
         setIsExporting(false);
       }
     },
-    [filteredRows, definition, activeReport, reportOption.key, exportFilters, eventLabelById, showToast]
+    [filteredRows, definition, activeReport, exportFilters, eventLabelById, downloadLabel, showToast]
   );
 
   /**
@@ -835,6 +924,9 @@ const Reports = () => {
           setDateError('');
         }}
         dateError={dateError}
+        statusOptions={definition.statusChoices}
+        statusValue={accessStatusFilter}
+        onStatusChange={setAccessStatusFilter}
         onClear={clearFilters}
         onDownloadExcel={() => runExport('excel')}
         onDownloadPdf={() => runExport('pdf')}
@@ -852,6 +944,20 @@ const Reports = () => {
       />
 
       {/* Event Report keeps its original campaign drill-down. */}
+      {/* The event's Access Report, from its Event Report View. The View itself is unchanged. */}
+      {activeReport === 'event' && selectedEventId && canViewAccessReport && (
+        <div className="flex justify-end">
+          <Button
+            variant="secondary"
+            className="text-xs py-1.5 px-3"
+            onClick={() => navigate(`/reports?type=access&eventId=${selectedEventId}`)}
+          >
+            <ShieldCheck className="w-4 h-4 mr-1.5" />
+            Access Report
+          </Button>
+        </div>
+      )}
+
       {activeReport === 'event' && selectedEventId ? (
         loadingCampaign || campaignCheckedFor !== selectedEventId ? (
           <div className="flex items-center justify-center h-64">
@@ -905,7 +1011,7 @@ const Reports = () => {
             />
           </div>
         )
-      ) : eventScoped && scopedViewEventId && reportFilters ? (
+      ) : eventScoped && scopedViewEventId ? (
         /*
           Access/Contact View: the generated report decided which event rows
           exist; the View is that event alone - its details and every one of

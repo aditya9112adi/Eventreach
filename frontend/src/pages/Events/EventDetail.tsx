@@ -1,15 +1,20 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Calendar, MapPin, Edit3, UserCircle, Phone, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, Calendar, MapPin, Edit3, UserCircle, Phone, ShieldAlert, ShieldCheck } from 'lucide-react';
 import api from '../../services/api';
 import type { Event } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { formatEventType } from '../../utils/eventType';
+import { useAuth } from '../../store/authStore';
 
 const EventDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  // The Access Report is offered to the roles that can open it; the server
+  // enforces this regardless.
+  const canViewAccessReport = user?.role === 'SuperAdmin' || user?.role === 'Admin';
   // contactCount is still returned by GET /events/:id, but this page no longer
   // renders it — the guest-list card that used it lives on the Contacts page.
   const [event, setEvent] = useState<Event | null>(null);
@@ -91,15 +96,26 @@ const EventDetail = () => {
                 <p className="text-foreground/40 text-sm font-mono mt-1 whitespace-nowrap select-all">{event.eventId}</p>
               )}
             </div>
-            {event.eventStatus !== 'Completed' && (
-              <Button
-                variant="secondary"
-                onClick={() => navigate(`/events/${event._id}/edit`)}
-              >
-                <Edit3 className="w-4 h-4 mr-2" />
-                Edit Event
-              </Button>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {canViewAccessReport && (
+                <Button
+                  variant="secondary"
+                  onClick={() => navigate(`/reports?type=access&eventId=${event._id}`)}
+                >
+                  <ShieldCheck className="w-4 h-4 mr-2" />
+                  Access Report
+                </Button>
+              )}
+              {event.eventStatus !== 'Completed' && (
+                <Button
+                  variant="secondary"
+                  onClick={() => navigate(`/events/${event._id}/edit`)}
+                >
+                  <Edit3 className="w-4 h-4 mr-2" />
+                  Edit Event
+                </Button>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">

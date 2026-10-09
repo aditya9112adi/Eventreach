@@ -35,6 +35,8 @@ export interface ReportMeta {
    * the report states the three lines it always has.
    */
   event?: string;
+  /** The Access Report's Status filter ("Active", or "All Statuses"), printed after the dates. */
+  status?: string;
   /**
    * Lines to print in place of the three filter lines, for a document that is
    * not the result of a search - an event's Delivery Log states the event it
@@ -55,6 +57,7 @@ export const buildMetaRows = (meta: ReportMeta = {}): Array<[string, string]> =>
         ['Search Value', meta.searchValue?.trim() || '-'],
         ['Start Date', meta.startDate?.trim() || '-'],
         ['End Date', meta.endDate?.trim() || '-'],
+        ...(meta.status !== undefined ? [['Status', meta.status.trim() || '-'] as [string, string]] : []),
         ...(meta.event !== undefined ? [['Event', meta.event.trim() || '-'] as [string, string]] : []),
       ];
 

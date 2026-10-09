@@ -44,6 +44,13 @@ interface ReportFilterBarProps {
    * dates are required, so this also blocks Search and both downloads.
    */
   dateError?: string;
+  /**
+   * A Status dropdown beside the search box, applied together with it and the
+   * dates (the Access Report). Left out, the bar has no Status control.
+   */
+  statusOptions?: ReadonlyArray<string>;
+  statusValue?: string;
+  onStatusChange?: (value: string) => void;
 }
 
 const LABEL = 'text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1';
@@ -71,10 +78,13 @@ export const ReportFilterBar = ({
   hasGenerated = true,
   filtersChanged = false,
   dateError = '',
+  statusOptions,
+  statusValue = '',
+  onStatusChange,
 }: ReportFilterBarProps) => {
   const activeOption = options.find((option) => option.key === mode) ?? options[0];
   const isDateMode = activeOption?.type === 'date';
-  const hasFilter = isDateMode ? Boolean(startDate || endDate) : Boolean(searchValue);
+  const hasFilter = isDateMode ? Boolean(startDate || endDate) : Boolean(searchValue || statusValue);
   // A report must state the period it covers, so an unusable range blocks
   // the download as firmly as having no rows does.
   const canDownload =
@@ -105,7 +115,9 @@ export const ReportFilterBar = ({
         if (onSearch && !isSearching) onSearch();
       }}
     >
-      {/* Filter mode — one field at a time, which is what names the download. */}
+      {/* Filter mode — one field at a time, which is what names the download.
+          A report with a single field (the Access Report) needs no choice. */}
+      {options.length > 1 && (
       <fieldset>
         <legend className={LABEL}>Filter By</legend>
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mt-1">
@@ -129,6 +141,7 @@ export const ReportFilterBar = ({
           ))}
         </div>
       </fieldset>
+      )}
 
       {/* lg:flex-wrap: with the Search and Clear buttons the row no longer fits
           one line at laptop widths, so the downloads wrap instead of being
@@ -148,6 +161,27 @@ export const ReportFilterBar = ({
             className={FIELD}
           />
         </div>
+
+        {statusOptions && (
+          <div className="flex flex-col min-w-[160px]">
+            <label className={LABEL} htmlFor="report-status">
+              Status
+            </label>
+            <select
+              id="report-status"
+              value={statusValue}
+              onChange={(e) => onStatusChange?.(e.target.value)}
+              className={FIELD}
+            >
+              <option value="">All Statuses</option>
+              {statusOptions.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="flex flex-col">
           <label className={LABEL} htmlFor="report-start">

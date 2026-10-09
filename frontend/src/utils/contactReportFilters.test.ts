@@ -164,7 +164,7 @@ test('the generated filters, not the live inputs, decide the rows', () => {
   assert.equal(filtersDiffer(run.applied, live), true);
   const rows = groupRecordsByEvent(filterReportRows(run.rows, CONTACT, run.applied!, false), contactRecordEventIds, EVENTS);
   assert.deepEqual(rows.map((r) => r.eventId), ['EVT-000022', 'EVT-000021'], 'still the generated Status = Valid report');
-  assert.ok(reports.includes('const reportFilters: ReportFilters | null = searchFirst ? (hasResults ? run.applied : null) : liveFilters;'));
+  assert.ok(reports.includes('const reportFilters: ReportFilters | null =\n    searchFirst || activeReport === \'access\' ? (hasResults ? run.applied : null) : liveFilters;'));
   assert.ok(reports.includes('filterReportRows(decoratedRows, definition, reportFilters, reportOption.type === \'date\')'));
 });
 

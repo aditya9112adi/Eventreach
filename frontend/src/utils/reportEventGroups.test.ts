@@ -211,7 +211,7 @@ test('the rows and View keep the generated filters when the picker moves', async
 
   await t.test('the rows come from filteredRows - built from the generated filters', () => {
     assert.ok(reports.includes('() => (eventIdsOf ? groupRecordsByEvent(filteredRows, eventIdsOf, events) : []),'));
-    assert.ok(reports.includes('const reportFilters: ReportFilters | null = searchFirst ? (hasResults ? run.applied : null) : liveFilters;'));
+    assert.ok(reports.includes('const reportFilters: ReportFilters | null =\n    searchFirst || activeReport === \'access\' ? (hasResults ? run.applied : null) : liveFilters;'));
   });
 
   await t.test('View opens the clicked row\'s event and inherits no filters - generated or live', () => {
@@ -228,7 +228,8 @@ test('the rows and View keep the generated filters when the picker moves', async
 test('View opens the event\'s details and only its records', async (t) => {
   await t.test('the row\'s View opens that row\'s event', () => {
     assert.ok(reports.includes('onClick={() => setScopedViewEventId(row._id)}'));
-    assert.ok(reports.includes(') : eventScoped && scopedViewEventId && reportFilters ? ('));
+    // No generated report is needed: an event's Access Report link opens its View directly.
+    assert.ok(reports.includes(') : eventScoped && scopedViewEventId ? ('));
   });
 
   await t.test('the View request carries the event id only - no dates, no search', () => {

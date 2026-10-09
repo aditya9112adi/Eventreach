@@ -23,6 +23,10 @@ import {
   ReportDateRangeError,
   reportDateRangeResponse,
 } from '../utils/reportDateRange';
+import { ACCESS_STATUSES, getAccessStatus } from '../utils/accessStatus';
+
+/** A user-typed search, made safe to use inside a regular expression. */
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, (match) => `\\${match}`);
 
 
 export const getPendingUsers = async (req: Request, res: Response) => {
@@ -227,6 +231,44 @@ export const getAccessRecords = async (req: Request, res: Response) => {
     }
 
     /**
+     * Optional ?username= and ?status= - the Access Report's own filters,
+     * applied here together with the event and the dates: a record must match
+     * every one that is given.
+     *
+     * username matches a name or an email, case-insensitively, anywhere in it
+     * - the way the report has always searched - and is part of the database
+     * query. status is the effective status the report shows (Active,
+     * Scheduled, Expired, Cancelled, Rejected); it depends on the access
+     * window as of now, so it is applied to the queried records below.
+     */
+    const rawUsername = req.query.username;
+    if (rawUsername !== undefined && typeof rawUsername !== 'string') {
+      return res.status(400).json({ error: 'Invalid username filter.' });
+    }
+    const username = (rawUsername ?? '').trim();
+    if (username.length > 100) {
+      return res.status(400).json({ error: 'The username filter is too long.' });
+    }
+    const rawStatus = req.query.status;
+    if (
+      rawStatus !== undefined &&
+      rawStatus !== '' &&
+      (typeof rawStatus !== 'string' || !(ACCESS_STATUSES as readonly string[]).includes(rawStatus))
+    ) {
+      return res.status(400).json({ error: 'Invalid status filter.' });
+    }
+    const statusFilter = typeof rawStatus === 'string' ? rawStatus : '';
+    const nameClause = username
+      ? {
+          $or: [
+            { name: { $regex: escapeRegex(username), $options: 'i' } },
+            { email: { $regex: escapeRegex(username), $options: 'i' } },
+          ],
+        }
+      : null;
+    if (nameClause) userQuery.$and = [nameClause];
+
+    /**
      * Optional ?eventId=: the report for one event - the Users and Admins who
      * can reach it. The caller must be authorized for that event, and the
      * scope is part of the queries below, so no other event's records are
@@ -258,6 +300,7 @@ export const getAccessRecords = async (req: Request, res: Response) => {
       ? await Admin.find({
           role: { $ne: 'SuperAdmin' },
           ...(adminScope || {}),
+          ...(nameClause ? { $and: [nameClause] } : {}),
           $or: [
             { accessGrantedOn: { $exists: true } },
             { status: 'Rejected' }
@@ -294,6 +337,18 @@ export const getAccessRecords = async (req: Request, res: Response) => {
       throw error;
     }
     records = records.filter((r: any) => withinReportRange(r.accessGrantedOn || r.createdAt, range));
+
+    /**
+     * accessStatus: each record's effective status, worked out once, here, at
+     * the moment the report is generated. The Status filter, the table and the
+     * downloads all read this value, so an access window that closes between
+     * Search and download cannot make a report contradict itself.
+     */
+    const now = new Date();
+    records = records.map((r: any) => ({ ...r, accessStatus: getAccessStatus(r, now) }));
+    if (statusFilter) {
+      records = records.filter((r: any) => r.accessStatus === statusFilter);
+    }
 
     /**
      * accessEventIds: the events each record can reach, so the report can be
