@@ -32,6 +32,9 @@ const PAGE_SIZE_DEFAULT = 10;
 const PAGE_SIZE_MAX = 200;
 
 /** Escapes user input before it is used inside a RegExp. */
+/** The statuses a contact can have - the Contact Report's Status filter. */
+const CONTACT_STATUSES = ['Valid', 'Invalid', 'Duplicate'] as const;
+
 const escapeRegex = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, (match) => `\\${match}`);
 
@@ -621,6 +624,47 @@ export const getAllContacts = async (req: Request, res: Response) => {
         return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
       }
       query.eventId = eventId;
+    }
+
+    /**
+     * Optional ?name= and ?status= - the Contact Report's own filters, applied
+     * in the query together with the event and the dates: a contact must match
+     * every one that is given.
+     *
+     * name matches the full name, phone number or email, case-insensitively,
+     * anywhere in it - the way the report has always searched. status is
+     * Valid, Invalid or Duplicate, matched exactly.
+     */
+    const rawName = req.query.name;
+    if (rawName !== undefined && typeof rawName !== 'string') {
+      return res.status(400).json({ error: 'Invalid name filter.' });
+    }
+    const name = (rawName ?? '').trim();
+    if (name.length > 100) {
+      return res.status(400).json({ error: 'The name filter is too long.' });
+    }
+    const rawStatus = req.query.status;
+    if (
+      rawStatus !== undefined &&
+      rawStatus !== '' &&
+      (typeof rawStatus !== 'string' || !(CONTACT_STATUSES as readonly string[]).includes(rawStatus))
+    ) {
+      return res.status(400).json({ error: 'Invalid status filter.' });
+    }
+    if (name) {
+      const safe = escapeRegex(name);
+      query.$and = [
+        {
+          $or: [
+            { fullName: { $regex: safe, $options: 'i' } },
+            { phoneNumber: { $regex: safe, $options: 'i' } },
+            { email: { $regex: safe, $options: 'i' } },
+          ],
+        },
+      ];
+    }
+    if (typeof rawStatus === 'string' && rawStatus) {
+      query.status = rawStatus;
     }
 
     /**

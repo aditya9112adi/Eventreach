@@ -629,3 +629,107 @@ describe('Access Report: the same server filtering for every role, a status fixe
     assert.equal((await access(`${K_RANGE}&username[]=a`, token)).status, 400);
   });
 });
+
+describe('Contact Report filters: event, name, status and dates together', () => {
+  const M_RANGE = 'startDate=2026-10-01&endDate=2026-10-31';
+  let seq = 0;
+  const mkStatusContact = async (event: any, fullName: string, status: string, created: string, email?: string) => {
+    const doc = await Contact.create({
+      fullName, phoneNumber: `+9198${String(70000000 + seq++)}`, countryCode: 'IN',
+      eventId: event._id, source: 'Manual', status, ...(email ? { email } : {}),
+    });
+    await Contact.collection.updateOne({ _id: doc._id }, { $set: { createdAt: at(created) } });
+    return doc;
+  };
+
+  before(async () => {
+    fx.M = await mkEvent('Music Meetup', { adminId: fx.adminX._id });
+    fx.N = await mkEvent('Night Market', { adminId: fx.adminX._id });
+    await mkStatusContact(fx.M, 'Meera Valid', 'Valid', '2026-10-05', 'meera@music.test');
+    await mkStatusContact(fx.M, 'Mohan Invalid', 'Invalid', '2026-10-06');
+    await mkStatusContact(fx.M, 'Maya Duplicate', 'Duplicate', '2026-10-07');
+    await mkStatusContact(fx.M, 'Mira Late Valid', 'Valid', '2026-10-25');
+    await mkStatusContact(fx.N, 'Meera Night', 'Valid', '2026-10-05');
+  });
+
+  const mNames = (res: { body: any }) => names(res).filter((n: string) => /^M(eera|ohan|aya|ira)/.test(n));
+
+  test('name only: the full name, phone or email, case-insensitive, anywhere in it', async () => {
+    assert.deepEqual(mNames(await contacts(`${M_RANGE}&name=meera`)), ['Meera Night', 'Meera Valid'], 'across events');
+    assert.deepEqual(mNames(await contacts(`${M_RANGE}&name=MUSIC.TEST`)), ['Meera Valid'], 'by email');
+    assert.deepEqual(mNames(await contacts(`${M_RANGE}&name=M.hAN`)), [], '"." is a dot, never any character');
+  });
+
+  test('status only: an exact match, so Valid never takes in Invalid', async () => {
+    const only = async (status: string) => mNames(await contacts(`${M_RANGE}&eventId=${fx.M._id}&status=${status}`));
+    assert.deepEqual(await only('Valid'), ['Meera Valid', 'Mira Late Valid']);
+    assert.deepEqual(await only('Invalid'), ['Mohan Invalid']);
+    assert.deepEqual(await only('Duplicate'), ['Maya Duplicate']);
+  });
+
+  test('all four together: event + name + status + dates', async () => {
+    const res = await contacts(`startDate=2026-10-01&endDate=2026-10-10&eventId=${fx.M._id}&name=m&status=Valid`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(mNames(res), ['Meera Valid'], 'Mira (25 Oct) is outside the dates; Meera Night is another event');
+  });
+
+  test('no contact matches: an empty report, not an error', async () => {
+    const res = await contacts(`${M_RANGE}&eventId=${fx.M._id}&name=nobody&status=Valid`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, []);
+  });
+
+  test('invalid filters are refused', async () => {
+    assert.equal((await contacts(`${M_RANGE}&status=valid`)).status, 400, 'statuses are exact');
+    assert.equal((await contacts(`${M_RANGE}&status[$ne]=Valid`)).status, 400);
+    assert.equal((await contacts(`${M_RANGE}&name[]=a&name[]=b`)).status, 400);
+    assert.equal((await contacts(`${M_RANGE}&name=${'x'.repeat(101)}`)).status, 400);
+  });
+
+  test('filters never widen what a role may see', async () => {
+    // Music Meetup is Admin X's: Admin X sees it with filters, Kestrel Admin is refused.
+    assert.deepEqual(mNames(await contacts(`${M_RANGE}&eventId=${fx.M._id}&status=Invalid`, fx.xToken)), ['Mohan Invalid']);
+    const kToken = tokenFor(fx.adminK, 'Admin');
+    const refused = await contacts(`${M_RANGE}&eventId=${fx.M._id}&name=meera&status=Valid`, kToken);
+    assert.equal(refused.status, 403);
+    assert.equal(JSON.stringify(refused.body).includes('Meera'), false);
+    assert.deepEqual(mNames(await contacts(`${M_RANGE}&name=meera`, kToken)), [], 'a name search finds none of another Admin\'s contacts');
+    assert.equal((await contacts(`${M_RANGE}&eventId=${fx.M._id}&name=meera`, fx.uA1Token)).status, 403, 'a User, outside their event');
+  });
+
+  test('the View\'s requests: matching records for a searched report, every record without', async () => {
+    const matching = await contacts(`${M_RANGE}&eventId=${fx.M._id}&status=Invalid`);
+    assert.deepEqual(mNames(matching), ['Mohan Invalid']);
+    const all = await contacts(`eventId=${fx.M._id}`);
+    assert.deepEqual(mNames(all), ['Maya Duplicate', 'Meera Valid', 'Mira Late Valid', 'Mohan Invalid']);
+  });
+
+  test('the filters add no queries (no N+1)', async () => {
+    const HOUSEKEEPING = new Set(['createIndex', 'createIndexes', 'ensureIndex', 'dropIndex', 'listIndexes', 'indexes']);
+    const opsFor = async (query: string) => {
+      const ops: string[] = [];
+      mongoose.set('debug', (collection: string, method: string) => {
+        if (!HOUSEKEEPING.has(method)) ops.push(`${collection}.${method}`);
+      });
+      try {
+        assert.equal((await contacts(query)).status, 200);
+        return ops;
+      } finally {
+        mongoose.set('debug', false);
+      }
+    };
+    const plain = await opsFor(`${M_RANGE}&eventId=${fx.M._id}`);
+    const filtered = await opsFor(`${M_RANGE}&eventId=${fx.M._id}&name=m&status=Valid`);
+    assert.equal(filtered.length, plain.length, `${plain.join(', ')} | ${filtered.join(', ')}`);
+  });
+});
+
+describe('Access Report View: matching records for a searched report, every record without', () => {
+  test('the matching request returns what the row counted; the plain one every record of the event', async () => {
+    const matching = await access(`startDate=2026-10-01&endDate=2026-10-31&eventId=${fx.K._id}&status=Expired`);
+    assert.deepEqual(names(matching), ['Kabir Kite']);
+    const all = await access(`eventId=${fx.K._id}`);
+    assert.ok(names(all).includes('Kabir Kite') && names(all).includes('Kavya Kite') && names(all).includes('Keya Kite'));
+    assert.ok(all.body.length > matching.body.length);
+  });
+});

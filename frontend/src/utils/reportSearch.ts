@@ -49,15 +49,19 @@ export const reportEventParam = (key: ReportKey, filters: ReportFilters): { even
   EVENT_SCOPED_REPORTS.includes(key) && filters.eventId ? { eventId: filters.eventId } : {};
 
 /**
- * The Access Report's username and status, for the server to apply with the
- * event and the dates - so the report, and the downloads written from it, are
- * the server's filtered records. Empty filters are not sent.
+ * The Access and Contact Reports' search and status, for the server to apply
+ * with the event and the dates - so the report, and the downloads written
+ * from it, are the server's filtered records. The Access Report searches by
+ * username, the Contact Report by name. Empty filters are not sent.
  */
-export const reportAccessParams = (key: ReportKey, filters: ReportFilters): { username?: string; status?: string } => {
-  if (key !== 'access') return {};
-  const username = filters.searchValue.trim();
+export const reportFilterParams = (
+  key: ReportKey,
+  filters: ReportFilters
+): { username?: string; name?: string; status?: string } => {
+  if (key !== 'access' && key !== 'contact') return {};
+  const text = filters.searchValue.trim();
   return {
-    ...(username ? { username } : {}),
+    ...(text ? (key === 'access' ? { username: text } : { name: text }) : {}),
     ...(filters.status ? { status: filters.status } : {}),
   };
 };

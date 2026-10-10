@@ -318,7 +318,7 @@ test('the download follows the generated report, not the picker as it is now', a
   });
 
   await t.test('Reports exports with the generated filters and names their event', () => {
-    assert.ok(reports.includes('const reportFilters: ReportFilters | null =\n    searchFirst || activeReport === \'access\' ? (hasResults ? run.applied : null) : liveFilters;'));
+    assert.ok(reports.includes('searchFirst || serverFiltered ? (hasResults ? run.applied : null) : liveFilters;'));
     assert.ok(reports.includes('const exportFilters = reportFilters ?? liveFilters;'));
     const exportFn = between(reports, 'const runExport = useCallback(', 'const viewedEvent');
     assert.ok(exportFn.includes("? { event: exportFilters.eventId ? eventLabelById(exportFilters.eventId) : 'All Events' }"));
@@ -365,7 +365,7 @@ test('Reports.tsx wiring', async (t) => {
   });
 
   await t.test('roles that filter live regenerate from the server when the event changes', () => {
-    assert.ok(reports.includes('}, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId, liveAccessQuery]);'));
+    assert.ok(reports.includes('}, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId, liveFilterQuery]);'));
   });
 });
 

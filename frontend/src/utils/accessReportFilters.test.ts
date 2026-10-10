@@ -17,7 +17,7 @@ import fs from 'fs';
 import {
   filterReportRows,
   filtersDiffer,
-  reportAccessParams,
+  reportFilterParams,
   reportEventParam,
   reportRunReducer,
   initialReportRun,
@@ -95,18 +95,18 @@ test('username, status and dates apply together on the page as well', async (t) 
 
 test('Search sends the event, username and status with the dates', async (t) => {
   await t.test('the Access Report\'s parameters', () => {
-    assert.deepEqual(reportAccessParams('access', filters({ searchValue: '  kavya ', status: 'Active' })), { username: 'kavya', status: 'Active' });
-    assert.deepEqual(reportAccessParams('access', filters()), {}, 'empty filters are not sent');
-    assert.deepEqual(reportAccessParams('contact', filters({ searchValue: 'x', status: 'Active' })), {}, 'only the Access Report');
-    assert.deepEqual(reportAccessParams('event', filters({ searchValue: 'x' })), {});
+    assert.deepEqual(reportFilterParams('access', filters({ searchValue: '  kavya ', status: 'Active' })), { username: 'kavya', status: 'Active' });
+    assert.deepEqual(reportFilterParams('access', filters()), {}, 'empty filters are not sent');
+    assert.deepEqual(reportFilterParams('contact', filters({ searchValue: 'x', status: 'Valid' })), { name: 'x', status: 'Valid' }, 'the Contact Report sends a name');
+    assert.deepEqual(reportFilterParams('event', filters({ searchValue: 'x' })), {});
     assert.deepEqual(reportEventParam('access', filters({ eventId: 'evtK' })), { eventId: 'evtK' });
   });
 
   await t.test('the request carries them on Search, from the generated filters', () => {
     const load = between(reports, 'const loadReport = useCallback(', '/**\n   * Roles other than Super Admin');
     assert.ok(load.includes('...reportEventParam(key, filters),'));
-    assert.ok(load.includes('...reportAccessParams(key, filters),'), 'for every role, within its own scope');
-    assert.equal(load.includes('searchFirst ? reportAccessParams'), false);
+    assert.ok(load.includes('...reportFilterParams(key, filters),'), 'for every role, within its own scope');
+    assert.equal(load.includes('searchFirst ? reportFilterParams'), false);
     assert.ok(load.includes('startDate: filters.startDate,') && load.includes('endDate: filters.endDate,'));
     assert.ok(reports.includes('void loadReport(activeReport, liveFilters);'), 'Search generates with the latest inputs');
   });
@@ -139,19 +139,19 @@ test('the Access filter bar: a username box and a Status dropdown, no single cho
     assert.ok(bar.includes('<option value="">All Statuses</option>'));
     assert.ok(bar.includes('onChange={(e) => onStatusChange?.(e.target.value)}'));
     assert.ok(reports.includes('statusOptions={definition.statusChoices}'));
-    assert.ok(reports.includes('onStatusChange={setAccessStatusFilter}'));
+    assert.ok(reports.includes('onStatusChange={setStatusChoice}'));
   });
 
-  await t.test('the Event and Contact Reports keep their filter choices', () => {
+  await t.test('the Event Report keeps its filter choices; the Contact Report works like Access', () => {
     assert.equal(between(reports, "key: 'event'", "key: 'access'").includes('statusChoices'), false);
     const contact = between(reports, "key: 'contact'", 'const Reports = () =>');
-    assert.equal(contact.includes('statusChoices'), false);
-    assert.ok(contact.includes("{ key: 'Date', label: 'Date', type: 'date' },"));
+    assert.ok(contact.includes('statusChoices: CONTACT_STATUSES,'));
+    assert.equal(contact.includes("key: 'Date'"), false);
   });
 
   await t.test('Clear and switching report reset the status with the other filters', () => {
-    assert.ok(between(reports, 'const clearFilters', 'const switchReportRef').includes("setAccessStatusFilter('');"));
-    assert.ok(between(reports, 'const switchReport', 'const clearFilters').includes("setAccessStatusFilter('');"));
+    assert.ok(between(reports, 'const clearFilters', 'const switchReportRef').includes("setStatusChoice('');"));
+    assert.ok(between(reports, 'const switchReport', 'const clearFilters').includes("setStatusChoice('');"));
   });
 });
 
@@ -247,19 +247,20 @@ test('the status a report was generated with is the one it keeps', async (t) => 
 
 test('every role gets the same server-side filtering, without a request per keystroke', async (t) => {
   await t.test('the Access Report is the last request\'s answer and filters, for every role', () => {
-    assert.ok(reports.includes("searchFirst || activeReport === 'access' ? (hasResults ? run.applied : null) : liveFilters;"));
+    assert.ok(reports.includes('searchFirst || serverFiltered ? (hasResults ? run.applied : null) : liveFilters;'));
   });
 
   await t.test('roles without a Search button reload when the username rests, or the status changes', () => {
-    const debounce = between(reports, 'const [debouncedUsername, setDebouncedUsername] = useState', 'const loadReport = useCallback(');
-    assert.ok(debounce.includes("if (searchFirst || activeReport !== 'access') return;"), 'Super Admins keep their Search button');
-    assert.ok(debounce.includes('setTimeout(() => setDebouncedUsername(searchValue.trim()), 400)'), 'a pause, not every keystroke');
+    const debounce = between(reports, 'const [debouncedSearch, setDebouncedSearch] = useState', 'const loadReport = useCallback(');
+    assert.ok(debounce.includes('if (searchFirst || !serverFiltered) return;'), 'Super Admins keep their Search button');
+    assert.ok(debounce.includes('setTimeout(() => setDebouncedSearch(searchValue.trim()), 400)'), 'a pause, not every keystroke');
     assert.ok(debounce.includes('return () => clearTimeout(timer);'), 'each keystroke restarts the wait');
-    assert.ok(debounce.includes('`${debouncedUsername}\\u0000${accessStatusFilter}`'));
-    assert.ok(reports.includes('}, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId, liveAccessQuery]);'));
+    assert.ok(debounce.includes('`${debouncedSearch}\\u0000${statusChoice}`'));
+    assert.ok(reports.includes('}, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId, liveFilterQuery]);'));
   });
 
-  await t.test('the Event and Contact Reports keep filtering live in the page', () => {
-    assert.ok(reports.includes("!searchFirst && activeReport === 'access' ?"), 'only the Access Report reloads');
+  await t.test('the Access and Contact Reports reload; the Event Report keeps filtering live in the page', () => {
+    assert.ok(reports.includes('const serverFiltered = Boolean(definition.statusChoices);'));
+    assert.ok(reports.includes('const liveFilterQuery = !searchFirst && serverFiltered ?'));
   });
 });

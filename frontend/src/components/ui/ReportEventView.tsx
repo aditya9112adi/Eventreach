@@ -10,11 +10,13 @@ import type { ReportColumn } from '../../utils/reportExport';
  * then its records - laid out like the Event Report's own View, with the
  * same "Back to All Events" and the same table.
  *
- * The report's filters decide which events are listed; the View is the event
- * alone. Its records are read from the report's existing endpoint with only
- * ?eventId= - no dates, no name or status search - so it holds every access
- * or contact record of this event. The server still authorizes the event and
- * scopes the records to it; a refusal is shown as the server words it.
+ * The report's filters decide which events are listed. When the report was
+ * searched by a name/username or a status, the View opens on this event's
+ * records matching that search - the ones the row counted - with a switch to
+ * every record of the event. Without such a search it shows every record, as
+ * the event alone. Either way the records come from the report's existing
+ * endpoint scoped to ?eventId=, so the server authorizes the event and returns
+ * only its records; a refusal is shown as the server words it.
  */
 interface ReportEventViewProps {
   eventId: string;
@@ -27,6 +29,12 @@ interface ReportEventViewProps {
   columns: ReportColumn<any>[];
   /** Adds what a record needs to be shown (a contact's event name). */
   decorate?: (row: any) => any;
+  /**
+   * The report's filters, as request parameters, when it was searched by a
+   * name/username or a status: the View then opens on the matching records.
+   * Left out, the View shows every record of the event.
+   */
+  matchParams?: Record<string, string>;
   statusVariant: (status: string) => string;
   onBack: () => void;
 }
@@ -39,6 +47,7 @@ export const ReportEventView = ({
   endpoint,
   columns,
   decorate,
+  matchParams,
   statusVariant,
   onBack,
 }: ReportEventViewProps) => {
@@ -47,13 +56,18 @@ export const ReportEventView = ({
   const [error, setError] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
+  /** Matching records first; this switches to every record of the event. */
+  const [showAll, setShowAll] = useState(false);
+  const matchKey = matchParams ? JSON.stringify(matchParams) : '';
+  const showingMatches = Boolean(matchParams) && !showAll;
 
   useEffect(() => {
     let cancelled = false;
     setStatus('loading');
     setCurrentPage(1);
+    const params = showingMatches ? { ...JSON.parse(matchKey), eventId } : { eventId };
     api
-      .get(endpoint, { params: { eventId } })
+      .get(endpoint, { params })
       .then((res) => {
         if (cancelled) return;
         setRows(Array.isArray(res.data) ? res.data : []);
@@ -68,7 +82,7 @@ export const ReportEventView = ({
     return () => {
       cancelled = true;
     };
-  }, [endpoint, eventId]);
+  }, [endpoint, eventId, matchKey, showingMatches]);
 
   // Every record the event-scoped endpoint returned; none is filtered out here.
   const shown = useMemo(() => (decorate ? rows.map(decorate) : rows), [rows, decorate]);
@@ -104,9 +118,24 @@ export const ReportEventView = ({
       <div className="glass-panel rounded-2xl p-6">
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-lg font-sans font-bold text-foreground uppercase tracking-wider">{title}</h3>
-          {status === 'success' && (
-            <span className="text-xs text-foreground/50">{shown.length} for this event</span>
-          )}
+          <div className="flex flex-wrap items-center gap-3">
+            {status === 'success' && (
+              <span className="text-xs text-foreground/50">
+                {showingMatches
+                  ? `${shown.length} matching the report's filters`
+                  : `${shown.length} ${matchParams ? 'records in all' : 'for this event'}`}
+              </span>
+            )}
+            {matchParams && (
+              <button
+                type="button"
+                onClick={() => setShowAll((all) => !all)}
+                className="text-accent hover:text-accent/80 font-medium text-xs transition-colors"
+              >
+                {showAll ? 'Show only matching records' : 'Show all records'}
+              </button>
+            )}
+          </div>
         </div>
 
         {status === 'loading' ? (
@@ -116,7 +145,9 @@ export const ReportEventView = ({
         ) : status === 'error' ? (
           <p className="text-destructive text-center py-8 text-sm font-medium">{error}</p>
         ) : shown.length === 0 ? (
-          <p className="text-foreground/40 text-center py-8">No records for this event.</p>
+          <p className="text-foreground/40 text-center py-8">
+            {showingMatches ? 'No records for this event match the report\'s filters.' : 'No records for this event.'}
+          </p>
         ) : (
           <>
             <div className="table-scroll">

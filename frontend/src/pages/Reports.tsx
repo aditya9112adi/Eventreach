@@ -19,14 +19,13 @@ import { formatEventType } from '../utils/eventType';
 import { getPaginatedData, getSerialNumber } from '../utils/pagination';
 import {
   filterReportRows,
-  matchesStatusWord,
   validateReportDateRange,
   filtersDiffer,
   hasResultsFor,
   selectingResetsReport,
   parseReportType,
   reportEventParam,
-  reportAccessParams,
+  reportFilterParams,
   EVENT_SCOPED_REPORTS,
   initialReportRun,
   reportRunReducer,
@@ -65,8 +64,6 @@ interface ReportDefinition {
   text: (row: any) => string;
   /** Status the "Status" filter matches and the table shows. */
   status: (row: any) => string;
-  /** How that status is matched, where plain "contains" is ambiguous. */
-  statusMatches?: (status: string, needle: string) => boolean;
   /** Date the "Date" range filters on. */
   date: (row: any) => string | undefined;
   columns: ReportColumn<any>[];
@@ -77,8 +74,9 @@ interface ReportDefinition {
   eventIds?: (row: any) => string[];
   countLabel?: string;
   /**
-   * The Access Report: a Status dropdown applied together with the search box,
-   * the dates and the event - instead of choosing one filter at a time.
+   * The Access and Contact Reports: a Status dropdown applied together with the
+   * search box, the dates and the event - instead of choosing one filter at a
+   * time - and all of them applied by the server.
    */
   statusChoices?: ReadonlyArray<string>;
   detailsTitle?: string;
@@ -86,6 +84,9 @@ interface ReportDefinition {
 
 const value = (input: unknown, fallback = ''): string =>
   input === null || input === undefined || input === '' ? fallback : String(input);
+
+/** The statuses a contact can have - the Contact Report's Status dropdown. */
+const CONTACT_STATUSES = ['Valid', 'Invalid', 'Duplicate'] as const;
 
 const REPORTS: Record<ReportKey, ReportDefinition> = {
   event: {
@@ -152,16 +153,14 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     icon: Users,
     fileName: 'ContactReport',
     endpoint: '/contacts',
-    options: [
-      { key: 'Name', label: 'Name', type: 'text' },
-      { key: 'Status', label: 'Status', type: 'text' },
-      { key: 'Date', label: 'Date', type: 'date' },
-    ],
+    // Name, Status and the dates apply together, as on the Access Report: the
+    // search box is the name, Status has its own dropdown (an exact match, so
+    // Valid never takes in Invalid), and the period is always required. The
+    // "Date" choice used to switch the name search off while still showing it.
+    options: [{ key: 'Name', label: 'Name', type: 'text' }],
+    statusChoices: CONTACT_STATUSES,
     text: (row) => `${value(row.fullName)} ${value(row.phoneNumber)} ${value(row.email)}`,
     status: (row) => value(row.status, '-'),
-    // "Valid" is part of "Invalid": the status is matched from the start of a
-    // word, so a search for Valid contacts does not return the invalid ones.
-    statusMatches: matchesStatusWord,
     date: (row) => row.createdAt,
     eventIds: contactRecordEventIds,
     countLabel: 'Contacts',
@@ -237,8 +236,8 @@ const Reports = () => {
 
   const [mode, setMode] = useState<string>('EventName');
   const [searchValue, setSearchValue] = useState('');
-  /** The Access Report's Status dropdown; '' is all statuses. */
-  const [accessStatusFilter, setAccessStatusFilter] = useState('');
+  /** The Access and Contact Reports' Status dropdown; '' is all statuses. */
+  const [statusChoice, setStatusChoice] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [isExporting, setIsExporting] = useState(false);
@@ -307,9 +306,9 @@ const Reports = () => {
       startDate,
       endDate,
       eventId: eventScoped ? reportEventId : '',
-      status: definition.statusChoices ? accessStatusFilter : '',
+      status: definition.statusChoices ? statusChoice : '',
     }),
-    [mode, searchValue, startDate, endDate, eventScoped, reportEventId, definition, accessStatusFilter]
+    [mode, searchValue, startDate, endDate, eventScoped, reportEventId, definition, statusChoice]
   );
   // Read by the auto-load effect below without making it a dependency: for
   // roles that filter live, editing a filter must not trigger a reload.
@@ -358,19 +357,19 @@ const Reports = () => {
   }, [searchFirst, showReport, eventScoped, loadEventsForSelectors]);
 
   /**
-   * Roles that filter live (an Admin) have no Search button, and the Access
-   * Report's username and status are applied by the server. So the report is
-   * reloaded when the username has rested for a moment, or the status changes
+   * Roles that filter live (an Admin) have no Search button, and the Access and
+   * Contact Reports' search and status are applied by the server. So the report
+   * is reloaded when the search has rested for a moment, or the status changes
    * - not on every keystroke. Super Admins search explicitly, as before.
    */
-  const [debouncedUsername, setDebouncedUsername] = useState('');
+  const serverFiltered = Boolean(definition.statusChoices);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   useEffect(() => {
-    if (searchFirst || activeReport !== 'access') return;
-    const timer = setTimeout(() => setDebouncedUsername(searchValue.trim()), 400);
+    if (searchFirst || !serverFiltered) return;
+    const timer = setTimeout(() => setDebouncedSearch(searchValue.trim()), 400);
     return () => clearTimeout(timer);
-  }, [searchFirst, activeReport, searchValue]);
-  const liveAccessQuery =
-    !searchFirst && activeReport === 'access' ? `${debouncedUsername}\u0000${accessStatusFilter}` : '';
+  }, [searchFirst, serverFiltered, searchValue]);
+  const liveFilterQuery = !searchFirst && serverFiltered ? `${debouncedSearch}\u0000${statusChoice}` : '';
 
   /** Fetches a report's rows as one run. */
   const loadReport = useCallback(async (key: ReportKey, filters: ReportFilters) => {
@@ -388,9 +387,9 @@ const Reports = () => {
           startDate: filters.startDate,
           endDate: filters.endDate,
           ...reportEventParam(key, filters),
-          // The Access Report's username and status are applied by the server,
-          // for every role and within each role's own scope.
-          ...reportAccessParams(key, filters),
+          // The Access and Contact Reports' search and status are applied by
+          // the server, for every role and within each role's own scope.
+          ...reportFilterParams(key, filters),
         },
       });
       const rows = Array.isArray(res.data) ? res.data : [];
@@ -431,7 +430,7 @@ const Reports = () => {
 
     setDateError('');
     void loadReport(activeReport, liveFiltersRef.current);
-  }, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId, liveAccessQuery]);
+  }, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId, liveFilterQuery]);
 
   /** Super Admin: generate the report for the current filters. */
   const runSearch = () => {
@@ -535,7 +534,7 @@ const Reports = () => {
     // mode that does not exist on the new tab.
     setMode(REPORTS[key].options[0].key);
     setSearchValue('');
-    setAccessStatusFilter('');
+    setStatusChoice('');
     setReportEventId('');
     /**
      * The period is deliberately NOT reset.
@@ -555,7 +554,7 @@ const Reports = () => {
 
   const clearFilters = () => {
     setSearchValue('');
-    setAccessStatusFilter('');
+    setStatusChoice('');
     setReportEventId('');
     setScopedViewEventId('');
     setStartDate('');
@@ -597,7 +596,7 @@ const Reports = () => {
     }
     setReportChosen(false);
     setSearchValue('');
-    setAccessStatusFilter('');
+    setStatusChoice('');
     setReportEventId('');
     setStartDate('');
     setEndDate('');
@@ -626,11 +625,12 @@ const Reports = () => {
   // Super Admins see the report for the filters it was generated with, so the
   // table and the downloads keep matching what was searched even if the inputs
   // are edited afterwards. Other roles filter live, as before.
-  // The Access Report, whichever the role, shows the server's answer to its
-  // last request and the filters that request was made with - so a username
-  // still being typed cannot leave the table, or a download, out of step.
+  // The Access and Contact Reports, whichever the role, show the server's
+  // answer to their last request and the filters that request was made with -
+  // so a search still being typed cannot leave the table, or a download, out
+  // of step.
   const reportFilters: ReportFilters | null =
-    searchFirst || activeReport === 'access' ? (hasResults ? run.applied : null) : liveFilters;
+    searchFirst || serverFiltered ? (hasResults ? run.applied : null) : liveFilters;
   const reportOption =
     definition.options.find((option) => option.key === reportFilters?.mode) ?? activeOption;
 
@@ -689,7 +689,7 @@ const Reports = () => {
    */
   const downloadLabel = useCallback(
     (filters: ReportFilters | null): string => {
-      if (activeReport !== 'access') return reportOption.key;
+      if (!REPORTS[activeReport].statusChoices) return reportOption.key;
       const evt: any = filters?.eventId ? events.find((e: any) => String(e._id) === String(filters.eventId)) : null;
       return filters?.eventId ? evt?.eventId || 'Event' : 'AllEvents';
     },
@@ -794,6 +794,21 @@ const Reports = () => {
     (row: any) => ({ ...row, eventName: eventNameById.get(String(row.eventId)) ?? '' }),
     [eventNameById]
   );
+
+  /**
+   * When the report was searched by a name/username or a status, its View
+   * opens on the matching records of the event - the ones its row counted -
+   * with a switch to all of them. The generated filters, never the live inputs.
+   */
+  const viewMatchParams = useMemo(() => {
+    if (!reportFilters || !serverFiltered) return undefined;
+    if (!reportFilters.searchValue.trim() && !reportFilters.status) return undefined;
+    return {
+      startDate: reportFilters.startDate,
+      endDate: reportFilters.endDate,
+      ...reportFilterParams(activeReport, reportFilters),
+    } as Record<string, string>;
+  }, [reportFilters, serverFiltered, activeReport]);
 
   const statusVariant = (status: string) => {
     switch (status) {
@@ -925,8 +940,8 @@ const Reports = () => {
         }}
         dateError={dateError}
         statusOptions={definition.statusChoices}
-        statusValue={accessStatusFilter}
-        onStatusChange={setAccessStatusFilter}
+        statusValue={statusChoice}
+        onStatusChange={setStatusChoice}
         onClear={clearFilters}
         onDownloadExcel={() => runExport('excel')}
         onDownloadPdf={() => runExport('pdf')}
@@ -1026,6 +1041,7 @@ const Reports = () => {
           endpoint={definition.endpoint}
           columns={definition.columns}
           decorate={activeReport === 'contact' ? decorateContact : undefined}
+          matchParams={viewMatchParams}
           statusVariant={statusVariant}
           onBack={() => setScopedViewEventId('')}
         />

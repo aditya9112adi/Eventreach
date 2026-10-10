@@ -211,15 +211,22 @@ test('the rows and View keep the generated filters when the picker moves', async
 
   await t.test('the rows come from filteredRows - built from the generated filters', () => {
     assert.ok(reports.includes('() => (eventIdsOf ? groupRecordsByEvent(filteredRows, eventIdsOf, events) : []),'));
-    assert.ok(reports.includes('const reportFilters: ReportFilters | null =\n    searchFirst || activeReport === \'access\' ? (hasResults ? run.applied : null) : liveFilters;'));
+    assert.ok(reports.includes('searchFirst || serverFiltered ? (hasResults ? run.applied : null) : liveFilters;'));
   });
 
-  await t.test('View opens the clicked row\'s event and inherits no filters - generated or live', () => {
+  await t.test('View opens the clicked row\'s event; only a searched report hands it its filters', () => {
     const branch = between(reports, '<ReportEventView', '/>');
     assert.ok(branch.includes('eventId={scopedViewEventId}'));
+    assert.ok(branch.includes('matchParams={viewMatchParams}'));
     for (const inherited of ['filters=', 'reportFilters', 'liveFilters', 'reportEventId', 'accessors=', 'isDateMode=']) {
       assert.equal(branch.includes(inherited), false, `View is not given ${inherited}`);
     }
+    // The match parameters come from the generated filters, and only when the
+    // report was searched by a name/username or a status.
+    const match = between(reports, 'const viewMatchParams = useMemo(() => {', '}, [reportFilters, serverFiltered, activeReport]);');
+    assert.ok(match.includes('if (!reportFilters || !serverFiltered) return undefined;'));
+    assert.ok(match.includes('if (!reportFilters.searchValue.trim() && !reportFilters.status) return undefined;'));
+    assert.ok(match.includes('...reportFilterParams(activeReport, reportFilters),'));
   });
 });
 
@@ -232,9 +239,11 @@ test('View opens the event\'s details and only its records', async (t) => {
     assert.ok(reports.includes(') : eventScoped && scopedViewEventId ? ('));
   });
 
-  await t.test('the View request carries the event id only - no dates, no search', () => {
-    assert.ok(view.includes('.get(endpoint, { params: { eventId } })'));
-    assert.equal(/startDate|endDate|searchValue/.test(view), false, 'the View never sends or reads a report filter');
+  await t.test('without a search, and under "Show all records", the request is the event id only', () => {
+    assert.ok(view.includes('const params = showingMatches ? { ...JSON.parse(matchKey), eventId } : { eventId };'));
+    assert.ok(view.includes('const showingMatches = Boolean(matchParams) && !showAll;'));
+    assert.ok(view.includes("{showAll ? 'Show only matching records' : 'Show all records'}"));
+    assert.equal(/startDate|endDate|searchValue/.test(view), false, 'the View names no report filter itself');
     const branch = between(reports, '<ReportEventView', '/>');
     assert.ok(branch.includes('endpoint={definition.endpoint}'), 'the existing, server-scoped endpoint');
     assert.ok(branch.includes('columns={definition.columns}'), 'the report\'s own columns');
@@ -245,7 +254,7 @@ test('View opens the event\'s details and only its records', async (t) => {
     assert.ok(view.includes('const shown = useMemo(() => (decorate ? rows.map(decorate) : rows), [rows, decorate]);'));
   });
 
-  await t.test('Access: records outside the report\'s dates, name and status still appear in their event\'s View', () => {
+  await t.test('Access: records outside the report\'s dates, name and status are in the event\'s View under Show all records', () => {
     // The report: College, October, people named "rahul" with status Active.
     const applied = filters({ eventId: 'evtC', searchValue: 'rahul' });
     const { rows, records } = generate('access', applied);
@@ -258,7 +267,7 @@ test('View opens the event\'s details and only its records', async (t) => {
     assert.equal(viewed.some((r) => r.name === 'Bina'), false, 'no one from another event');
   });
 
-  await t.test('Contact: records outside the report\'s dates, name and status still appear in their event\'s View', () => {
+  await t.test('Contact: records outside the report\'s dates, name and status are in the event\'s View under Show all records', () => {
     const applied = filters({ mode: 'Status', searchValue: 'valid', startDate: '2026-10-01', endDate: '2026-10-01' });
     const { rows } = generate('contact', applied);
     assert.deepEqual(ids(rows), ['EVT-000021'], 'only College Guest One matched, so only College is listed');
