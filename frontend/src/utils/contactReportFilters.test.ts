@@ -1,14 +1,11 @@
 /**
- * The Contact Report's Name, Status and Date filters decide which event rows
- * it lists - all three together, as on the Access Report.
+ * The Contact Report's filters, laid out exactly like the Event Report's: a
+ * "Filter By" choice (Name, Status, Date), one search box and the dates. The
+ * chosen filter decides which event rows it lists, and the server applies it
+ * (see tests/accessContactReports.integration.test.ts).
  *
- * The bugs: the filter bar offered Name, Status and Date as one choice, so
- * Name and Status could never combine, choosing Date (to set the required
- * period) switched the name search off while still showing it, and Status was
- * a "contains" search in which "Valid" also matched "Invalid". Now the name is
- * the search box, Status is a dropdown matched exactly, the period always
- * applies, and the server applies all of them (see
- * tests/accessContactReports.integration.test.ts).
+ * Status is matched from the start of a word, so "valid" finds Valid and never
+ * Invalid; the Date choice searches by the period alone.
  *
  * Run: npx tsx --test frontend/src/utils/contactReportFilters.test.ts
  */
@@ -37,6 +34,7 @@ const value = (x: unknown, fallback = '') => (x === null || x === undefined || x
 const CONTACT = {
   text: (row: any) => `${value(row.fullName)} ${value(row.phoneNumber)} ${value(row.email)}`,
   status: (row: any) => value(row.status, '-'),
+  statusMatches: matchesStatusWord,
   date: (row: any) => row.createdAt,
 };
 
@@ -55,48 +53,48 @@ const CONTACTS = [
 ];
 
 const filters = (over: Partial<ReportFilters> = {}): ReportFilters => ({
-  mode: 'Name', searchValue: '', startDate: '2026-10-01', endDate: '2026-10-31', eventId: '', status: '', ...over,
+  mode: 'Name', searchValue: '', startDate: '2026-10-01', endDate: '2026-10-31', eventId: '', ...over,
 });
 
 /** The rows the Contact Report lists for these generated filters. */
 const rowsFor = (applied: ReportFilters) => {
-  const records = filterReportRows(CONTACTS, CONTACT, applied, false);
+  const records = filterReportRows(CONTACTS, CONTACT, applied, applied.mode === 'Date');
   return {
     records: records.map((r) => r.fullName),
     rows: groupRecordsByEvent(records, contactRecordEventIds, EVENTS).map((r) => `${r.eventId} | ${r.recordCount}`),
   };
 };
 
-// ─── the Contact Report's filter bar ─────────────────────────────────────────
+// ─── the filter bar ──────────────────────────────────────────────────────────
 
-test('the Contact filter bar: a Name box and a Status dropdown, no single choice', async (t) => {
+test('the Contact filter bar is the Event Report\'s: Filter By, one search box, the dates', async (t) => {
   const contactBlock = between(reports, "key: 'contact'", 'const Reports = () =>');
 
-  await t.test('one text field (the name) and the three contact statuses', () => {
-    assert.ok(contactBlock.includes("options: [{ key: 'Name', label: 'Name', type: 'text' }],"));
-    assert.ok(contactBlock.includes('statusChoices: CONTACT_STATUSES,'));
-    assert.ok(reports.includes("const CONTACT_STATUSES = ['Valid', 'Invalid', 'Duplicate'] as const;"));
-    assert.equal(contactBlock.includes("key: 'Date'"), false, 'no Date choice to switch the name search off');
-    assert.equal(contactBlock.includes("key: 'Status'"), false, 'Status is the dropdown, not a choice of the search box');
+  await t.test('Name, Status and Date to choose from', () => {
+    assert.ok(contactBlock.includes("{ key: 'Name', label: 'Name', type: 'text' },"));
+    assert.ok(contactBlock.includes("{ key: 'Status', label: 'Status', type: 'text' },"));
+    assert.ok(contactBlock.includes("{ key: 'Date', label: 'Date', type: 'date' },"));
+    assert.equal(contactBlock.includes('statusChoices'), false, 'no Status dropdown');
   });
 
   await t.test('the fixture mirrors the real Contact definition', () => {
     assert.ok(contactBlock.includes('text: (row) => `${value(row.fullName)} ${value(row.phoneNumber)} ${value(row.email)}`'));
     assert.ok(contactBlock.includes("status: (row) => value(row.status, '-'),"));
+    assert.ok(contactBlock.includes('statusMatches: matchesStatusWord,'));
     assert.ok(contactBlock.includes('date: (row) => row.createdAt,'));
   });
 
-  await t.test('Search sends the name and the status to the server', () => {
-    assert.deepEqual(reportFilterParams('contact', filters({ searchValue: '  beta ', status: 'Valid' })), { name: 'beta', status: 'Valid' });
-    assert.deepEqual(reportFilterParams('contact', filters()), {}, 'empty filters are not sent');
-    assert.deepEqual(reportFilterParams('access', filters({ searchValue: 'x' })), { username: 'x' }, 'the Access Report sends a username');
-    assert.deepEqual(reportFilterParams('event', filters({ searchValue: 'x', status: 'Valid' })), {}, 'the Event Report sends neither');
+  await t.test('Search sends the chosen filter to the server', () => {
+    assert.deepEqual(reportFilterParams('contact', filters({ searchValue: '  beta ' })), { name: 'beta' });
+    assert.deepEqual(reportFilterParams('contact', filters({ mode: 'Status', searchValue: 'valid' })), { status: 'valid' });
+    assert.deepEqual(reportFilterParams('contact', filters({ mode: 'Date', searchValue: 'ignored' })), {}, 'Date: the period alone');
+    assert.deepEqual(reportFilterParams('contact', filters()), {}, 'nothing empty is sent');
   });
 });
 
 // ─── the filters ─────────────────────────────────────────────────────────────
 
-test('Contact Name filter lists only the events of matching contacts', async (t) => {
+test('Name lists only the events of matching contacts', async (t) => {
   await t.test('one contact\'s name: only that contact\'s event', () => {
     assert.deepEqual(rowsFor(filters({ searchValue: 'College Guest One' })), { records: ['College Guest One'], rows: ['EVT-000021 | 1'] });
   });
@@ -115,65 +113,54 @@ test('Contact Name filter lists only the events of matching contacts', async (t)
   });
 });
 
-test('Contact Status filter lists only the events of matching contacts', async (t) => {
-  await t.test('Valid keeps valid contacts only - never the invalid ones', () => {
-    const { records, rows } = rowsFor(filters({ status: 'Valid' }));
+test('Status lists only the events of matching contacts', async (t) => {
+  await t.test('"valid" keeps valid contacts only - never the invalid ones', () => {
+    const { records, rows } = rowsFor(filters({ mode: 'Status', searchValue: 'valid' }));
     assert.deepEqual(records, ['College Guest One', 'Beta Guest']);
     assert.deepEqual(rows, ['EVT-000022 | 1', 'EVT-000021 | 1']);
   });
 
-  await t.test('Invalid keeps invalid contacts only', () => {
-    assert.deepEqual(rowsFor(filters({ status: 'Invalid' })).rows, ['EVT-000001 | 1', 'EVT-000021 | 1']);
-  });
-
-  await t.test('Duplicate keeps duplicates only', () => {
-    assert.deepEqual(rowsFor(filters({ status: 'Duplicate' })).rows, ['EVT-000022 | 1']);
+  await t.test('Invalid and Duplicate, and the start of a status', () => {
+    assert.deepEqual(rowsFor(filters({ mode: 'Status', searchValue: 'Invalid' })).rows, ['EVT-000001 | 1', 'EVT-000021 | 1']);
+    assert.deepEqual(rowsFor(filters({ mode: 'Status', searchValue: 'dup' })).rows, ['EVT-000022 | 1']);
+    assert.deepEqual(rowsFor(filters({ mode: 'Status', searchValue: 'inv' })).records, ['College Guest Two', 'Gala Invalid Guest']);
   });
 });
 
-test('Contact Date filter keeps working', () => {
-  assert.deepEqual(rowsFor(filters({ startDate: '2026-10-01', endDate: '2026-10-10' })).rows, ['EVT-000022 | 2', 'EVT-000021 | 2']);
-  assert.deepEqual(rowsFor(filters({ startDate: '2026-10-15', endDate: '2026-10-31' })).rows, ['EVT-000001 | 1']);
-});
-
-test('Name, Status and dates combine', async (t) => {
-  await t.test('Name + Status', () => {
-    assert.deepEqual(rowsFor(filters({ searchValue: 'guest', status: 'Invalid' })).records, ['College Guest Two', 'Gala Invalid Guest']);
-    assert.deepEqual(rowsFor(filters({ searchValue: 'beta', status: 'Valid' })).records, ['Beta Guest']);
+test('Date searches by the period alone, and the period applies to every choice', async (t) => {
+  await t.test('the period decides which events appear', () => {
+    assert.deepEqual(rowsFor(filters({ mode: 'Date', startDate: '2026-10-01', endDate: '2026-10-10' })).rows, ['EVT-000022 | 2', 'EVT-000021 | 2']);
+    assert.deepEqual(rowsFor(filters({ mode: 'Date', startDate: '2026-10-15', endDate: '2026-10-31' })).rows, ['EVT-000001 | 1']);
   });
 
-  await t.test('Name + Status + dates', () => {
-    assert.deepEqual(rowsFor(filters({ searchValue: 'guest', status: 'Invalid', startDate: '2026-10-01', endDate: '2026-10-10' })).rows, ['EVT-000021 | 1']);
-    assert.deepEqual(rowsFor(filters({ searchValue: 'gala', status: 'Invalid', startDate: '2026-10-01', endDate: '2026-10-10' })).rows, []);
+  await t.test('text left in the box is ignored by the Date choice', () => {
+    assert.deepEqual(rowsFor(filters({ mode: 'Date', searchValue: 'beta' })).rows, ['EVT-000001 | 1', 'EVT-000022 | 2', 'EVT-000021 | 2']);
   });
 
-  await t.test('Name + Status + dates + the selected event (the server keeps only that event\'s contacts)', () => {
-    const scoped = CONTACTS.filter((c) => c.eventId === 'evtC');
-    const applied = filters({ searchValue: 'college', status: 'Valid', eventId: 'evtC' });
-    const rows = groupRecordsByEvent(filterReportRows(scoped, CONTACT, applied, false), contactRecordEventIds, EVENTS);
-    assert.deepEqual(rows.map((r) => `${r.eventId} | ${r.recordCount}`), ['EVT-000021 | 1']);
+  await t.test('Name or Status within the dates', () => {
+    assert.deepEqual(rowsFor(filters({ searchValue: 'guest', startDate: '2026-10-15', endDate: '2026-10-31' })).rows, ['EVT-000001 | 1']);
+    assert.deepEqual(rowsFor(filters({ mode: 'Status', searchValue: 'invalid', startDate: '2026-10-01', endDate: '2026-10-10' })).rows, ['EVT-000021 | 1']);
   });
 });
 
 test('the generated filters, not the live inputs, decide the rows', () => {
   let run = initialReportRun('contact');
-  const applied = filters({ status: 'Valid' });
+  const applied = filters({ mode: 'Status', searchValue: 'valid' });
   run = reportRunReducer(run, { type: 'start', reportKey: 'contact', requestId: 1, filters: applied });
   run = reportRunReducer(run, { type: 'success', requestId: 1, rows: CONTACTS });
-  const live = filters({ searchValue: 'gala', status: 'Invalid', eventId: 'evtB' });
+  const live = filters({ searchValue: 'gala', eventId: 'evtB' });
   assert.equal(filtersDiffer(run.applied, live), true);
   const rows = groupRecordsByEvent(filterReportRows(run.rows, CONTACT, run.applied!, false), contactRecordEventIds, EVENTS);
-  assert.deepEqual(rows.map((r) => r.eventId), ['EVT-000022', 'EVT-000021'], 'still the generated Status = Valid report');
+  assert.deepEqual(rows.map((r) => r.eventId), ['EVT-000022', 'EVT-000021'], 'still the generated Status "valid" report');
   assert.ok(reports.includes('searchFirst || serverFiltered ? (hasResults ? run.applied : null) : liveFilters;'));
   assert.ok(reports.includes("filterReportRows(decoratedRows, definition, reportFilters, reportOption.type === 'date')"));
 });
 
-test('the downloads are the displayed records, and say what they were filtered by', () => {
+test('the downloads are the displayed records, named for the event', () => {
   const exportFn = between(reports, 'const runExport = useCallback(', 'const viewedEvent');
   assert.ok(exportFn.includes('await exportToExcel(name, definition.label, definition.columns, filteredRows, meta);'));
   assert.ok(exportFn.includes('await exportToPdf(name, definition.label, definition.columns, filteredRows, meta);'));
-  assert.ok(exportFn.includes("...(definition.statusChoices ? { status: exportFilters.status || 'All Statuses' } : {}),"));
-  assert.ok(reports.includes('if (!REPORTS[activeReport].statusChoices) return reportOption.key;'), 'named for the event, like Access');
+  assert.ok(reports.includes('if (!EVENT_SCOPED_REPORTS.includes(activeReport)) return reportOption.key;'));
 });
 
 test('View opens on the matching contacts when searched, with every contact a click away', () => {
@@ -182,16 +169,9 @@ test('View opens on the matching contacts when searched, with every contact a cl
   assert.ok(reports.includes('matchParams={viewMatchParams}'));
 });
 
-test('the word-start status matcher stays available, unused by these reports', () => {
-  // Kept as a utility; the Contact Report's Status is now an exact dropdown.
-  assert.equal(matchesStatusWord('Invalid', 'valid'), false);
-  assert.equal(matchesStatusWord('Valid', 'val'), true);
-  assert.equal(between(reports, "key: 'contact'", 'const Reports = () =>').includes('statusMatches'), false);
-});
-
 test('the Event Report is unchanged', () => {
   assert.ok(reports.includes('onClick={() => setSelectedEventId(row._id)}'));
   assert.ok(reports.includes("{activeReport === 'event' && selectedEventId ? ("));
   assert.ok(reports.includes(': definition.columns;'));
-  assert.equal(between(reports, "key: 'event'", "key: 'access'").includes('statusChoices'), false);
+  assert.equal(between(reports, "key: 'event'", "key: 'access'").includes('statusMatches'), false);
 });

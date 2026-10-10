@@ -28,12 +28,6 @@ export interface ReportFilters {
    * reportEventParam - and the downloads state it.
    */
   eventId?: string;
-  /**
-   * The Access Report's Status filter: one effective status (Active,
-   * Scheduled, Expired, Cancelled, Rejected), or empty for all. It applies
-   * together with the search value, the dates and the event.
-   */
-  status?: string;
 }
 
 /** The reports whose generated filters may name one event. */
@@ -49,10 +43,11 @@ export const reportEventParam = (key: ReportKey, filters: ReportFilters): { even
   EVENT_SCOPED_REPORTS.includes(key) && filters.eventId ? { eventId: filters.eventId } : {};
 
 /**
- * The Access and Contact Reports' search and status, for the server to apply
- * with the event and the dates - so the report, and the downloads written
- * from it, are the server's filtered records. The Access Report searches by
- * username, the Contact Report by name. Empty filters are not sent.
+ * The Access and Contact Reports' search, for the server to apply with the
+ * event and the dates - so the report, and the downloads written from it, are
+ * the server's filtered records. Like the Event Report, one filter is chosen
+ * at a time: the name (a username on the Access Report) or the status; the
+ * Date choice searches by the period alone. Nothing empty is sent.
  */
 export const reportFilterParams = (
   key: ReportKey,
@@ -60,10 +55,9 @@ export const reportFilterParams = (
 ): { username?: string; name?: string; status?: string } => {
   if (key !== 'access' && key !== 'contact') return {};
   const text = filters.searchValue.trim();
-  return {
-    ...(text ? (key === 'access' ? { username: text } : { name: text }) : {}),
-    ...(filters.status ? { status: filters.status } : {}),
-  };
+  if (!text || filters.mode === 'Date') return {};
+  if (filters.mode === 'Status') return { status: text };
+  return key === 'access' ? { username: text } : { name: text };
 };
 
 export interface ReportRowAccessors {
@@ -136,9 +130,6 @@ export const filterReportRows = <T>(
      * unchanged.
      */
     if (!withinRange(accessors.date(row), filters.startDate, filters.endDate)) return false;
-    // A chosen status (the Access Report's own Status filter) must match
-    // exactly, whatever the text search - the filters combine.
-    if (filters.status && accessors.status(row) !== filters.status) return false;
     if (isDateMode) return true;
     if (!needle) return true;
     if (filters.mode === 'Status' && accessors.statusMatches) {
@@ -179,8 +170,7 @@ export const filtersDiffer = (a: ReportFilters | null, b: ReportFilters): boolea
   a.searchValue !== b.searchValue ||
   a.startDate !== b.startDate ||
   a.endDate !== b.endDate ||
-  (a.eventId ?? '') !== (b.eventId ?? '') ||
-  (a.status ?? '') !== (b.status ?? '');
+  (a.eventId ?? '') !== (b.eventId ?? '');
 
 // ── Run state ────────────────────────────────────────────────────────────────
 

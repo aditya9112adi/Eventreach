@@ -225,7 +225,7 @@ test('the rows and View keep the generated filters when the picker moves', async
     // report was searched by a name/username or a status.
     const match = between(reports, 'const viewMatchParams = useMemo(() => {', '}, [reportFilters, serverFiltered, activeReport]);');
     assert.ok(match.includes('if (!reportFilters || !serverFiltered) return undefined;'));
-    assert.ok(match.includes('if (!reportFilters.searchValue.trim() && !reportFilters.status) return undefined;'));
+    assert.ok(match.includes('if (Object.keys(reportFilterParams(activeReport, reportFilters)).length === 0) return undefined;'));
     assert.ok(match.includes('...reportFilterParams(activeReport, reportFilters),'));
   });
 });

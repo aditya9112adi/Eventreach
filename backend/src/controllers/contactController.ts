@@ -18,6 +18,7 @@ import { AuditService } from '../services/AuditService';
 import { performContactDeletion } from '../services/contactDeletionService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { isEventAuthorized, getAuthorizedEventIds } from '../services/eventAuthService';
+import { statusesMatching } from '../utils/accessStatus';
 
 /**
  * Optional server-side pagination for contact listings.
@@ -632,8 +633,10 @@ export const getAllContacts = async (req: Request, res: Response) => {
      * every one that is given.
      *
      * name matches the full name, phone number or email, case-insensitively,
-     * anywhere in it - the way the report has always searched. status is
-     * Valid, Invalid or Duplicate, matched exactly.
+     * anywhere in it - the way the report has always searched. status is what
+     * was typed in the report's Status search, matched from the start of a word
+     * against Valid, Invalid and Duplicate - so "valid" finds Valid and never
+     * Invalid.
      */
     const rawName = req.query.name;
     if (rawName !== undefined && typeof rawName !== 'string') {
@@ -644,12 +647,12 @@ export const getAllContacts = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'The name filter is too long.' });
     }
     const rawStatus = req.query.status;
-    if (
-      rawStatus !== undefined &&
-      rawStatus !== '' &&
-      (typeof rawStatus !== 'string' || !(CONTACT_STATUSES as readonly string[]).includes(rawStatus))
-    ) {
+    if (rawStatus !== undefined && typeof rawStatus !== 'string') {
       return res.status(400).json({ error: 'Invalid status filter.' });
+    }
+    const statusText = (rawStatus ?? '').trim();
+    if (statusText.length > 100) {
+      return res.status(400).json({ error: 'The status filter is too long.' });
     }
     if (name) {
       const safe = escapeRegex(name);
@@ -663,8 +666,9 @@ export const getAllContacts = async (req: Request, res: Response) => {
         },
       ];
     }
-    if (typeof rawStatus === 'string' && rawStatus) {
-      query.status = rawStatus;
+    if (statusText) {
+      // The statuses the typed text means; a search that names none matches nothing.
+      query.status = { $in: statusesMatching(CONTACT_STATUSES, statusText) };
     }
 
     /**

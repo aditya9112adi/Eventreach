@@ -1,13 +1,9 @@
 /**
- * The Access Report's filters: event, username, status and dates apply
- * together; Search sends them to the server; the table and both downloads are
- * the same filtered records; an event's "Access Report" link opens the report
- * on that event.
- *
- * The bug: the filter bar offered UserName, Status and Date as one choice.
- * Username and Status shared the search box, so they could never combine,
- * and choosing Date (to set the required period) switched the username search
- * off while still showing it.
+ * The Access Report's filters, laid out exactly like the Event Report's: a
+ * "Filter By" choice (UserName, Status, Date), one search box and the dates.
+ * The chosen filter is applied by the server with the event and the dates;
+ * the table and both downloads are the same filtered records; an event's
+ * "Access Report" link opens the report on that event.
  *
  * Run: npx tsx --test frontend/src/utils/accessReportFilters.test.ts
  */
@@ -17,6 +13,7 @@ import fs from 'fs';
 import {
   filterReportRows,
   filtersDiffer,
+  matchesStatusWord,
   reportFilterParams,
   reportEventParam,
   reportRunReducer,
@@ -24,7 +21,7 @@ import {
   type ReportFilters,
 } from './reportSearch.ts';
 import { buildMetaRows, buildReportFileName } from './reportExport.ts';
-import { getAccessStatus, ACCESS_STATUSES } from './accessStatus.ts';
+import { getAccessStatus, accessStatusOf } from './accessStatus.ts';
 
 const read = (file: string) => fs.readFileSync(file, 'utf-8').split('\r\n').join('\n');
 const reports = read('frontend/src/pages/Reports.tsx');
@@ -39,7 +36,8 @@ const past = new Date(Date.now() - 30 * DAY).toISOString();
 /** The Access Report's accessors, as Reports.tsx declares them (checked below). */
 const ACCESS = {
   text: (r: any) => `${r.name ?? ''} ${r.email ?? ''}`,
-  status: (r: any) => getAccessStatus(r),
+  status: (r: any) => accessStatusOf(r),
+  statusMatches: matchesStatusWord,
   date: (r: any) => r.accessGrantedOn || r.createdAt,
 };
 
@@ -53,105 +51,101 @@ const RECORDS = [
 ];
 
 const filters = (over: Partial<ReportFilters> = {}): ReportFilters => ({
-  mode: 'UserName', searchValue: '', startDate: '2026-10-01', endDate: '2026-10-31', eventId: '', status: '', ...over,
+  mode: 'UserName', searchValue: '', startDate: '2026-10-01', endDate: '2026-10-31', eventId: '', ...over,
 });
-const namesFor = (f: ReportFilters) => filterReportRows(RECORDS, ACCESS, f, false).map((r) => r.name);
+const namesFor = (f: ReportFilters) => filterReportRows(RECORDS, ACCESS, f, f.mode === 'Date').map((r) => r.name);
 
-// ─── the filters combine ─────────────────────────────────────────────────────
+// ─── the filter bar ──────────────────────────────────────────────────────────
 
-test('username, status and dates apply together on the page as well', async (t) => {
-  await t.test('username only', () => {
+test('the Access filter bar is the Event Report\'s: Filter By, one search box, the dates', async (t) => {
+  await t.test('UserName, Status and Date to choose from', () => {
+    const block = between(reports, "key: 'access'", "key: 'contact'");
+    assert.ok(block.includes("{ key: 'UserName', label: 'UserName', type: 'text' },"));
+    assert.ok(block.includes("{ key: 'Status', label: 'Status', type: 'text' },"));
+    assert.ok(block.includes("{ key: 'Date', label: 'Date', type: 'date' },"));
+    assert.ok(block.includes('statusMatches: matchesStatusWord,'));
+    assert.equal(block.includes('statusChoices'), false, 'no Status dropdown');
+  });
+
+  await t.test('the same bar component, with no Status dropdown in it', () => {
+    assert.equal(bar.includes('statusOptions'), false);
+    assert.equal(bar.includes('report-status'), false);
+    assert.equal(reports.includes('statusOptions='), false);
+    assert.ok(bar.includes('<legend className={LABEL}>Filter By</legend>'));
+  });
+
+  await t.test('the Date choice shows no text it would ignore', () => {
+    assert.ok(bar.includes("value={isDateMode ? '' : searchValue}"));
+    assert.ok(bar.includes('disabled={isDateMode}'));
+  });
+
+  await t.test('the Event Report keeps its own choices', () => {
+    const block = between(reports, "key: 'event'", "key: 'access'");
+    assert.ok(block.includes("{ key: 'EventName', label: 'Name / ID', type: 'text' },"));
+    assert.ok(block.includes("{ key: 'EventID', label: 'Event ID', type: 'text' },"));
+    assert.equal(block.includes('statusMatches'), false);
+  });
+});
+
+// ─── the chosen filter ───────────────────────────────────────────────────────
+
+test('the chosen filter, with the dates, decides the records', async (t) => {
+  await t.test('UserName: a name or email, anywhere in it', () => {
     assert.deepEqual(namesFor(filters({ searchValue: 'kavya' })), ['Kavya Kite']);
     assert.deepEqual(namesFor(filters({ searchValue: 'kunal@x' })), ['Kunal Kite'], 'by email');
   });
 
-  await t.test('status only: exactly the chosen status', () => {
-    assert.deepEqual(namesFor(filters({ status: 'Active' })), ['Kavya Kite', 'Kunal Kite']);
-    assert.deepEqual(namesFor(filters({ status: 'Expired' })), ['Kabir Kite']);
-    assert.deepEqual(namesFor(filters({ status: 'Scheduled' })), ['Keya Kite']);
-    assert.deepEqual(namesFor(filters({ status: 'Cancelled' })), ['Kiara Kite']);
-    assert.deepEqual(namesFor(filters({ status: 'Rejected' })), ['Krish Kite']);
+  await t.test('Status: from the start of a word, so "act" finds Active and nothing else', () => {
+    assert.deepEqual(namesFor(filters({ mode: 'Status', searchValue: 'Active' })), ['Kavya Kite', 'Kunal Kite']);
+    assert.deepEqual(namesFor(filters({ mode: 'Status', searchValue: 'act' })), ['Kavya Kite', 'Kunal Kite']);
+    assert.deepEqual(namesFor(filters({ mode: 'Status', searchValue: 'expired' })), ['Kabir Kite']);
+    assert.deepEqual(namesFor(filters({ mode: 'Status', searchValue: 'sched' })), ['Keya Kite']);
+    assert.deepEqual(namesFor(filters({ mode: 'Status', searchValue: 'Cancelled' })), ['Kiara Kite']);
+    assert.deepEqual(namesFor(filters({ mode: 'Status', searchValue: 'rejected' })), ['Krish Kite']);
   });
 
-  await t.test('dates only', () => {
-    assert.deepEqual(namesFor(filters({ startDate: '2026-10-06', endDate: '2026-10-07' })), ['Kavya Kite', 'Keya Kite']);
+  await t.test('Date: the period alone - any text left in the box is ignored', () => {
+    assert.deepEqual(namesFor(filters({ mode: 'Date', searchValue: 'kavya', startDate: '2026-10-06', endDate: '2026-10-07' })), ['Kavya Kite', 'Keya Kite']);
   });
 
-  await t.test('username + status + dates together', () => {
-    assert.deepEqual(namesFor(filters({ searchValue: 'kite', status: 'Active', startDate: '2026-10-01', endDate: '2026-10-10' })), ['Kavya Kite']);
+  await t.test('UserName or Status, always within the dates', () => {
+    assert.deepEqual(namesFor(filters({ searchValue: 'kite', startDate: '2026-10-01', endDate: '2026-10-07' })), ['Kavya Kite', 'Keya Kite']);
+    assert.deepEqual(namesFor(filters({ mode: 'Status', searchValue: 'active', startDate: '2026-10-01', endDate: '2026-10-10' })), ['Kavya Kite']);
   });
 
   await t.test('nothing matches: no records', () => {
-    assert.deepEqual(namesFor(filters({ searchValue: 'kite', status: 'Rejected', startDate: '2026-10-01', endDate: '2026-10-05' })), []);
-  });
-
-  await t.test('applying the page filters to the server\'s filtered rows changes nothing', () => {
-    const server = RECORDS.filter((r) => r.name.toLowerCase().includes('kite') && getAccessStatus(r) === 'Active');
-    assert.deepEqual(filterReportRows(server, ACCESS, filters({ searchValue: 'kite', status: 'Active' }), false), server.filter((r) => r.accessGrantedOn <= '2026-10-31'));
+    assert.deepEqual(namesFor(filters({ searchValue: 'nobody' })), []);
+    assert.deepEqual(namesFor(filters({ mode: 'Status', searchValue: 'sleeping' })), []);
   });
 });
 
-// ─── Search sends them ───────────────────────────────────────────────────────
+// ─── Search sends it ─────────────────────────────────────────────────────────
 
-test('Search sends the event, username and status with the dates', async (t) => {
-  await t.test('the Access Report\'s parameters', () => {
-    assert.deepEqual(reportFilterParams('access', filters({ searchValue: '  kavya ', status: 'Active' })), { username: 'kavya', status: 'Active' });
-    assert.deepEqual(reportFilterParams('access', filters()), {}, 'empty filters are not sent');
-    assert.deepEqual(reportFilterParams('contact', filters({ searchValue: 'x', status: 'Valid' })), { name: 'x', status: 'Valid' }, 'the Contact Report sends a name');
-    assert.deepEqual(reportFilterParams('event', filters({ searchValue: 'x' })), {});
+test('Search sends the chosen filter, with the event and the dates', async (t) => {
+  await t.test('the parameter for each choice', () => {
+    assert.deepEqual(reportFilterParams('access', filters({ searchValue: '  kavya ' })), { username: 'kavya' });
+    assert.deepEqual(reportFilterParams('access', filters({ mode: 'Status', searchValue: 'act' })), { status: 'act' });
+    assert.deepEqual(reportFilterParams('access', filters({ mode: 'Date', searchValue: 'ignored' })), {}, 'Date: the period alone');
+    assert.deepEqual(reportFilterParams('access', filters()), {}, 'nothing empty is sent');
+    assert.deepEqual(reportFilterParams('contact', filters({ mode: 'Name', searchValue: 'x' })), { name: 'x' });
+    assert.deepEqual(reportFilterParams('event', filters({ searchValue: 'x' })), {}, 'the Event Report filters in the page');
     assert.deepEqual(reportEventParam('access', filters({ eventId: 'evtK' })), { eventId: 'evtK' });
   });
 
-  await t.test('the request carries them on Search, from the generated filters', () => {
+  await t.test('the request carries them, from the generated filters, for every role', () => {
     const load = between(reports, 'const loadReport = useCallback(', '/**\n   * Roles other than Super Admin');
     assert.ok(load.includes('...reportEventParam(key, filters),'));
-    assert.ok(load.includes('...reportFilterParams(key, filters),'), 'for every role, within its own scope');
-    assert.equal(load.includes('searchFirst ? reportFilterParams'), false);
+    assert.ok(load.includes('...reportFilterParams(key, filters),'));
     assert.ok(load.includes('startDate: filters.startDate,') && load.includes('endDate: filters.endDate,'));
     assert.ok(reports.includes('void loadReport(activeReport, liveFilters);'), 'Search generates with the latest inputs');
   });
 
-  await t.test('a changed status counts as changed filters', () => {
-    assert.equal(filtersDiffer(filters({ status: 'Active' }), filters({ status: 'Expired' })), true);
-    assert.equal(filtersDiffer(filters({ status: '' }), { mode: 'UserName', searchValue: '', startDate: '2026-10-01', endDate: '2026-10-31', eventId: '' }), false);
-  });
-
   await t.test('the generated filters, not later edits, are the report', () => {
     let run = initialReportRun('access');
-    run = reportRunReducer(run, { type: 'start', reportKey: 'access', requestId: 1, filters: filters({ status: 'Active', eventId: 'evtK' }) });
-    assert.equal(filtersDiffer(run.applied, filters({ status: 'Expired', eventId: 'evtL' })), true);
-    assert.equal(run.applied!.status, 'Active');
-  });
-});
-
-// ─── the filter bar ──────────────────────────────────────────────────────────
-
-test('the Access filter bar: a username box and a Status dropdown, no single choice', async (t) => {
-  await t.test('the Access Report has one text field and the five statuses', () => {
-    const block = between(reports, "key: 'access'", "key: 'contact'");
-    assert.ok(block.includes("options: [{ key: 'UserName', label: 'UserName', type: 'text' }],"));
-    assert.ok(block.includes('statusChoices: ACCESS_STATUSES,'));
-    assert.deepEqual([...ACCESS_STATUSES], ['Active', 'Scheduled', 'Expired', 'Cancelled', 'Rejected']);
-  });
-
-  await t.test('the bar shows the Status dropdown with "All Statuses", and no radio for a single field', () => {
-    assert.ok(bar.includes('{options.length > 1 && ('));
-    assert.ok(bar.includes('<option value="">All Statuses</option>'));
-    assert.ok(bar.includes('onChange={(e) => onStatusChange?.(e.target.value)}'));
-    assert.ok(reports.includes('statusOptions={definition.statusChoices}'));
-    assert.ok(reports.includes('onStatusChange={setStatusChoice}'));
-  });
-
-  await t.test('the Event Report keeps its filter choices; the Contact Report works like Access', () => {
-    assert.equal(between(reports, "key: 'event'", "key: 'access'").includes('statusChoices'), false);
-    const contact = between(reports, "key: 'contact'", 'const Reports = () =>');
-    assert.ok(contact.includes('statusChoices: CONTACT_STATUSES,'));
-    assert.equal(contact.includes("key: 'Date'"), false);
-  });
-
-  await t.test('Clear and switching report reset the status with the other filters', () => {
-    assert.ok(between(reports, 'const clearFilters', 'const switchReportRef').includes("setStatusChoice('');"));
-    assert.ok(between(reports, 'const switchReport', 'const clearFilters').includes("setStatusChoice('');"));
+    run = reportRunReducer(run, { type: 'start', reportKey: 'access', requestId: 1, filters: filters({ mode: 'Status', searchValue: 'active', eventId: 'evtK' }) });
+    assert.equal(filtersDiffer(run.applied, filters({ mode: 'UserName', searchValue: 'active', eventId: 'evtK' })), true, 'a changed choice is a change');
+    assert.equal(filtersDiffer(run.applied, filters({ mode: 'Status', searchValue: 'active', eventId: 'evtL' })), true);
+    assert.ok(reports.includes('searchFirst || serverFiltered ? (hasResults ? run.applied : null) : liveFilters;'));
   });
 });
 
@@ -165,17 +159,14 @@ test('the downloads are the displayed records, named for the event', async (t) =
     assert.ok(reports.includes('const exportFilters = reportFilters ?? liveFilters;'), 'the generated filters');
   });
 
-  await t.test('they state the status filter and the event', () => {
-    const exportFn = between(reports, 'const runExport = useCallback(', 'const viewedEvent');
-    assert.ok(exportFn.includes("...(definition.statusChoices ? { status: exportFilters.status || 'All Statuses' } : {}),"));
-    assert.deepEqual(buildMetaRows({ searchValue: 'kite', startDate: '2026-10-01', endDate: '2026-10-31', status: 'Active', event: 'EVT-000006 | Kite Festival' }), [
-      ['Search Value', 'kite'], ['Start Date', '2026-10-01'], ['End Date', '2026-10-31'], ['Status', 'Active'], ['Event', 'EVT-000006 | Kite Festival'],
+  await t.test('they state the search and the event, as the Event Report states its search', () => {
+    assert.deepEqual(buildMetaRows({ searchValue: 'kite', startDate: '2026-10-01', endDate: '2026-10-31', event: 'EVT-000006 | Kite Festival' }), [
+      ['Search Value', 'kite'], ['Start Date', '2026-10-01'], ['End Date', '2026-10-31'], ['Event', 'EVT-000006 | Kite Festival'],
     ]);
-    assert.deepEqual(buildMetaRows({ startDate: '2026-10-01', endDate: '2026-10-31' }).length, 3, 'other reports unchanged');
   });
 
-  await t.test('the file name says Access Report, the event (or All Events) and the date', () => {
-    assert.ok(reports.includes("return filters?.eventId ? evt?.eventId || 'Event' : 'AllEvents';"));
+  await t.test('the file name says the report, the event (or All Events) and the date', () => {
+    assert.ok(reports.includes('if (!EVENT_SCOPED_REPORTS.includes(activeReport)) return reportOption.key;'));
     assert.ok(reports.includes('const name = buildReportFileName(definition.fileName, downloadLabel(exportFilters));'));
     const when = new Date('2026-10-09T06:00:00.000Z');
     assert.equal(buildReportFileName('AccessReport', 'EVT-000006', when), 'AccessReport_EVT000006_09102026');
@@ -183,11 +174,64 @@ test('the downloads are the displayed records, named for the event', async (t) =
   });
 });
 
+// ─── a status fixed at generation ────────────────────────────────────────────
+
+test('the status a report was generated with is the one it keeps', async (t) => {
+  await t.test('the server\'s accessStatus is used, even after the window has since closed', () => {
+    const generatedActive = { name: 'Kavya Kite', accessStatus: 'Active', accessExpiryDate: past };
+    assert.equal(getAccessStatus(generatedActive), 'Expired', 'recalculating now would say Expired');
+    assert.equal(accessStatusOf(generatedActive), 'Active', 'the report keeps what it was generated with');
+  });
+
+  await t.test('a record without a valid snapshot is derived as before', () => {
+    assert.equal(accessStatusOf({ accessExpiryDate: past }), 'Expired');
+    assert.equal(accessStatusOf({ accessStatus: 'Sleeping', isAccessCancelled: true }), 'Cancelled');
+  });
+
+  await t.test('the table, the Status search and the downloads all read the snapshot', () => {
+    const block = between(reports, "key: 'access'", "key: 'contact'");
+    assert.ok(block.includes('status: (row) => accessStatusOf(row),'));
+    assert.ok(block.includes("{ header: 'Status', value: (r) => accessStatusOf(r), width: 14 },"));
+    assert.equal(block.includes('getAccessStatus('), false);
+    const rows = [
+      { name: 'Generated Active', accessStatus: 'Active', accessExpiryDate: past, accessGrantedOn: '2026-10-06T06:00:00.000Z' },
+      { name: 'Generated Expired', accessStatus: 'Expired', accessExpiryDate: future, accessGrantedOn: '2026-10-06T06:00:00.000Z' },
+    ];
+    assert.deepEqual(filterReportRows(rows, ACCESS, filters({ mode: 'Status', searchValue: 'active' }), false).map((r) => r.name), ['Generated Active']);
+  });
+});
+
+// ─── roles without a Search button ───────────────────────────────────────────
+
+test('every role gets the same server filtering, without a request per keystroke', async (t) => {
+  await t.test('roles without a Search button reload when the search rests, or the choice changes', () => {
+    const debounce = between(reports, 'const [debouncedSearch, setDebouncedSearch] = useState', 'const loadReport = useCallback(');
+    assert.ok(debounce.includes('if (searchFirst || !serverFiltered) return;'), 'Super Admins keep their Search button');
+    assert.ok(debounce.includes('setTimeout(() => setDebouncedSearch(searchValue.trim()), 400)'), 'a pause, not every keystroke');
+    assert.ok(debounce.includes('return () => clearTimeout(timer);'));
+    assert.ok(debounce.includes('`${debouncedSearch}\\u0000${mode}`'));
+    assert.ok(reports.includes('}, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId, liveFilterQuery]);'));
+  });
+
+  await t.test('only the Access and Contact Reports reload; the Event Report filters in the page', () => {
+    assert.ok(reports.includes('const serverFiltered = EVENT_SCOPED_REPORTS.includes(activeReport);'));
+  });
+});
+
+// ─── View ────────────────────────────────────────────────────────────────────
+
+test('View opens on the matching records of a searched report', () => {
+  const match = between(reports, 'const viewMatchParams = useMemo(() => {', '}, [reportFilters, serverFiltered, activeReport]);');
+  assert.ok(match.includes('if (Object.keys(reportFilterParams(activeReport, reportFilters)).length === 0) return undefined;'),
+    'a UserName or Status search; the Date choice alone shows every record');
+  assert.ok(match.includes('...reportFilterParams(activeReport, reportFilters),'));
+});
+
 // ─── opening the report on an event ──────────────────────────────────────────
 
 test('an event\'s "Access Report" link opens the report on that event', async (t) => {
   await t.test('the Event Report View offers it, and keeps its own View', () => {
-    const link = between(reports, "{activeReport === 'event' && selectedEventId && canViewAccessReport && (", '{activeReport === \'event\' && selectedEventId ? (');
+    const link = between(reports, "{activeReport === 'event' && selectedEventId && canViewAccessReport && (", "{activeReport === 'event' && selectedEventId ? (");
     assert.ok(link.includes('navigate(`/reports?type=access&eventId=${selectedEventId}`)'), 'by the event\'s id');
     assert.ok(reports.includes('onClick={() => setSelectedEventId(row._id)}'), 'the Event Report View is unchanged');
   });
@@ -200,67 +244,13 @@ test('an event\'s "Access Report" link opens the report on that event', async (t
   await t.test('the report takes a well-formed id from the link, selects it and opens its View', () => {
     assert.ok(reports.includes("const requestedEventId = /^[a-f0-9]{24}$/i.test(rawRequestedEventId) ? rawRequestedEventId : '';"));
     const open = between(reports, 'const openRequestedEvent = (key: ReportKey) => {', '};');
-    assert.ok(open.includes('setReportEventId(requestedEventId);'), 'selected in "Select Event Name"');
-    assert.ok(open.includes('setScopedViewEventId(requestedEventId);'), 'its access records shown');
-    assert.ok(reports.includes(') : eventScoped && scopedViewEventId ? ('), 'the View needs no generated report');
+    assert.ok(open.includes('setReportEventId(requestedEventId);'));
+    assert.ok(open.includes('setScopedViewEventId(requestedEventId);'));
+    assert.ok(reports.includes(') : eventScoped && scopedViewEventId ? ('));
   });
 
-  await t.test('for every role: the Super Admin\'s and the live-filtering roles\' paths both open it', () => {
-    const effects = reports.match(/openRequestedEvent\(requestedType\);/g) || [];
-    assert.equal(effects.length, 2);
+  await t.test('for every role', () => {
+    assert.equal((reports.match(/openRequestedEvent\(requestedType\);/g) || []).length, 2);
     assert.ok(reports.includes('if (searchFirst || !requestedType) return;'));
-  });
-});
-
-// ─── one filtering path for every role, and a status fixed at generation ────
-
-test('the status a report was generated with is the one it keeps', async (t) => {
-  const { accessStatusOf } = await import('./accessStatus.ts');
-
-  await t.test('the server\'s accessStatus is used, even after the window has since closed', () => {
-    const generatedActive = { name: 'Kavya Kite', accessStatus: 'Active', accessExpiryDate: past };
-    assert.equal(getAccessStatus(generatedActive), 'Expired', 'recalculating now would say Expired');
-    assert.equal(accessStatusOf(generatedActive), 'Active', 'the report keeps what it was generated with');
-  });
-
-  await t.test('a record without a valid snapshot is derived as before', () => {
-    assert.equal(accessStatusOf({ accessExpiryDate: past }), 'Expired');
-    assert.equal(accessStatusOf({ accessStatus: 'Sleeping', isAccessCancelled: true }), 'Cancelled');
-  });
-
-  await t.test('the table, the Status filter and the downloads all read the snapshot', () => {
-    const block = between(reports, "key: 'access'", "key: 'contact'");
-    assert.ok(block.includes('status: (row) => accessStatusOf(row),'), 'the filter and the badge');
-    assert.ok(block.includes("{ header: 'Status', value: (r) => accessStatusOf(r), width: 14 },"), 'the table and both downloads');
-    assert.equal(block.includes('getAccessStatus('), false, 'nothing in the report recalculates it');
-  });
-
-  await t.test('filtering a generated report by status uses the snapshot', () => {
-    const SNAPSHOT = { ...ACCESS, status: (r: any) => accessStatusOf(r) };
-    const rows = [
-      { name: 'Generated Active', accessStatus: 'Active', accessExpiryDate: past, accessGrantedOn: '2026-10-06T06:00:00.000Z' },
-      { name: 'Generated Expired', accessStatus: 'Expired', accessExpiryDate: future, accessGrantedOn: '2026-10-06T06:00:00.000Z' },
-    ];
-    assert.deepEqual(filterReportRows(rows, SNAPSHOT, filters({ status: 'Active' }), false).map((r) => r.name), ['Generated Active']);
-  });
-});
-
-test('every role gets the same server-side filtering, without a request per keystroke', async (t) => {
-  await t.test('the Access Report is the last request\'s answer and filters, for every role', () => {
-    assert.ok(reports.includes('searchFirst || serverFiltered ? (hasResults ? run.applied : null) : liveFilters;'));
-  });
-
-  await t.test('roles without a Search button reload when the username rests, or the status changes', () => {
-    const debounce = between(reports, 'const [debouncedSearch, setDebouncedSearch] = useState', 'const loadReport = useCallback(');
-    assert.ok(debounce.includes('if (searchFirst || !serverFiltered) return;'), 'Super Admins keep their Search button');
-    assert.ok(debounce.includes('setTimeout(() => setDebouncedSearch(searchValue.trim()), 400)'), 'a pause, not every keystroke');
-    assert.ok(debounce.includes('return () => clearTimeout(timer);'), 'each keystroke restarts the wait');
-    assert.ok(debounce.includes('`${debouncedSearch}\\u0000${statusChoice}`'));
-    assert.ok(reports.includes('}, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId, liveFilterQuery]);'));
-  });
-
-  await t.test('the Access and Contact Reports reload; the Event Report keeps filtering live in the page', () => {
-    assert.ok(reports.includes('const serverFiltered = Boolean(definition.statusChoices);'));
-    assert.ok(reports.includes('const liveFilterQuery = !searchFirst && serverFiltered ?'));
   });
 });

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as page from '../frontend/src/utils/accessStatus.ts';
 import * as server from '../backend/src/utils/accessStatus.ts';
+import { matchesStatusWord } from '../frontend/src/utils/reportSearch.ts';
 
 /**
  * The Access Report's Status filter runs on the server; the page shows the
@@ -40,4 +41,16 @@ test('both offer the same statuses, in the same order', () => {
   for (const [, record] of RECORDS) {
     assert.ok((server.ACCESS_STATUSES as readonly string[]).includes(server.getAccessStatus(record)));
   }
+});
+
+test('a typed Status search means the same statuses on the server as on the page', () => {
+  const lists: ReadonlyArray<readonly string[]> = [server.ACCESS_STATUSES, ['Valid', 'Invalid', 'Duplicate']];
+  const typed = ['valid', 'Valid', 'inv', 'act', 'ACTIVE', 'sched', 'exp', 'can', 'rej', 'dup', 'd', 'e', 'alid', 'sleeping', '  invalid  '];
+  for (const list of lists) {
+    for (const text of typed) {
+      const onPage = list.filter((status) => matchesStatusWord(status, text));
+      assert.deepEqual(server.statusesMatching(list, text), onPage, `"${text}" in ${list.join('/')}`);
+    }
+  }
+  assert.deepEqual(server.statusesMatching(['Valid', 'Invalid', 'Duplicate'], 'valid'), ['Valid'], '"valid" never takes in Invalid');
 });

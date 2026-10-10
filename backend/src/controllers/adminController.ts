@@ -23,7 +23,7 @@ import {
   ReportDateRangeError,
   reportDateRangeResponse,
 } from '../utils/reportDateRange';
-import { ACCESS_STATUSES, getAccessStatus } from '../utils/accessStatus';
+import { ACCESS_STATUSES, getAccessStatus, statusesMatching } from '../utils/accessStatus';
 
 /** A user-typed search, made safe to use inside a regular expression. */
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, (match) => `\\${match}`);
@@ -237,9 +237,11 @@ export const getAccessRecords = async (req: Request, res: Response) => {
      *
      * username matches a name or an email, case-insensitively, anywhere in it
      * - the way the report has always searched - and is part of the database
-     * query. status is the effective status the report shows (Active,
-     * Scheduled, Expired, Cancelled, Rejected); it depends on the access
-     * window as of now, so it is applied to the queried records below.
+     * query. status is what was typed in the report's Status search, matched
+     * from the start of a word against the effective statuses the report shows
+     * (Active, Scheduled, Expired, Cancelled, Rejected): "act" finds Active.
+     * It depends on the access window as of now, so it is applied to the
+     * queried records below.
      */
     const rawUsername = req.query.username;
     if (rawUsername !== undefined && typeof rawUsername !== 'string') {
@@ -250,14 +252,15 @@ export const getAccessRecords = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'The username filter is too long.' });
     }
     const rawStatus = req.query.status;
-    if (
-      rawStatus !== undefined &&
-      rawStatus !== '' &&
-      (typeof rawStatus !== 'string' || !(ACCESS_STATUSES as readonly string[]).includes(rawStatus))
-    ) {
+    if (rawStatus !== undefined && typeof rawStatus !== 'string') {
       return res.status(400).json({ error: 'Invalid status filter.' });
     }
-    const statusFilter = typeof rawStatus === 'string' ? rawStatus : '';
+    const statusText = (rawStatus ?? '').trim();
+    if (statusText.length > 100) {
+      return res.status(400).json({ error: 'The status filter is too long.' });
+    }
+    // The statuses the typed text means; a search that names none matches nothing.
+    const wantedStatuses = statusText ? statusesMatching(ACCESS_STATUSES, statusText) : null;
     const nameClause = username
       ? {
           $or: [
@@ -346,8 +349,8 @@ export const getAccessRecords = async (req: Request, res: Response) => {
      */
     const now = new Date();
     records = records.map((r: any) => ({ ...r, accessStatus: getAccessStatus(r, now) }));
-    if (statusFilter) {
-      records = records.filter((r: any) => r.accessStatus === statusFilter);
+    if (wantedStatuses) {
+      records = records.filter((r: any) => wantedStatuses.includes(r.accessStatus));
     }
 
     /**

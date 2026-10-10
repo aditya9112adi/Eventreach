@@ -14,11 +14,12 @@ import { EventDeliveryLog } from '../components/ui/EventDeliveryLog';
 import { EventDeliveryExport } from '../components/ui/EventDeliveryExport';
 import { ReportEventView } from '../components/ui/ReportEventView';
 import { formatDate, formatDateTime } from '../utils/datetime';
-import { accessStatusOf, ACCESS_STATUSES } from '../utils/accessStatus';
+import { accessStatusOf } from '../utils/accessStatus';
 import { formatEventType } from '../utils/eventType';
 import { getPaginatedData, getSerialNumber } from '../utils/pagination';
 import {
   filterReportRows,
+  matchesStatusWord,
   validateReportDateRange,
   filtersDiffer,
   hasResultsFor,
@@ -74,19 +75,15 @@ interface ReportDefinition {
   eventIds?: (row: any) => string[];
   countLabel?: string;
   /**
-   * The Access and Contact Reports: a Status dropdown applied together with the
-   * search box, the dates and the event - instead of choosing one filter at a
-   * time - and all of them applied by the server.
+   * How the "Status" search matches, where plain "contains" is ambiguous
+   * ("valid" is part of "Invalid"). Left out, it is the plain match.
    */
-  statusChoices?: ReadonlyArray<string>;
+  statusMatches?: (status: string, needle: string) => boolean;
   detailsTitle?: string;
 }
 
 const value = (input: unknown, fallback = ''): string =>
   input === null || input === undefined || input === '' ? fallback : String(input);
-
-/** The statuses a contact can have - the Contact Report's Status dropdown. */
-const CONTACT_STATUSES = ['Valid', 'Invalid', 'Duplicate'] as const;
 
 const REPORTS: Record<ReportKey, ReportDefinition> = {
   event: {
@@ -124,12 +121,15 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     icon: ShieldCheck,
     fileName: 'AccessReport',
     endpoint: '/admin/users/access-records',
-    // UserName, Status and the dates all apply together: the search box is the
-    // username, Status has its own dropdown, and the period is always required.
-    // Choosing one of them at a time made combining them impossible, and the
-    // "Date" choice switched the username search off while still showing it.
-    options: [{ key: 'UserName', label: 'UserName', type: 'text' }],
-    statusChoices: ACCESS_STATUSES,
+    // The same filter as the Event Report: one choice at a time, with the
+    // period always required. The server applies it (see reportFilterParams).
+    options: [
+      { key: 'UserName', label: 'UserName', type: 'text' },
+      { key: 'Status', label: 'Status', type: 'text' },
+      { key: 'Date', label: 'Date', type: 'date' },
+    ],
+    // From the start of a word: "act" finds Active.
+    statusMatches: matchesStatusWord,
     text: (row) => `${value(row.name)} ${value(row.email)}`,
     status: (row) => accessStatusOf(row),
     date: (row) => row.accessGrantedOn || row.createdAt,
@@ -153,12 +153,15 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     icon: Users,
     fileName: 'ContactReport',
     endpoint: '/contacts',
-    // Name, Status and the dates apply together, as on the Access Report: the
-    // search box is the name, Status has its own dropdown (an exact match, so
-    // Valid never takes in Invalid), and the period is always required. The
-    // "Date" choice used to switch the name search off while still showing it.
-    options: [{ key: 'Name', label: 'Name', type: 'text' }],
-    statusChoices: CONTACT_STATUSES,
+    // The same filter as the Event Report: one choice at a time, with the
+    // period always required. The server applies it (see reportFilterParams).
+    options: [
+      { key: 'Name', label: 'Name', type: 'text' },
+      { key: 'Status', label: 'Status', type: 'text' },
+      { key: 'Date', label: 'Date', type: 'date' },
+    ],
+    // From the start of a word, so "valid" finds Valid and never Invalid.
+    statusMatches: matchesStatusWord,
     text: (row) => `${value(row.fullName)} ${value(row.phoneNumber)} ${value(row.email)}`,
     status: (row) => value(row.status, '-'),
     date: (row) => row.createdAt,
@@ -236,8 +239,6 @@ const Reports = () => {
 
   const [mode, setMode] = useState<string>('EventName');
   const [searchValue, setSearchValue] = useState('');
-  /** The Access and Contact Reports' Status dropdown; '' is all statuses. */
-  const [statusChoice, setStatusChoice] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [isExporting, setIsExporting] = useState(false);
@@ -306,9 +307,8 @@ const Reports = () => {
       startDate,
       endDate,
       eventId: eventScoped ? reportEventId : '',
-      status: definition.statusChoices ? statusChoice : '',
     }),
-    [mode, searchValue, startDate, endDate, eventScoped, reportEventId, definition, statusChoice]
+    [mode, searchValue, startDate, endDate, eventScoped, reportEventId]
   );
   // Read by the auto-load effect below without making it a dependency: for
   // roles that filter live, editing a filter must not trigger a reload.
@@ -358,18 +358,18 @@ const Reports = () => {
 
   /**
    * Roles that filter live (an Admin) have no Search button, and the Access and
-   * Contact Reports' search and status are applied by the server. So the report
-   * is reloaded when the search has rested for a moment, or the status changes
-   * - not on every keystroke. Super Admins search explicitly, as before.
+   * Contact Reports' search is applied by the server. So the report is
+   * reloaded when the search has rested for a moment, or the filter choice
+   * changes - not on every keystroke. Super Admins search explicitly, as before.
    */
-  const serverFiltered = Boolean(definition.statusChoices);
+  const serverFiltered = EVENT_SCOPED_REPORTS.includes(activeReport);
   const [debouncedSearch, setDebouncedSearch] = useState('');
   useEffect(() => {
     if (searchFirst || !serverFiltered) return;
     const timer = setTimeout(() => setDebouncedSearch(searchValue.trim()), 400);
     return () => clearTimeout(timer);
   }, [searchFirst, serverFiltered, searchValue]);
-  const liveFilterQuery = !searchFirst && serverFiltered ? `${debouncedSearch}\u0000${statusChoice}` : '';
+  const liveFilterQuery = !searchFirst && serverFiltered ? `${debouncedSearch}\u0000${mode}` : '';
 
   /** Fetches a report's rows as one run. */
   const loadReport = useCallback(async (key: ReportKey, filters: ReportFilters) => {
@@ -387,8 +387,8 @@ const Reports = () => {
           startDate: filters.startDate,
           endDate: filters.endDate,
           ...reportEventParam(key, filters),
-          // The Access and Contact Reports' search and status are applied by
-          // the server, for every role and within each role's own scope.
+          // The Access and Contact Reports' search is applied by the server,
+          // for every role and within each role's own scope.
           ...reportFilterParams(key, filters),
         },
       });
@@ -534,7 +534,6 @@ const Reports = () => {
     // mode that does not exist on the new tab.
     setMode(REPORTS[key].options[0].key);
     setSearchValue('');
-    setStatusChoice('');
     setReportEventId('');
     /**
      * The period is deliberately NOT reset.
@@ -554,7 +553,6 @@ const Reports = () => {
 
   const clearFilters = () => {
     setSearchValue('');
-    setStatusChoice('');
     setReportEventId('');
     setScopedViewEventId('');
     setStartDate('');
@@ -596,7 +594,6 @@ const Reports = () => {
     }
     setReportChosen(false);
     setSearchValue('');
-    setStatusChoice('');
     setReportEventId('');
     setStartDate('');
     setEndDate('');
@@ -689,7 +686,7 @@ const Reports = () => {
    */
   const downloadLabel = useCallback(
     (filters: ReportFilters | null): string => {
-      if (!REPORTS[activeReport].statusChoices) return reportOption.key;
+      if (!EVENT_SCOPED_REPORTS.includes(activeReport)) return reportOption.key;
       const evt: any = filters?.eventId ? events.find((e: any) => String(e._id) === String(filters.eventId)) : null;
       return filters?.eventId ? evt?.eventId || 'Event' : 'AllEvents';
     },
@@ -729,7 +726,6 @@ const Reports = () => {
           startDate: exportFilters.startDate,
           endDate: exportFilters.endDate,
           // The generated report's event, never the picker's current value.
-          ...(definition.statusChoices ? { status: exportFilters.status || 'All Statuses' } : {}),
           ...(EVENT_SCOPED_REPORTS.includes(activeReport)
             ? { event: exportFilters.eventId ? eventLabelById(exportFilters.eventId) : 'All Events' }
             : {}),
@@ -802,7 +798,7 @@ const Reports = () => {
    */
   const viewMatchParams = useMemo(() => {
     if (!reportFilters || !serverFiltered) return undefined;
-    if (!reportFilters.searchValue.trim() && !reportFilters.status) return undefined;
+    if (Object.keys(reportFilterParams(activeReport, reportFilters)).length === 0) return undefined;
     return {
       startDate: reportFilters.startDate,
       endDate: reportFilters.endDate,
@@ -939,9 +935,6 @@ const Reports = () => {
           setDateError('');
         }}
         dateError={dateError}
-        statusOptions={definition.statusChoices}
-        statusValue={statusChoice}
-        onStatusChange={setStatusChoice}
         onClear={clearFilters}
         onDownloadExcel={() => runExport('excel')}
         onDownloadPdf={() => runExport('pdf')}

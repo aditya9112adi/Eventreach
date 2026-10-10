@@ -545,7 +545,10 @@ describe('Access Report filters: event, username, status and dates together', ()
   });
 
   test('invalid filters are refused', async () => {
-    assert.equal((await access(`${K_RANGE}&status=Sleeping`)).status, 400);
+    const sleeping = await access(`${K_RANGE}&status=Sleeping`);
+    assert.equal(sleeping.status, 200, 'a status search that names no status is a search, as on the Event Report');
+    assert.deepEqual(sleeping.body, [], 'and matches nothing');
+    assert.equal((await access(`${K_RANGE}&status=${'x'.repeat(101)}`)).status, 400, 'too long');
     assert.equal((await access(`${K_RANGE}&status[$ne]=Active`)).status, 400);
     assert.equal((await access(`${K_RANGE}&username[]=a&username[]=b`)).status, 400);
     assert.equal((await access(`${K_RANGE}&username=${'x'.repeat(101)}`)).status, 400);
@@ -625,7 +628,8 @@ describe('Access Report: the same server filtering for every role, a status fixe
     // Admin X's Users are invisible to Kestrel Admin, whatever is searched.
     assert.deepEqual(names(await access(`${K_RANGE}&username=rahul`, token)), []);
     assert.equal((await access(`${K_RANGE}&eventId=${fx.A._id}&username=rahul&status=Active`, token)).status, 403);
-    assert.equal((await access(`${K_RANGE}&status=Bogus`, token)).status, 400, 'the same validation for an Admin');
+    assert.deepEqual((await access(`${K_RANGE}&status=Bogus`, token)).body, [], 'an unknown status matches nothing for an Admin too');
+    assert.equal((await access(`${K_RANGE}&status[]=a`, token)).status, 400, 'the same validation for an Admin');
     assert.equal((await access(`${K_RANGE}&username[]=a`, token)).status, 400);
   });
 });
@@ -680,7 +684,11 @@ describe('Contact Report filters: event, name, status and dates together', () =>
   });
 
   test('invalid filters are refused', async () => {
-    assert.equal((await contacts(`${M_RANGE}&status=valid`)).status, 400, 'statuses are exact');
+    const valid = await contacts(`${M_RANGE}&eventId=${fx.M._id}&status=valid`);
+    assert.equal(valid.status, 200);
+    assert.deepEqual(mNames(valid), ['Meera Valid', 'Mira Late Valid'], '"valid" finds Valid, never Invalid');
+    assert.deepEqual(mNames(await contacts(`${M_RANGE}&eventId=${fx.M._id}&status=dup`)), ['Maya Duplicate'], 'the start of a status');
+    assert.deepEqual((await contacts(`${M_RANGE}&status=Sleeping`)).body, [], 'a status that names none matches nothing');
     assert.equal((await contacts(`${M_RANGE}&status[$ne]=Valid`)).status, 400);
     assert.equal((await contacts(`${M_RANGE}&name[]=a&name[]=b`)).status, 400);
     assert.equal((await contacts(`${M_RANGE}&name=${'x'.repeat(101)}`)).status, 400);
