@@ -70,6 +70,8 @@ interface ReportDefinition {
    * ("valid" is part of "Invalid"). Left out, it is the plain match.
    */
   statusMatches?: (status: string, needle: string) => boolean;
+  /** The server applied the period to something the rows do not carry. */
+  datedByServer?: boolean;
   detailsTitle?: string;
 }
 
@@ -112,7 +114,14 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     label: 'Access Report',
     icon: ShieldCheck,
     fileName: 'AccessReport',
-    endpoint: '/admin/users/access-records',
+    /**
+     * By event, like the Event and Contact Reports: the events in the period
+     * (by event date) and, in each event's View, everyone with access to it -
+     * its creator (an Admin or a Super Admin), its owner, its assigned Users
+     * and their Admins. The plain list of access accounts (Just Access) stays
+     * at /admin/users/access-records.
+     */
+    endpoint: '/admin/access-report',
     // The same two choices as the Event Report, applied by the server (see
     // reportFilterParams), with the period always required.
     options: [
@@ -124,6 +133,9 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     text: (row) => `${value(row.name)} ${value(row.email)}`,
     status: (row) => accessStatusOf(row),
     date: (row) => row.accessGrantedOn || row.createdAt,
+    // The server applied the period to each event's date, which a person's
+    // record does not carry - so the page does not filter them by it again.
+    datedByServer: true,
     eventIds: accessRecordEventIds,
     countLabel: 'Access Records',
     detailsTitle: 'Access Details',
@@ -131,6 +143,8 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
       { header: 'Name', value: (r) => value(r.name, '-'), width: 24 },
       { header: 'Email', value: (r) => value(r.email, '-'), width: 30 },
       { header: 'Role', value: (r) => value(r.role || r.type, '-'), width: 14 },
+      // How this person has access to the event of the View.
+      { header: 'Access Through', value: (r) => value(r.accessVia, '-'), width: 30 },
       { header: 'Status', value: (r) => accessStatusOf(r), width: 14 },
       { header: 'Assigned Event', value: (r) => value(r.assignedEventName, '-'), width: 26 },
       { header: 'Access Granted On', value: (r) => formatDateTime(r.accessGrantedOn, '-'), width: 24 },

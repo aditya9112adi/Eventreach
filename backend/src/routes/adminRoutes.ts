@@ -9,6 +9,7 @@ import {
   getSystemHealth,
   adminResetUserPassword,
 } from '../controllers/adminController';
+import { getAccessReport } from '../controllers/accessReportController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { requireRole } from '../middleware/roleMiddleware';
 import { passwordResetLimiter } from '../middleware/rateLimitMiddleware';
@@ -40,6 +41,8 @@ router.get('/system-health', requireRole('SuperAdmin'), getSystemHealth);
 
 // SuperAdmin and Admin routes
 router.get('/users/access-records', requireRole(['SuperAdmin', 'Admin']), getAccessRecords);
+// The Access Report, by event: each event's access holders (see accessReportController).
+router.get('/access-report', requireRole(['SuperAdmin', 'Admin']), getAccessReport);
 router.put('/users/:id/assign-event', requireRole(['SuperAdmin', 'Admin']), assignUserEvent);
 
 export default router;

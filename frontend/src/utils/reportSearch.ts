@@ -92,6 +92,11 @@ export interface ReportRowAccessors {
    * always used.
    */
   statusMatches?: (status: string, needle: string) => boolean;
+  /**
+   * The server applied the period to something the rows do not carry - the
+   * Access Report's event dates - so the page does not filter them by it again.
+   */
+  datedByServer?: boolean;
 }
 
 /**
@@ -148,7 +153,7 @@ export const filterReportRows = <T>(
      * withinRange is true when no range is set, so a dateless call is
      * unchanged.
      */
-    if (!withinRange(accessors.date(row), filters.startDate, filters.endDate)) return false;
+    if (!accessors.datedByServer && !withinRange(accessors.date(row), filters.startDate, filters.endDate)) return false;
     if (isDateMode) return true;
     if (!needle) return true;
     // "All Fields" was matched by the server, across fields - an event's date

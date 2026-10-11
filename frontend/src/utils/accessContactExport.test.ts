@@ -37,6 +37,7 @@ const ACCESS_COLUMNS: ReportColumn<any>[] = [
   { header: 'Name', value: (r) => v(r.name, '-'), width: 24 },
   { header: 'Email', value: (r) => v(r.email, '-'), width: 30 },
   { header: 'Role', value: (r) => v(r.role || r.type, '-'), width: 14 },
+  { header: 'Access Through', value: (r) => v(r.accessVia, '-'), width: 30 },
   { header: 'Status', value: (r) => v(r.status, '-'), width: 14 },
   { header: 'Assigned Event', value: (r) => v(r.assignedEventName, '-'), width: 26 },
   { header: 'Access Granted On', value: (r) => v(r.accessGrantedOn, '-'), width: 24 },
@@ -186,7 +187,8 @@ test('Access Report exports', async (t) => {
     assert.equal(params.eventId, A._id);
     const rows = dataRows(sheet, 'Name');
     assert.deepEqual(rows.map((r) => r[0]).sort(), ['Amit', 'Priya', 'Rahul']);
-    assert.ok(rows.every((r) => r[4] === 'Annual Tech Fest'), 'every row is assigned to Event A');
+    // Assigned Event is the sixth column, after Name, Email, Role, Access Through and Status.
+    assert.ok(rows.every((r) => r[5] === 'Annual Tech Fest'), 'every row is assigned to Event A');
     assert.equal(metaOf(sheet)['Event'], 'EVT-000001 | Annual Tech Fest');
   });
 
