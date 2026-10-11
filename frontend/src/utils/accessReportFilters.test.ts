@@ -59,11 +59,12 @@ const namesFor = (f: ReportFilters) => filterReportRows(RECORDS, ACCESS, f, f.mo
 // ─── the filter bar ──────────────────────────────────────────────────────────
 
 test('the Access filter bar is the Event Report\'s: Filter By, one search box, the dates', async (t) => {
-  await t.test('UserName, Status and Date to choose from', () => {
+  await t.test('All Fields and Date to choose from', () => {
     const block = between(reports, "key: 'access'", "key: 'contact'");
-    assert.ok(block.includes("{ key: 'UserName', label: 'UserName', type: 'text' },"));
-    assert.ok(block.includes("{ key: 'Status', label: 'Status', type: 'text' },"));
+    assert.ok(block.includes("{ key: GLOBAL_SEARCH_MODE, label: 'All Fields', type: 'text',"));
     assert.ok(block.includes("{ key: 'Date', label: 'Date', type: 'date' },"));
+    assert.equal(block.includes("{ key: 'UserName', label: 'UserName', type: 'text' },"), false, 'no UserName choice');
+    assert.equal(block.includes("{ key: 'Status', label: 'Status', type: 'text' },"), false, 'no Status choice');
     assert.ok(block.includes('statusMatches: matchesStatusWord,'));
     assert.equal(block.includes('statusChoices'), false, 'no Status dropdown');
   });
@@ -80,10 +81,12 @@ test('the Access filter bar is the Event Report\'s: Filter By, one search box, t
     assert.ok(bar.includes('disabled={isDateMode}'));
   });
 
-  await t.test('the Event Report keeps its own choices', () => {
+  await t.test('the Event Report offers the same two choices', () => {
     const block = between(reports, "key: 'event'", "key: 'access'");
-    assert.ok(block.includes("{ key: 'EventName', label: 'Name / ID', type: 'text' },"));
-    assert.ok(block.includes("{ key: 'EventID', label: 'Event ID', type: 'text' },"));
+    assert.ok(block.includes("{ key: GLOBAL_SEARCH_MODE, label: 'All Fields', type: 'text',"));
+    assert.ok(block.includes("{ key: 'Date', label: 'Date', type: 'date' },"));
+    assert.equal(block.includes("label: 'Name / ID'"), false, 'no Name / ID choice');
+    assert.equal(block.includes("label: 'Event ID'"), false, 'no Event ID choice');
     assert.equal(block.includes('statusMatches'), false);
   });
 });

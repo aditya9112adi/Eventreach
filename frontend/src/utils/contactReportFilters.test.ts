@@ -70,10 +70,11 @@ const rowsFor = (applied: ReportFilters) => {
 test('the Contact filter bar is the Event Report\'s: Filter By, one search box, the dates', async (t) => {
   const contactBlock = between(reports, "key: 'contact'", 'const Reports = () =>');
 
-  await t.test('Name, Status and Date to choose from', () => {
-    assert.ok(contactBlock.includes("{ key: 'Name', label: 'Name', type: 'text' },"));
-    assert.ok(contactBlock.includes("{ key: 'Status', label: 'Status', type: 'text' },"));
+  await t.test('All Fields and Date to choose from', () => {
+    assert.ok(contactBlock.includes("{ key: GLOBAL_SEARCH_MODE, label: 'All Fields', type: 'text',"));
     assert.ok(contactBlock.includes("{ key: 'Date', label: 'Date', type: 'date' },"));
+    assert.equal(contactBlock.includes("{ key: 'Name', label: 'Name', type: 'text' },"), false, 'no Name choice');
+    assert.equal(contactBlock.includes("{ key: 'Status', label: 'Status', type: 'text' },"), false, 'no Status choice');
     assert.equal(contactBlock.includes('statusChoices'), false, 'no Status dropdown');
   });
 

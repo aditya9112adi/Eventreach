@@ -73,23 +73,24 @@ test('the page keeps the server\'s matches - it cannot re-match fields a row doe
   );
 });
 
-test('every report offers "All Fields" first, with its existing choices after it', () => {
+test('every report offers exactly two choices: "All Fields" first, then Date', () => {
   const blocks = {
     event: between(reports, "key: 'event',", "key: 'access',"),
     access: between(reports, "key: 'access',", "key: 'contact',"),
     contact: between(reports, "key: 'contact',", 'const Reports = () =>'),
   };
   for (const [key, block] of Object.entries(blocks)) {
-    const all = block.indexOf("{ key: GLOBAL_SEARCH_MODE, label: 'All Fields', type: 'text', placeholder:");
-    assert.ok(all > 0, key);
-    assert.ok(all < block.indexOf("type: 'date' }"), `${key}: first`);
+    const options = between(block, 'options: [', '],');
+    const keys = [...options.matchAll(/\{ key: ([^,]+),/g)].map((m) => m[1]);
+    assert.deepEqual(keys, ['GLOBAL_SEARCH_MODE', "'Date'"], key);
+    assert.ok(options.includes("{ key: GLOBAL_SEARCH_MODE, label: 'All Fields', type: 'text', placeholder:"), key);
+    assert.ok(options.includes("{ key: 'Date', label: 'Date', type: 'date' },"), key);
   }
   assert.ok(blocks.event.includes("placeholder: 'Search event name, ID, venue, date, time...'"));
-  assert.ok(blocks.event.includes("{ key: 'EventName', label: 'Name / ID', type: 'text' },"));
-  assert.ok(blocks.event.includes("{ key: 'EventID', label: 'Event ID', type: 'text' },"));
-  assert.ok(blocks.access.includes("{ key: 'UserName', label: 'UserName', type: 'text' },"));
-  assert.ok(blocks.contact.includes("{ key: 'Name', label: 'Name', type: 'text' },"));
-  assert.ok(reports.includes('const [mode, setMode] = useState<string>(REPORTS.event.options[0].key);'), 'the page opens on it');
+  for (const removed of ["label: 'Name / ID'", "label: 'Event ID'", "label: 'UserName'", "label: 'Name'", "label: 'Status'"]) {
+    assert.equal(reports.includes(removed), false, `no ${removed} choice`);
+  }
+  assert.ok(reports.includes('const [mode, setMode] = useState<string>(REPORTS.event.options[0].key);'), 'the page opens on All Fields');
 });
 
 test('opening an event clears the search box and keeps the report', async (t) => {

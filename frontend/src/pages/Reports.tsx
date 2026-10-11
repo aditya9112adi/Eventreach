@@ -94,12 +94,10 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     fileName: 'EventReport',
     endpoint: '/events',
     options: [
-      // Every report opens on "All Fields": searched by the server across the
-      // report's fields (see GLOBAL_SEARCH_MODE). The single-field choices stay.
+      // Every report offers two choices: "All Fields", searched by the server
+      // across the report's fields (see GLOBAL_SEARCH_MODE), and Date - the
+      // period alone. The period is required with either.
       { key: GLOBAL_SEARCH_MODE, label: 'All Fields', type: 'text', placeholder: 'Search event name, ID, venue, date, time...' },
-      { key: 'EventName', label: 'Name / ID', type: 'text' },
-      { key: 'EventID', label: 'Event ID', type: 'text' },
-      { key: 'Status', label: 'Status', type: 'text' },
       { key: 'Date', label: 'Date', type: 'date' },
     ],
     // Searched for both the "Name / ID" and "Event ID" text filters, so
@@ -125,12 +123,10 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     icon: ShieldCheck,
     fileName: 'AccessReport',
     endpoint: '/admin/users/access-records',
-    // The same filter as the Event Report: one choice at a time, with the
-    // period always required. The server applies it (see reportFilterParams).
+    // The same two choices as the Event Report, applied by the server (see
+    // reportFilterParams), with the period always required.
     options: [
       { key: GLOBAL_SEARCH_MODE, label: 'All Fields', type: 'text', placeholder: 'Search name, email, status, event...' },
-      { key: 'UserName', label: 'UserName', type: 'text' },
-      { key: 'Status', label: 'Status', type: 'text' },
       { key: 'Date', label: 'Date', type: 'date' },
     ],
     // From the start of a word: "act" finds Active.
@@ -158,12 +154,10 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     icon: Users,
     fileName: 'ContactReport',
     endpoint: '/contacts',
-    // The same filter as the Event Report: one choice at a time, with the
-    // period always required. The server applies it (see reportFilterParams).
+    // The same two choices as the Event Report, applied by the server (see
+    // reportFilterParams), with the period always required.
     options: [
       { key: GLOBAL_SEARCH_MODE, label: 'All Fields', type: 'text', placeholder: 'Search name, mobile, email, event...' },
-      { key: 'Name', label: 'Name', type: 'text' },
-      { key: 'Status', label: 'Status', type: 'text' },
       { key: 'Date', label: 'Date', type: 'date' },
     ],
     // From the start of a word, so "valid" finds Valid and never Invalid.
