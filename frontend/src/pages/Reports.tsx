@@ -530,19 +530,17 @@ const Reports = () => {
       if (!resets) return;
     }
     setActiveReport(key);
-    // Each report has its own filter fields, so reset rather than carry over a
-    // mode that does not exist on the new tab.
+    /**
+     * Opening another report starts it with every filter cleared - the
+     * filter choice, the search value, the event and the period - so nothing
+     * typed for one report silently narrows the next.
+     */
     setMode(REPORTS[key].options[0].key);
     setSearchValue('');
     setReportEventId('');
-    /**
-     * The period is deliberately NOT reset.
-     *
-     * It is the one filter every report shares and the one every report is
-     * required to state, so clearing it on each tab made the reader re-enter
-     * the same two dates to look at the same month from another angle. The
-     * tab-specific fields above still start fresh.
-     */
+    setStartDate('');
+    setEndDate('');
+    setDateError('');
     setSelectedEventId('');
     setScopedViewEventId('');
     setCurrentPage(1);

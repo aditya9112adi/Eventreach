@@ -334,10 +334,10 @@ test('the existing Reports behaviour is intact', async (t) => {
     assert.ok(run.indexOf('validateReportDateRange') < run.indexOf('loadReport(activeReport'));
   });
 
-  await t.test('switching reports still keeps the dates', () => {
+  await t.test('switching reports clears the dates with the other filters', () => {
     const start = reports.indexOf('const switchReport');
     const switching = reports.slice(start, reports.indexOf('\n  };', start));
-    assert.ok(!switching.includes("setStartDate('')") && !switching.includes("setEndDate('')"));
+    assert.ok(switching.includes("setStartDate('')") && switching.includes("setEndDate('')"));
   });
 
   await t.test('the report request still carries both dates and never fills the events cache', () => {

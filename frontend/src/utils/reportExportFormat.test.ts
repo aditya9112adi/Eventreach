@@ -689,14 +689,14 @@ test('the exported Details match the Delivery Log table', async (t) => {
 
 
 /**
- * The period survives a change of report.
+ * Opening another report clears every filter, the period included.
  *
  * One switchReport serves all three tabs, so these assertions cover every
  * transition between them — Event to Contact, Contact to Access, Access to
  * Event — rather than three near-identical cases that would only re-check the
  * same function.
  */
-test('switching report keeps the dates', async (t) => {
+test('switching report clears every filter', async (t) => {
   const page = fs.readFileSync('frontend/src/pages/Reports.tsx', 'utf-8');
   const switchStart = page.indexOf('const switchReport');
   const switchReport = page.slice(switchStart, page.indexOf('\n  };', switchStart));
@@ -707,15 +707,23 @@ test('switching report keeps the dates', async (t) => {
     assert.ok(calls >= 1, 'and the tabs all call it');
   });
 
-  await t.test('neither date is cleared on the way', () => {
-    assert.ok(!switchReport.includes("setStartDate('')"), 'Start Date is carried over');
-    assert.ok(!switchReport.includes("setEndDate('')"), 'End Date is carried over');
+  await t.test('both dates are cleared, with any date error', () => {
+    assert.ok(switchReport.includes("setStartDate('')"), 'Start Date is cleared');
+    assert.ok(switchReport.includes("setEndDate('')"), 'End Date is cleared');
+    assert.ok(switchReport.includes("setDateError('')"), 'no date message from the previous report');
   });
 
-  await t.test('the tab-specific filters still start fresh', () => {
+  await t.test('the other filters start fresh too', () => {
     assert.ok(switchReport.includes("setSearchValue('')"), 'the search text resets');
     assert.ok(switchReport.includes('setMode(REPORTS[key].options[0].key)'), 'the mode resets');
+    assert.ok(switchReport.includes("setReportEventId('')"), 'the chosen event resets');
+    assert.ok(switchReport.includes("setSelectedEventId('')"), 'an open event View closes');
     assert.ok(switchReport.includes("dispatch({ type: 'reset'"), 'the previous report is discarded');
+  });
+
+  await t.test('re-choosing the open report (Super Admin) changes nothing', () => {
+    // The early return guards a generated report against a stray click.
+    assert.ok(switchReport.indexOf('if (!resets) return;') < switchReport.indexOf("setSearchValue('')"));
   });
 
   await t.test('Clear still clears them — preserving is not the same as pinning', () => {
