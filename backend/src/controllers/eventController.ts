@@ -426,7 +426,15 @@ export const getEvents = async (req: Request, res: Response) => {
     }
     Object.assign(query, dateRangeFilter('eventDate', range));
 
-    const sort: any = parentId ? { eventDate: 1, eventTime: 1, createdAt: 1 } : { createdAt: -1 };
+    /**
+     * Order. A Main Event's sub-events read as its schedule: by date and time.
+     * Every other listing - the Events tab, the pickers, the reports - is
+     * newest-created first, with _id (newest first) settling equal createdAt
+     * values so the order never varies between requests. An event stored
+     * without createdAt (none is written without it today) sorts last, where
+     * MongoDB places a missing value in a descending sort.
+     */
+    const sort: any = parentId ? { eventDate: 1, eventTime: 1, createdAt: 1 } : { createdAt: -1, _id: -1 };
     const events = await Event.find(query).sort(sort).lean();
 
     if (parentId) {

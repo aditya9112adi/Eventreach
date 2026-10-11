@@ -21,8 +21,11 @@ import { getPaginatedData, getSerialNumber } from '../../utils/pagination';
 import { formatEventType } from '../../utils/eventType';
 import { getPageSelectionState, toggleSelectAllOnPage, toggleSelection } from '../../utils/selection';
 import { subEventCountLabel } from '../../utils/subEventMembers';
+import { compareNewestCreatedFirst } from '../../utils/eventOrder';
 
-type SortField = 'eventId' | 'eventName' | 'eventType' | 'eventDate' | 'eventVenue' | 'eventStatus' | 'organizerName' | 'organizerMobile';
+// 'createdAt' is the default order and has no column of its own: clicking a
+// column header sorts by that column instead.
+type SortField = 'createdAt' | 'eventId' | 'eventName' | 'eventType' | 'eventDate' | 'eventVenue' | 'eventStatus' | 'organizerName' | 'organizerMobile';
 type SortDir = 'asc' | 'desc';
 
 const EventList = () => {
@@ -53,7 +56,8 @@ const EventList = () => {
   const [filterType, setFilterType] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
 
-  const [sortField, setSortField] = useState<SortField>('eventDate');
+  // Newest-created first, as the server lists them - not by scheduled date.
+  const [sortField, setSortField] = useState<SortField>('createdAt');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -126,7 +130,13 @@ const EventList = () => {
       return matchesSearch && matchesType && matchesStatus;
     });
 
+    // The whole filtered list is ordered before it is paged (below), so every
+    // page continues the same order, whatever the search and filters.
     filtered.sort((a, b) => {
+      if (sortField === 'createdAt') {
+        const cmp = compareNewestCreatedFirst(a, b);
+        return sortDir === 'desc' ? cmp : -cmp;
+      }
       let aVal = '';
       let bVal = '';
       switch (sortField) {

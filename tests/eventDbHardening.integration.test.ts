@@ -278,6 +278,90 @@ describe('Event Type: a listed option or a custom type, stored as given in event
   });
 });
 
+describe('Events list order: newest-created first', () => {
+  let tokenX = '';
+  let tokenY = '';
+  let adminX: any;
+  let adminY: any;
+
+  before(async () => {
+    adminX = await Admin.create({ name: 'Order X', email: 'order-x@example.com', passwordHash: 'x', role: 'Admin', status: 'Active', accessGrantedOn: new Date() });
+    adminY = await Admin.create({ name: 'Order Y', email: 'order-y@example.com', passwordHash: 'x', role: 'Admin', status: 'Active', accessGrantedOn: new Date() });
+    tokenX = jwt.sign({ id: adminX._id, email: adminX.email, role: 'Admin' }, process.env.JWT_SECRET, { expiresIn: '1d' });
+    tokenY = jwt.sign({ id: adminY._id, email: adminY.email, role: 'Admin' }, process.env.JWT_SECRET, { expiresIn: '1d' });
+  });
+
+  /** An event created at `createdAt` (undefined: stored without one), scheduled on `eventDate`. */
+  const mk = async (eventName: string, createdAt: string | undefined, eventDate: string, owner: any, extra: Record<string, any> = {}) => {
+    const doc = await Event.create({
+      organizerName: 'Organiser', organizerMobile: BigInt('9112472833'), eventName, eventType: 'Wedding',
+      eventDate: new Date(`${eventDate}T00:00:00.000Z`), eventTime: new Date(`${eventDate}T06:00:00.000Z`),
+      eventVenue: 'Hall', eventStatus: 'Upcoming', adminId: owner._id, ...extra,
+    });
+    await Event.collection.updateOne(
+      { _id: doc._id },
+      createdAt ? { $set: { createdAt: new Date(createdAt) } } : { $unset: { createdAt: 1 } }
+    );
+    return doc;
+  };
+  const names = (res: { body: any[] }) => res.body.map((e) => e.eventName);
+  const list = (query = '', token = tokenX) => call('GET', `/api/events${query}`, { token });
+
+  test('a more recently created event comes first, whatever its scheduled date', async () => {
+    await mk('Created First', '2026-10-01T06:00:00Z', '2027-06-01', adminX);
+    await mk('Created Third', '2026-10-05T06:00:00Z', '2027-01-01', adminX); // scheduled earliest
+    await mk('Created Second', '2026-10-03T06:00:00Z', '2028-01-01', adminX); // scheduled latest
+    const res = await list();
+    assert.equal(res.status, 200);
+    assert.deepEqual(names(res), ['Created Third', 'Created Second', 'Created First']);
+  });
+
+  test('equal creation times are ordered by _id, newest first, on every request', async () => {
+    const same = '2026-10-07T06:00:00Z';
+    const earlier = await mk('Tie Earlier Id', same, '2027-01-01', adminX);
+    const later = await mk('Tie Later Id', same, '2027-01-01', adminX);
+    assert.ok(String(later._id) > String(earlier._id));
+    await mk('Older', '2026-10-01T06:00:00Z', '2027-01-01', adminX);
+    for (let i = 0; i < 3; i++) {
+      assert.deepEqual(names(await list()), ['Tie Later Id', 'Tie Earlier Id', 'Older']);
+    }
+  });
+
+  test('an event stored without createdAt is listed, after every dated one', async () => {
+    await mk('Legacy Undated', undefined, '2027-01-01', adminX);
+    await mk('Dated', '2026-10-01T06:00:00Z', '2027-01-01', adminX);
+    assert.deepEqual(names(await list()), ['Dated', 'Legacy Undated']);
+  });
+
+  test('the date-range filter keeps the creation order', async () => {
+    await mk('In Range Old', '2026-10-01T06:00:00Z', '2027-03-20', adminX);
+    await mk('Out Of Range New', '2026-10-09T06:00:00Z', '2027-08-01', adminX);
+    await mk('In Range New', '2026-10-05T06:00:00Z', '2027-03-02', adminX);
+    const res = await list('?startDate=2027-03-01&endDate=2027-03-31');
+    assert.equal(res.status, 200);
+    assert.deepEqual(names(res), ['In Range New', 'In Range Old']);
+  });
+
+  test('each organizer sees only their own events, in the same order', async () => {
+    await mk('X Older', '2026-10-01T06:00:00Z', '2027-01-01', adminX);
+    await mk('Y Newest', '2026-10-09T06:00:00Z', '2027-01-01', adminY);
+    await mk('X Newer', '2026-10-05T06:00:00Z', '2027-01-01', adminX);
+    assert.deepEqual(names(await list()), ['X Newer', 'X Older']);
+    assert.deepEqual(names(await list('', tokenY)), ['Y Newest']);
+  });
+
+  test('sub-events keep their own listing rules', async () => {
+    const wedding = await mk('Wedding Main', '2026-10-01T06:00:00Z', '2027-01-20', adminX);
+    await mk('Reception', '2026-10-08T06:00:00Z', '2027-01-21', adminX, { parentEventId: wedding._id });
+    await mk('Haldi', '2026-10-06T06:00:00Z', '2027-01-18', adminX, { parentEventId: wedding._id });
+    await mk('Party Main', '2026-10-04T06:00:00Z', '2027-02-01', adminX);
+
+    assert.deepEqual(names(await list()), ['Party Main', 'Wedding Main'], 'the Events tab: Main Events only, newest-created first');
+    assert.deepEqual(names(await list('?includeSubEvents=true')), ['Reception', 'Haldi', 'Party Main', 'Wedding Main'], 'with sub-events: the same order');
+    assert.deepEqual(names(await list(`?parentEventId=${wedding._id}`)), ['Haldi', 'Reception'], 'a Main Event\'s sub-events: its schedule, by date');
+  });
+});
+
 describe('Correct BSON types on stored documents', () => {
   test('organizerMobile is BSON Int64 and eventTime is BSON Date in the raw document', async () => {
     const date = futureDate();
