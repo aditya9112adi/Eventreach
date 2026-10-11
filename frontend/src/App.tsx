@@ -76,6 +76,10 @@ function AnimatedRoutes() {
           <Route path="/events/create" element={<PageWrapper><EventCreate /></PageWrapper>} />
           <Route path="/events/:id" element={<PageWrapper><EventDetail /></PageWrapper>} />
           <Route path="/events/:id/edit" element={<PageWrapper><EventEdit /></PageWrapper>} />
+          <Route
+            path="/events/:id/sub-events/new"
+            element={<PageWrapper><RoleRoute allow={['SuperAdmin', 'Admin']}><EventCreate /></RoleRoute></PageWrapper>}
+          />
           <Route path="/contacts" element={<PageWrapper><ContactList /></PageWrapper>} />
           <Route path="/contacts/import" element={<PageWrapper><BulkImport /></PageWrapper>} />
           <Route path="/campaigns" element={<PageWrapper><Composer /></PageWrapper>} />

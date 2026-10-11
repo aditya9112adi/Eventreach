@@ -1,4 +1,5 @@
 import { Contact } from '../models/Contact';
+import { EventMember } from '../models/EventMember';
 import { AuditService } from './AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 
@@ -63,12 +64,17 @@ export const auditContactDeletions = async (
   }
 };
 
-/** Deletes one guest and records it. Used by single and bulk guest deletion. */
+/**
+ * Deletes one guest and records it. Used by single and bulk guest deletion.
+ * Its places on sub-event member lists go first, so no list is left holding a
+ * contact that no longer exists.
+ */
 export const performContactDeletion = async (
   contact: any,
   req: RequestWithId,
   context: ContactDeletionContext = {}
 ): Promise<void> => {
+  await EventMember.deleteMany({ contactId: contact._id });
   await Contact.findByIdAndDelete(contact._id);
   await auditContactDeletion(contact, req, context);
 };

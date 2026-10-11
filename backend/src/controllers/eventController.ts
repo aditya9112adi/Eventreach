@@ -7,7 +7,16 @@ import { Contact } from '../models/Contact';
 import { Campaign } from '../models/Campaign';
 import { MessageLog } from '../models/MessageLog';
 import { User } from '../models/User';
+import { EventMember } from '../models/EventMember';
 import { getIO } from '../services/socketService';
+import {
+  MAIN_EVENT_FILTER,
+  isSubEvent,
+  countMembers,
+  countSubEvents,
+  countMembersOf,
+  eventGuestFilter,
+} from '../services/subEventService';
 import { AuditService } from '../services/AuditService';
 import { auditContactDeletions } from '../services/contactDeletionService';
 import { supportsTransactions } from '../services/transactionSupport';
@@ -82,6 +91,10 @@ const serialize = (ev: any) => {
   if (typeof m === 'bigint' || typeof m === 'number') obj.organizerMobile = String(m);
   return obj;
 };
+
+/** How a Sub-Event names its Main Event in a response. */
+const parentSummary = (parent: any) =>
+  parent ? { _id: String(parent._id), eventId: parent.eventId, eventName: parent.eventName } : null;
 
 // ─── Zod Schemas ──────────────────────────────────────────────────────────────
 
@@ -188,6 +201,84 @@ export const createEvent = async (req: RequestWithId, res: Response) => {
   }
 };
 
+/**
+ * POST /api/events/:id/sub-events - a Sub-Event of the Main Event :id.
+ *
+ * The parent is the one in the path, authorized like any other access to it;
+ * a parentEventId in the body is never read. The fields are the ordinary event
+ * fields with the ordinary rules. Ownership follows the Main Event (adminId),
+ * so the Sub-Event belongs to the same organizer, and nobody is assigned to it
+ * directly - it is reached through its Main Event. It starts with no members.
+ */
+export const createSubEvent = async (req: RequestWithId, res: Response) => {
+  try {
+    const parentId = req.params.id;
+    if (!mongoose.isValidObjectId(parentId)) {
+      return res.status(400).json({ error: 'Invalid event id' });
+    }
+
+    const currentUser = (req as any).user;
+    if (!(await isEventAuthorized(currentUser, parentId))) {
+      return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
+    const parent: any = await Event.findById(parentId).lean();
+    if (!parent) return res.status(404).json({ error: 'Event not found' });
+    // One level only: Main Event -> Sub-Events.
+    if (isSubEvent(parent)) {
+      return res.status(400).json({ error: 'A sub-event cannot have sub-events of its own.' });
+    }
+    if (parent.eventStatus !== 'Upcoming') {
+      return res.status(409).json({
+        error: `This event is ${String(parent.eventStatus).toLowerCase()}. Sub-events can only be added to an upcoming event.`,
+      });
+    }
+
+    const parsed = eventBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message });
+
+    const { organizerMobile, eventDate, eventTime, assignedUserId, ...rest } = parsed.data;
+    if (assignedUserId) {
+      return res.status(400).json({ error: 'Users are assigned to the main event, not to a sub-event.' });
+    }
+
+    const event = await Event.create({
+      ...rest,
+      organizerMobile: BigInt(organizerMobile),
+      eventDate: new Date(eventDate + 'T00:00:00.000Z'),
+      eventTime: combineISTDateTime(eventDate, eventTime),
+      createdBy: currentUser?.id,
+      adminId: parent.adminId ?? undefined,
+      assignedUserIds: [],
+      parentEventId: parent._id,
+    });
+
+    // The Main Event may have been deleted while this was being created (its
+    // deletion refuses only while it has sub-events, and this one did not
+    // exist yet). Undo rather than leave an orphan.
+    if (!(await Event.exists({ _id: parent._id }))) {
+      await Event.deleteOne({ _id: event._id });
+      return res.status(409).json({ error: 'The main event no longer exists.' });
+    }
+
+    await AuditService.log({
+      action: 'EVENT_CREATED',
+      collectionName: 'events',
+      documentId: event._id.toString(),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      after: event,
+      description: `Created sub-event: ${event.eventName} under ${parent.eventId || parent.eventName}`,
+      metadata: { parentEventId: String(parent._id), parentEventCode: parent.eventId ?? null },
+    });
+
+    res.status(201).json({ ...serialize(event), memberCount: 0, parentEvent: parentSummary(parent) });
+  } catch (error) {
+    console.error('Create sub-event error:', error);
+    res.status(500).json({ error: 'Failed to create sub-event' });
+  }
+};
+
 // The expiry sweep used to run inline on every events/dashboard read, scanning
 // all open events and issuing a save + audit write + two socket broadcasts per
 // expired event. Concurrent requests raced each other and duplicated that work.
@@ -285,6 +376,37 @@ export const getEvents = async (req: Request, res: Response) => {
     }
 
     /**
+     * Which events are listed:
+     *  - by default, Main Events only - every list, picker and report that
+     *    reads this endpoint shows exactly what it showed before sub-events
+     *    existed, with each Main Event's subEventCount added;
+     *  - ?parentEventId=<id>: the Sub-Events of that Main Event, in date order,
+     *    each with its memberCount - refused unless the caller may see it;
+     *  - ?includeSubEvents=true: both, each Sub-Event naming its Main Event,
+     *    for a picker that targets a sub-event (the WhatsApp composer).
+     */
+    const rawParent = req.query.parentEventId;
+    const includeSubEvents = req.query.includeSubEvents === 'true';
+    let parentId: string | null = null;
+    if (rawParent !== undefined && rawParent !== '') {
+      if (typeof rawParent !== 'string' || !mongoose.isValidObjectId(rawParent)) {
+        return res.status(400).json({ error: 'Invalid parent event id.' });
+      }
+      if (authorizedIds !== null && !authorizedIds.includes(rawParent)) {
+        return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+      }
+      const parent = await Event.findById(rawParent).select('parentEventId').lean();
+      if (!parent) return res.status(404).json({ error: 'Event not found' });
+      if (isSubEvent(parent)) {
+        return res.status(400).json({ error: 'A sub-event has no sub-events of its own.' });
+      }
+      parentId = rawParent;
+      query.parentEventId = rawParent;
+    } else if (!includeSubEvents) {
+      Object.assign(query, MAIN_EVENT_FILTER);
+    }
+
+    /**
      * The Event Report filters on eventDate. Sending no range leaves this
      * listing exactly as the dashboard and the event list have always read it.
      */
@@ -299,8 +421,30 @@ export const getEvents = async (req: Request, res: Response) => {
     }
     Object.assign(query, dateRangeFilter('eventDate', range));
 
-    const events = await Event.find(query).sort({ createdAt: -1 }).lean();
-    res.json(events.map(serialize));
+    const sort: any = parentId ? { eventDate: 1, eventTime: 1, createdAt: 1 } : { createdAt: -1 };
+    const events = await Event.find(query).sort(sort).lean();
+
+    if (parentId) {
+      const members = await countMembers(events.map((e: any) => e._id));
+      return res.json(events.map((e: any) => ({ ...serialize(e), memberCount: members.get(String(e._id)) ?? 0 })));
+    }
+
+    const mains = events.filter((e: any) => !isSubEvent(e));
+    const subCounts = await countSubEvents(mains.map((e: any) => e._id));
+    // Each Sub-Event in a mixed listing names its Main Event (one query).
+    const parentIds = Array.from(new Set(events.filter(isSubEvent).map((e: any) => String(e.parentEventId))));
+    const parents = parentIds.length
+      ? await Event.find({ _id: { $in: parentIds } }).select('_id eventId eventName').lean()
+      : [];
+    const parentById = new Map(parents.map((p: any) => [String(p._id), p]));
+
+    res.json(
+      events.map((e: any) =>
+        isSubEvent(e)
+          ? { ...serialize(e), parentEvent: parentSummary(parentById.get(String(e.parentEventId))) }
+          : { ...serialize(e), subEventCount: subCounts.get(String(e._id)) ?? 0 }
+      )
+    );
   } catch (error) {
     console.error('Get events error:', error);
     res.status(500).json({ error: 'Failed to fetch events' });
@@ -319,8 +463,21 @@ export const getEventById = async (req: Request, res: Response) => {
 
     const event = await Event.findById(req.params.id).lean();
     if (!event) return res.status(404).json({ error: 'Event not found' });
-    const contactCount = await Contact.countDocuments({ eventId: event._id });
-    res.json({ ...serialize(event), contactCount });
+
+    // A Sub-Event's guests are its members; it also names its Main Event.
+    if (isSubEvent(event)) {
+      const [memberCount, parent] = await Promise.all([
+        countMembersOf(event._id),
+        Event.findById((event as any).parentEventId).select('_id eventId eventName eventStatus').lean(),
+      ]);
+      return res.json({ ...serialize(event), contactCount: memberCount, memberCount, parentEvent: parentSummary(parent) });
+    }
+
+    const [contactCount, subEventCount] = await Promise.all([
+      Contact.countDocuments({ eventId: event._id }),
+      Event.countDocuments({ parentEventId: event._id }),
+    ]);
+    res.json({ ...serialize(event), contactCount, subEventCount });
   } catch (error) {
     console.error('Get event error:', error);
     res.status(500).json({ error: 'Failed to fetch event' });
@@ -343,6 +500,14 @@ export const updateEvent = async (req: RequestWithId, res: Response) => {
 
     const { organizerMobile, eventDate, eventTime, assignedUserId, ...rest } = parsed.data;
 
+    // A Sub-Event is reached through its Main Event; nobody is assigned to it.
+    // (Its parentEventId is immutable and not part of eventBody, so an edit
+    // can never detach or reparent it.)
+    const subEvent = isSubEvent(beforeEvent);
+    if (subEvent && assignedUserId) {
+      return res.status(400).json({ error: 'Users are assigned to the main event, not to a sub-event.' });
+    }
+
     const updatePayload: any = {
       ...rest,
       // Zod already proved this is exactly ten digits; store it as BSON Int64.
@@ -351,7 +516,7 @@ export const updateEvent = async (req: RequestWithId, res: Response) => {
       eventTime: combineISTDateTime(eventDate, eventTime),
     };
 
-    if (assignedUserId !== undefined) {
+    if (assignedUserId !== undefined && !subEvent) {
       updatePayload.assignedUserId = assignedUserId || null;
       if (assignedUserId) {
         updatePayload.$addToSet = { assignedUserIds: assignedUserId };
@@ -408,11 +573,28 @@ export const updateEvent = async (req: RequestWithId, res: Response) => {
  *
  * The caller is responsible for authorizing the event first.
  */
+/**
+ * A Main Event is not deleted while it has Sub-Events: deleting it would
+ * either orphan them or silently take them (and their member lists) with it.
+ * The organizer deletes the sub-events first, deliberately, one decision each.
+ */
+export class EventHasSubEventsError extends Error {
+  constructor(public readonly subEventCount: number) {
+    super(
+      `This event has ${subEventCount} sub-event${subEventCount === 1 ? '' : 's'}. ` +
+        'Delete the sub-events first, then delete the event.'
+    );
+  }
+}
+
 const performEventDeletion = async (
   event: any,
   req: RequestWithId,
   bulkContext?: { bulkOperationId: string }
 ): Promise<void> => {
+  const subEventCount = await Event.countDocuments({ parentEventId: event._id });
+  if (subEventCount > 0) throw new EventHasSubEventsError(subEventCount);
+
   /**
    * The event's guests are deleted with it — a guest cannot exist without its
    * event, and nothing in the app can reach one whose event is gone.
@@ -430,10 +612,24 @@ const performEventDeletion = async (
   const transactional = await supportsTransactions();
   let removedContacts: any[] = [];
   let affectedUsers: any[] = [];
+  let removedMemberships = 0;
 
   const work = async (session?: ClientSession) => {
     const contacts = await Contact.find({ eventId: event._id }).session(session ?? null).lean();
     const users = await User.find({ assignedEventId: event._id }).select('_id').session(session ?? null).lean();
+
+    /**
+     * Memberships go first, so none is ever left pointing at a removed event
+     * or guest: a Sub-Event's own member list, and the places this event's
+     * guests hold on any sub-event's list. The contacts on a Sub-Event's list
+     * are not deleted - they belong to their own events.
+     */
+    const contactIds = contacts.map((c: any) => c._id);
+    const memberships = await EventMember.deleteMany(
+      { $or: [{ eventId: event._id }, ...(contactIds.length ? [{ contactId: { $in: contactIds } }] : [])] },
+      { session }
+    );
+    removedMemberships = memberships.deletedCount ?? 0;
 
     await Contact.deleteMany({ eventId: event._id }, { session });
     removedContacts = contacts;
@@ -492,7 +688,11 @@ const performEventDeletion = async (
     before: event,
     description: `Deleted event: ${event.eventName}`,
     ...(bulkContext ? { bulkOperationId: bulkContext.bulkOperationId } : {}),
-    metadata: { deletedContactCount: removedContacts.length },
+    metadata: {
+      deletedContactCount: removedContacts.length,
+      removedMembershipCount: removedMemberships,
+      ...(isSubEvent(event) ? { parentEventId: String(event.parentEventId) } : {}),
+    },
   });
 
   // Each removed guest gets the same CONTACT_DELETED record as deleting it
@@ -524,6 +724,9 @@ export const deleteEvent = async (req: RequestWithId, res: Response) => {
 
     res.json({ message: 'Event deleted successfully' });
   } catch (error) {
+    if (error instanceof EventHasSubEventsError) {
+      return res.status(409).json({ error: error.message, subEventCount: error.subEventCount });
+    }
     console.error('Delete event error:', error);
     res.status(500).json({ error: 'Failed to delete event' });
   }
@@ -583,6 +786,10 @@ export const bulkDeleteEvents = async (req: RequestWithId, res: Response) => {
         await performEventDeletion(event, req, { bulkOperationId });
         deletedIds.push(id);
       } catch (err) {
+        if (err instanceof EventHasSubEventsError) {
+          failed.push({ id, reason: err.message });
+          continue;
+        }
         // One bad event must not abort the rest of the batch.
         console.error(`Bulk delete failed for event ${id}:`, err);
         failed.push({ id, reason: 'Failed to delete event' });
@@ -659,7 +866,11 @@ export const getEventStatistics = async (req: Request, res: Response) => {
     }
 
     const eventId = req.params.id;
-    const contactCount = await Contact.countDocuments({ eventId });
+    const event = await Event.findById(eventId).select('_id parentEventId').lean();
+    // A Sub-Event's guests are its members.
+    const contactCount = event
+      ? await Contact.countDocuments(await eventGuestFilter(event as any))
+      : 0;
     const campaigns = await Campaign.find({ eventId }).select('_id');
     const campaignIds = campaigns.map((c) => c._id);
 

@@ -117,7 +117,9 @@ const Composer = () => {
   useEffect(() => {
     const fetchEvents = async () => {
       try {
-        const response = await api.get('/events');
+        // Sub-Events too, each naming its Main Event: a message for Haldi goes
+        // to Haldi's members only (the server resolves an event's guests).
+        const response = await api.get('/events', { params: { includeSubEvents: 'true' } });
         setEvents(response.data);
         if (!selectedEventId && response.data.length > 0) {
           setSelectedEventId(response.data[0]._id);

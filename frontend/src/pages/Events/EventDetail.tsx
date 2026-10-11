@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Calendar, MapPin, Edit3, UserCircle, Phone, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { ArrowLeft, Calendar, MapPin, Edit3, UserCircle, Phone, ShieldAlert, ShieldCheck, Layers } from 'lucide-react';
 import api from '../../services/api';
 import type { Event } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { formatEventType } from '../../utils/eventType';
 import { useAuth } from '../../store/authStore';
+import { SubEventsSection } from '../../components/ui/SubEventsSection';
+import { SubEventMembers } from '../../components/ui/SubEventMembers';
 
 const EventDetail = () => {
   const { id } = useParams();
@@ -15,6 +17,8 @@ const EventDetail = () => {
   // The Access Report is offered to the roles that can open it; the server
   // enforces this regardless.
   const canViewAccessReport = user?.role === 'SuperAdmin' || user?.role === 'Admin';
+  // Creating and deleting sub-events is administrative, as on the server.
+  const canManageSubEvents = user?.role === 'SuperAdmin' || user?.role === 'Admin';
   // contactCount is still returned by GET /events/:id, but this page no longer
   // renders it — the guest-list card that used it lives on the Contacts page.
   const [event, setEvent] = useState<Event | null>(null);
@@ -65,16 +69,33 @@ const EventDetail = () => {
 
   if (!event) return <div className="p-8 text-center text-destructive">Event not found</div>;
 
+  // A Sub-Event leads back to its Main Event; a Main Event to the list.
+  const isSubEvent = Boolean(event.parentEventId);
+  const backTo = isSubEvent ? `/events/${event.parentEventId}` : '/events';
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
       <div className="flex items-center space-x-4 mb-2 animate-fade-in">
         <button 
-          onClick={() => navigate('/events')}
+          onClick={() => navigate(backTo)}
+          aria-label={isSubEvent ? 'Back to the main event' : 'Back to events'}
           className="p-2 text-foreground/50 hover:text-foreground hover:bg-surfaceHover rounded-full transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Event Details</h2>
+        <div>
+          <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">
+            {isSubEvent ? 'Sub-Event Details' : 'Event Details'}
+          </h2>
+          {isSubEvent && event.parentEvent && (
+            <p className="text-sm text-foreground/50 mt-1 flex items-center gap-1.5">
+              <Layers className="w-4 h-4" /> Sub-event of{' '}
+              <Link to={`/events/${event.parentEvent._id}`} className="text-accent hover:underline font-medium">
+                {event.parentEvent.eventName}{event.parentEvent.eventId ? ` (${event.parentEvent.eventId})` : ''}
+              </Link>
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="bg-surface rounded-xl border border-border overflow-hidden animate-fade-up stagger-1">
@@ -97,7 +118,9 @@ const EventDetail = () => {
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {canViewAccessReport && (
+              {/* The Access Report is per Main Event; a Sub-Event's people
+                  are its Main Event's. */}
+              {canViewAccessReport && !isSubEvent && (
                 <Button
                   variant="secondary"
                   onClick={() => navigate(`/reports?type=access&eventId=${event._id}`)}
@@ -157,6 +180,12 @@ const EventDetail = () => {
           )}
         </div>
       </div>
+
+      {isSubEvent ? (
+        <SubEventMembers subEvent={event} />
+      ) : (
+        <SubEventsSection parent={event} canManage={canManageSubEvents} />
+      )}
     </div>
   );
 };

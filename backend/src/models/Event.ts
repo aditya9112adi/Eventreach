@@ -17,6 +17,7 @@ export interface IEvent extends Document {
   adminId?: Schema.Types.ObjectId | string;
   assignedUserId?: Schema.Types.ObjectId | string;
   assignedUserIds?: (Schema.Types.ObjectId | string)[];
+  parentEventId?: Schema.Types.ObjectId | string | null; // null/absent: a Main Event; set: a Sub-Event of that Main Event
   createdAt: Date;
   updatedAt: Date;
 }
@@ -73,6 +74,17 @@ const EventSchema: Schema = new Schema(
     adminId:          { type: Schema.Types.ObjectId, ref: 'Admin', index: true },
     assignedUserId:   { type: Schema.Types.ObjectId, ref: 'User', index: true },
     assignedUserIds:  [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    /**
+     * The Main Event a Sub-Event belongs to (Wedding -> Haldi, Reception...).
+     * Null, or absent on every event created before sub-events existed, for a
+     * Main Event - so `{ parentEventId: null }` matches all Main Events, old
+     * and new, with no migration. One level only: the parent is always a Main
+     * Event (enforced where sub-events are created).
+     *
+     * Set once, from the route, never from a request body, and immutable, so
+     * no ordinary edit can detach or reparent a sub-event.
+     */
+    parentEventId:    { type: Schema.Types.ObjectId, ref: 'Event', default: null, immutable: true },
   },
   { timestamps: true }
 );
@@ -106,5 +118,8 @@ EventSchema.index({ eventStatus: 1 });
 EventSchema.index({ assignedUserIds: 1 });
 // EventList search filters on organizerMobile; also supports "events for organizer X".
 EventSchema.index({ organizerMobile: 1 });
+// A Main Event's sub-events, in date order; also the "has sub-events?" check
+// made before a Main Event is deleted.
+EventSchema.index({ parentEventId: 1, eventDate: 1 });
 
 export const Event = mongoose.model<IEvent>('Event', EventSchema);

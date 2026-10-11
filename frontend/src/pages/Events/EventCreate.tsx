@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import type { Event } from '@eventreach/shared';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -55,15 +56,50 @@ const CharCount = ({ value, max }: { value: string | undefined; max: number }) =
   );
 };
 
+/**
+ * Creates a Main Event at /events/create, or a Sub-Event of the Main Event :id
+ * at /events/:id/sub-events/new. A Sub-Event is an event with the same fields
+ * and rules, so it is the same form; the parent comes from the route and is
+ * sent only as the URL of the request, never as a form field.
+ */
 const EventCreate = () => {
   const navigate = useNavigate();
+  const { id: parentId } = useParams();
+  const isSubEvent = Boolean(parentId);
+  const backTo = isSubEvent ? `/events/${parentId}` : '/events';
   const [error, setError] = useState('');
   const { showToast } = useToast();
   const { showLoader, showSuccess, showError } = useLoader();
+  const [parent, setParent] = useState<Event | null>(null);
+  const [parentError, setParentError] = useState('');
 
   const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm<EventForm>({
     resolver: zodResolver(eventSchema),
   });
+
+  // The Main Event: named in the heading, and its organizer offered as the
+  // sub-event's (editable - a ceremony can have its own contact person).
+  useEffect(() => {
+    if (!parentId) return;
+    let cancelled = false;
+    api.get(`/events/${parentId}`)
+      .then((res) => {
+        if (cancelled) return;
+        const main: Event = res.data;
+        if (main.parentEventId) {
+          setParentError('A sub-event cannot have sub-events of its own.');
+        } else if (main.eventStatus !== 'Upcoming') {
+          setParentError(`This event is ${main.eventStatus.toLowerCase()}. Sub-events can only be added to an upcoming event.`);
+        }
+        setParent(main);
+        setValue('organizerName', main.organizerName || '');
+        setValue('organizerMobile', main.organizerMobile || '');
+      })
+      .catch((err) => {
+        if (!cancelled) setParentError(err.response?.data?.error || 'Failed to load the main event.');
+      });
+    return () => { cancelled = true; };
+  }, [parentId, setValue]);
 
   const [wOrgName, wOrgMobile, wName, wType, wVenue, wDesc] = watch(['organizerName', 'organizerMobile', 'eventName', 'eventType', 'eventVenue', 'eventDescription']);
   const selectedDate = watch('eventDate');
@@ -88,14 +124,16 @@ const EventCreate = () => {
   }, [selectedDate, selectedTime, minTime, todayStr, setValue, showToast]);
 
   const onSubmit = async (data: EventForm) => {
-    showLoader('Creating event...');
+    showLoader(isSubEvent ? 'Creating sub-event...' : 'Creating event...');
     try {
       setError('');
-      const response = await api.post('/events', data);
-      await showSuccess('Event created successfully!');
+      const response = isSubEvent
+        ? await api.post(`/events/${parentId}/sub-events`, data)
+        : await api.post('/events', data);
+      await showSuccess(isSubEvent ? 'Sub-event created successfully!' : 'Event created successfully!');
       navigate(`/events/${response.data._id}`);
     } catch (err: any) {
-      const errorMsg = err.response?.data?.error || 'Failed to create event';
+      const errorMsg = err.response?.data?.error || (isSubEvent ? 'Failed to create sub-event' : 'Failed to create event');
       setError(errorMsg);
       await showError(errorMsg);
     }
@@ -105,16 +143,32 @@ const EventCreate = () => {
     <div className="max-w-3xl mx-auto space-y-6">
       <div className="flex items-center space-x-4 mb-2 animate-fade-in">
         <button
-          onClick={() => navigate('/events')}
+          onClick={() => navigate(backTo)}
+          aria-label={isSubEvent ? 'Back to the main event' : 'Back to events'}
           className="p-2 text-foreground/50 hover:text-foreground hover:bg-surfaceHover rounded-full transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Create Event</h2>
+        <div>
+          <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">
+            {isSubEvent ? 'Create Sub-Event' : 'Create Event'}
+          </h2>
+          {isSubEvent && parent && (
+            <p className="text-sm text-foreground/50 mt-1">
+              Under <span className="font-medium text-foreground/80">{parent.eventName}</span>
+              {parent.eventId ? <span className="font-mono"> ({parent.eventId})</span> : null}. It starts with no members.
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="bg-surface rounded-xl border border-border overflow-hidden animate-fade-up stagger-1">
         <form onSubmit={handleSubmit(onSubmit)} className="p-6 md:p-8 space-y-6">
+          {parentError && (
+            <div role="alert" className="p-4 bg-destructive/10 border border-destructive/20 text-destructive rounded-md text-sm">
+              {parentError}
+            </div>
+          )}
           {error && (
             <div className="p-4 bg-destructive/10 border border-destructive/20 text-destructive rounded-md text-sm">
               {error}
@@ -145,7 +199,7 @@ const EventCreate = () => {
             <div>
               <Input
                 label="Event Name"
-                placeholder="e.g. Annual Tech Conference 2026"
+                placeholder={isSubEvent ? 'e.g. Haldi Ceremony' : 'e.g. Annual Tech Conference 2026'}
                 maxLength={LIMITS.name}
                 {...register('eventName')}
                 error={errors.eventName?.message}
@@ -206,11 +260,13 @@ const EventCreate = () => {
           </div>
 
           <div className="flex justify-end space-x-4 pt-4 border-t border-border">
-            <Button type="button" variant="secondary" onClick={() => navigate('/events')}>
+            <Button type="button" variant="secondary" onClick={() => navigate(backTo)}>
               Cancel
             </Button>
-            <Button type="submit" isLoading={isSubmitting}>
-              Create Event
+            {/* isSubmitting disables the button while the request runs, so a
+                double click cannot create the event twice. */}
+            <Button type="submit" isLoading={isSubmitting} disabled={Boolean(parentError) || (isSubEvent && !parent)}>
+              {isSubEvent ? 'Create Sub-Event' : 'Create Event'}
             </Button>
           </div>
         </form>

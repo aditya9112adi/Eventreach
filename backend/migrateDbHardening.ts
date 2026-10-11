@@ -569,6 +569,17 @@ async function main() {
         eventStatus: { enum: EVENT_STATUSES },
         createdBy: oidOrNull, adminId: oidOrNull, assignedUserId: oidOrNull,
         assignedUserIds: { bsonType: ['array', 'null'], items: { bsonType: 'objectId' } },
+        // Null or absent: a Main Event; set: a Sub-Event of that Main Event.
+        parentEventId: oidOrNull,
+        createdAt: dateOrNull, updatedAt: dateOrNull,
+      },
+    }, 'strict'],
+
+    // Sub-Event member lists: one existing contact on one sub-event.
+    ['eventmembers', {
+      bsonType: 'object', required: ['eventId', 'contactId'],
+      properties: {
+        eventId: { bsonType: 'objectId' }, contactId: { bsonType: 'objectId' }, addedBy: oidOrNull,
         createdAt: dateOrNull, updatedAt: dateOrNull,
       },
     }, 'strict'],

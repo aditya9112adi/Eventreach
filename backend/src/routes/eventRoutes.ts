@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { createEvent, getEvents, getEventById, updateEvent, deleteEvent, bulkDeleteEvents, getEventUsers, getEventStatistics } from '../controllers/eventController';
+import { createEvent, createSubEvent, getEvents, getEventById, updateEvent, deleteEvent, bulkDeleteEvents, getEventUsers, getEventStatistics } from '../controllers/eventController';
+import { listMembers, listMemberCandidates, addMembers, removeMember } from '../controllers/eventMemberController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { requireRole } from '../middleware/roleMiddleware';
 
@@ -24,5 +25,18 @@ router.put('/:id', updateEvent);
 router.delete('/:id', requireAdmin, deleteEvent);
 router.get('/:id/users', getEventUsers);
 router.get('/:id/statistics', getEventStatistics);
+
+/**
+ * Sub-Events. Creating one is administrative, as creating an event is in the
+ * app (the Events page offers it to Admins and SuperAdmins); deleting one goes
+ * through DELETE /:id above, gated the same way. Its member list is managed by
+ * anyone who may work on the event, as its Main Event's guests are. Every
+ * controller still authorizes the event itself (isEventAuthorized).
+ */
+router.post('/:id/sub-events', requireAdmin, createSubEvent);
+router.get('/:id/members', listMembers);
+router.get('/:id/member-candidates', listMemberCandidates);
+router.post('/:id/members', addMembers);
+router.delete('/:id/members/:contactId', removeMember);
 
 export default router;

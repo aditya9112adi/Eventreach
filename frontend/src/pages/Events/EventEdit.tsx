@@ -63,6 +63,8 @@ const EventEdit = () => {
   const { showLoader, showSuccess, showError } = useLoader();
   const [isLoading, setIsLoading] = useState(true);
   const [accessDenied, setAccessDenied] = useState(false);
+  // A Sub-Event is edited with the same form; its parent cannot be changed here.
+  const [parentName, setParentName] = useState<string | null>(null);
 
   const { register, handleSubmit, watch, setValue, reset, formState: { errors, isSubmitting } } = useForm<EventForm>({
     resolver: zodResolver(eventSchema),
@@ -95,6 +97,7 @@ const EventEdit = () => {
       setIsLoading(true);
       try {
         const response = await api.get(`/events/${id}`);
+        setParentName(response.data.parentEventId ? response.data.parentEvent?.eventName ?? '' : null);
         reset({
           organizerName:    response.data.organizerName || '',
           organizerMobile:  response.data.organizerMobile || '',
@@ -168,7 +171,12 @@ const EventEdit = () => {
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Edit Event</h2>
+        <div>
+          <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">
+            {parentName !== null ? 'Edit Sub-Event' : 'Edit Event'}
+          </h2>
+          {parentName && <p className="text-sm text-foreground/50 mt-1">Sub-event of {parentName}</p>}
+        </div>
       </div>
 
       <div className="bg-surface rounded-xl border border-border overflow-hidden animate-fade-up stagger-1">

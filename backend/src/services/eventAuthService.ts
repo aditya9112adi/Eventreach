@@ -49,7 +49,7 @@ export const getAuthorizedEventIds = async (user?: AuthUserInfo): Promise<string
     events.forEach((e: any) => allEventIds.add(e._id.toString()));
     userAssignedEventIds.forEach((id) => allEventIds.add(id));
 
-    return Array.from(allEventIds);
+    return withSubEvents(allEventIds);
   }
 
   // Regular User access scope:
@@ -74,7 +74,21 @@ export const getAuthorizedEventIds = async (user?: AuthUserInfo): Promise<string
   }
   userEvents.forEach((e: any) => eventIds.add(e._id.toString()));
 
-  return Array.from(eventIds);
+  return withSubEvents(eventIds);
+};
+
+/**
+ * Adds the Sub-Events of every authorized Main Event: a Sub-Event is reached
+ * through its Main Event, whoever the caller is, so anyone who may work on the
+ * Wedding may work on its Haldi - and nobody else may, whatever id they send.
+ * One query, on the parentEventId index.
+ */
+const withSubEvents = async (ids: Set<string>): Promise<string[]> => {
+  if (ids.size > 0) {
+    const children = await Event.find({ parentEventId: { $in: Array.from(ids) } }).select('_id').lean();
+    children.forEach((c: any) => ids.add(c._id.toString()));
+  }
+  return Array.from(ids);
 };
 
 /**
@@ -146,8 +160,10 @@ export const getAccessEventIdsByRecord = async (
   if (adminRecordIds.length) clauses.push({ adminId: { $in: adminRecordIds } }, { createdBy: { $in: adminRecordIds } });
   if (people.length) clauses.push({ assignedUserId: { $in: people } }, { assignedUserIds: { $in: people } });
   if (userIds.length) clauses.push({ createdBy: { $in: userIds } });
+  // Main Events only: the Access Report lists people per Main Event, and a
+  // Sub-Event (which carries its Main Event's adminId) is not a separate row.
   const events: any[] = clauses.length
-    ? await Event.find({ $or: clauses }).select('_id adminId createdBy assignedUserId assignedUserIds').lean()
+    ? await Event.find({ $or: clauses, parentEventId: null }).select('_id adminId createdBy assignedUserId assignedUserIds').lean()
     : [];
 
   const reach = new Map<string, Set<string>>();

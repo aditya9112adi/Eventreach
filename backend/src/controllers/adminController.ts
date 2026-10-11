@@ -6,6 +6,7 @@ import { validatePassword } from '@eventreach/shared';
 import { User } from '../models/User';
 import { Admin } from '../models/Admin';
 import { Event } from '../models/Event';
+import { isSubEventId } from '../services/subEventService';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { getIO, emitPendingApprovalsChanged } from '../services/socketService';
@@ -43,6 +44,9 @@ export const getPendingUsers = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch pending users' });
   }
 };
+
+/** A Sub-Event is reached through its Main Event; nobody is assigned to it directly. */
+const SUB_EVENT_ASSIGNMENT = 'Users are assigned to the main event, not to a sub-event.';
 
 export const approveUser = async (req: RequestWithId, res: Response) => {
   try {
@@ -95,6 +99,10 @@ export const approveUser = async (req: RequestWithId, res: Response) => {
         $unset: { rejectedAt: 1, rejectedBy: 1, rejectionReason: 1 },
       };
 
+      // A User is assigned to a Main Event; its Sub-Events come with it.
+      if (assignedEventId && (await isSubEventId(assignedEventId))) {
+        return res.status(400).json({ error: SUB_EVENT_ASSIGNMENT });
+      }
       if (assignedEventId) {
         updateData.assignedEventId = assignedEventId;
         await Event.findByIdAndUpdate(assignedEventId, {
@@ -445,6 +453,11 @@ export const assignUserEvent = async (req: RequestWithId, res: Response) => {
     const targetUser = await User.findById(id);
     if (!targetUser) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    // A User is assigned to a Main Event; its Sub-Events come with it.
+    if (eventId && (await isSubEventId(eventId))) {
+      return res.status(400).json({ error: SUB_EVENT_ASSIGNMENT });
     }
 
     // If Admin, verify both the target user and the event are in the Admin's scope.

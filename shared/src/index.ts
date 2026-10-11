@@ -39,8 +39,23 @@ export interface Event {
   adminId?: string;
   assignedUserId?: string;
   assignedUserIds?: string[];
+  /** Null or absent: a Main Event. Set: a Sub-Event of that Main Event. */
+  parentEventId?: string | null;
+  /** On a Sub-Event (detail, or a listing that includes sub-events): its Main Event. */
+  parentEvent?: EventParentSummary | null;
+  /** On a Main Event in a listing or detail: how many sub-events it has. */
+  subEventCount?: number;
+  /** On a Sub-Event: how many contacts are on its member list. */
+  memberCount?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+/** How a Sub-Event names its Main Event. */
+export interface EventParentSummary {
+  _id: string;
+  eventId?: string;
+  eventName: string;
 }
 
 export interface Contact {

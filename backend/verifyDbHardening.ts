@@ -14,7 +14,7 @@ import mongoose from 'mongoose';
 
 const EXPECTED_VALIDATED = [
   'admins', 'auditlogs', 'campaigns', 'contacts', 'counters',
-  'events', 'messagelogs', 'settings', 'users',
+  'eventmembers', 'events', 'messagelogs', 'settings', 'users',
 ];
 
 const ok = (b: boolean) => (b ? 'OK  ' : 'NO  ');

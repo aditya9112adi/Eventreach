@@ -29,7 +29,7 @@ import {
 import { isEventAuthorized } from '../services/eventAuthService';
 import { AuditService } from '../services/AuditService';
 import { Event } from '../models/Event';
-import { Contact } from '../models/Contact';
+import { findEventGuest } from '../services/subEventService';
 import { MessageLog } from '../models/MessageLog';
 import { normalizeIndianPhone } from '../utils/indianPhone';
 
@@ -420,6 +420,7 @@ export const resolveEventContext = async (
  *
  * The guest is looked up by id AND event, so a contact belonging to another
  * event can never be messaged through an event the caller does have access to.
+ * For a Sub-Event, "belongs" means on its member list.
  * No variable value is read from the request body.
  */
 export const resolveGuestVariables = async (
@@ -427,7 +428,8 @@ export const resolveGuestVariables = async (
   contactId: unknown
 ): Promise<ResolvedEventTemplate> => {
   const id = requireObjectId(contactId, 'contactId', 'A guest');
-  const contact = await Contact.findOne({ _id: id, eventId: context.event._id }).lean();
+  // A Sub-Event's guest must be on its member list (findEventGuest).
+  const contact = await findEventGuest(context.event, id);
   if (!contact) {
     throw new EventTemplateError(
       'CONTACT_NOT_FOUND',

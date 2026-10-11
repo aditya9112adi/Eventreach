@@ -19,6 +19,18 @@ import { performContactDeletion } from '../services/contactDeletionService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { isEventAuthorized, getAuthorizedEventIds } from '../services/eventAuthService';
 import { statusesMatching } from '../utils/accessStatus';
+import { Event } from '../models/Event';
+import { eventGuestFilter, isSubEventId } from '../services/subEventService';
+
+/**
+ * A contact is created on a Main Event. A Sub-Event's guests are existing
+ * contacts placed on its member list (GET/POST /api/events/:id/members), so
+ * adding or importing straight into a Sub-Event is refused rather than
+ * creating a second, parallel guest list for it.
+ */
+const SUB_EVENT_GUEST_WRITE =
+  'Guests are added to the main event. Add them to this sub-event from its Members list.';
+
 
 /**
  * Optional server-side pagination for contact listings.
@@ -145,6 +157,9 @@ export const addContact = async (req: RequestWithId, res: Response) => {
     if (!authorized) {
       return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
     }
+    if (await isSubEventId(eventId)) {
+      return res.status(400).json({ error: SUB_EVENT_GUEST_WRITE });
+    }
 
     /**
      * A number typed into the form has to be valid before it is stored: an
@@ -207,7 +222,15 @@ export const getContactsByEvent = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
     }
 
-    return await sendContactList(req, res, { eventId });
+    /**
+     * An event's guests: a Main Event's own contacts, or a Sub-Event's members
+     * - never its Main Event's or a sibling's. The campaign composer and send
+     * preview read this list, so a message for Haldi reaches Haldi's members.
+     */
+    const event = mongoose.isValidObjectId(eventId)
+      ? await Event.findById(eventId).select('_id parentEventId').lean()
+      : null;
+    return await sendContactList(req, res, event ? await eventGuestFilter(event as any) : { eventId });
   } catch (error) {
     console.error('Get contacts error:', error);
     res.status(500).json({ error: 'Failed to fetch contacts' });
@@ -221,6 +244,10 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
     const authorized = await isEventAuthorized(currentUser, eventId);
     if (!authorized) {
       return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
+    if (await isSubEventId(eventId)) {
+      return res.status(400).json({ error: SUB_EVENT_GUEST_WRITE });
     }
 
     const file = req.file;
@@ -319,6 +346,10 @@ export const bulkImportContacts = async (req: RequestWithId, res: Response) => {
     const authorized = await isEventAuthorized(currentUser, eventId);
     if (!authorized) {
       return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
+    }
+
+    if (await isSubEventId(eventId)) {
+      return res.status(400).json({ error: SUB_EVENT_GUEST_WRITE });
     }
 
     const { contacts } = req.body as { contacts: ExtractedContact[] };

@@ -115,6 +115,7 @@ export const ConfirmDeleteDialog = ({
   message,
   confirmLabel,
   isDeleting,
+  busyLabel = 'Deleting…',
   onConfirm,
   onCancel,
 }: {
@@ -123,6 +124,8 @@ export const ConfirmDeleteDialog = ({
   message: React.ReactNode;
   confirmLabel: string;
   isDeleting: boolean;
+  /** Shown on the confirm button while the request is in flight. */
+  busyLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }) => {
@@ -152,7 +155,7 @@ export const ConfirmDeleteDialog = ({
             disabled={isDeleting}
             className="px-5 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 shadow-lg shadow-red-500/20 transition-colors flex items-center disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <Trash2 className="w-4 h-4 mr-2" /> {isDeleting ? 'Deleting…' : confirmLabel}
+            <Trash2 className="w-4 h-4 mr-2" /> {isDeleting ? busyLabel : confirmLabel}
           </button>
         </div>
       </div>

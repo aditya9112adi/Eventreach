@@ -32,7 +32,10 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
   const filteredEvents = events.filter(e =>
     e.eventName.toLowerCase().includes(q) ||
     e.eventType?.toLowerCase().includes(q) ||
-    e.eventId?.toLowerCase().includes(q)
+    e.eventId?.toLowerCase().includes(q) ||
+    // A Sub-Event (listed only where a page asks for them) is found by its
+    // Main Event's name too.
+    e.parentEvent?.eventName?.toLowerCase().includes(q)
   ).slice(0, 50);
 
   useEffect(() => {
@@ -64,6 +67,7 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
         {selectedEvent ? (
           <span className="truncate flex-1 text-sm font-medium text-foreground">
             {selectedEvent.eventId ? `${selectedEvent.eventId} | ` : ''}{selectedEvent.eventName}
+            {selectedEvent.parentEvent ? <span className="text-foreground/50 font-normal"> · {selectedEvent.parentEvent.eventName}</span> : null}
           </span>
         ) : (
           <span className="truncate flex-1 text-sm text-foreground/50">
@@ -137,7 +141,10 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
                         {evt.eventId ? <span className="text-foreground/50 font-mono font-normal">{evt.eventId} | </span> : null}
                         {evt.eventName}
                       </p>
-                      <p className="text-xs text-foreground/50 mt-0.5 truncate">{formatEventType(evt.eventType)}</p>
+                      <p className="text-xs text-foreground/50 mt-0.5 truncate">
+                        {formatEventType(evt.eventType)}
+                        {evt.parentEvent ? ` · Sub-event of ${evt.parentEvent.eventName}` : ''}
+                      </p>
                     </div>
                     <span className="text-xs text-foreground/50 shrink-0 mt-0.5">{evt.eventDate}</span>
                   </div>

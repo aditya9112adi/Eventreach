@@ -1,5 +1,6 @@
 import { Campaign } from '../models/Campaign';
 import { Contact } from '../models/Contact';
+import { eventGuestFilter } from './subEventService';
 import { Event } from '../models/Event';
 import { MessageLog } from '../models/MessageLog';
 import { whatsappService } from './WhatsAppService';
@@ -87,10 +88,14 @@ export class QueueService {
       const eventName = event.eventName;
       const venue = event.eventVenue;
 
-      let query: any = { eventId: event._id, status: 'Valid' };
+      // The event's guests (a Sub-Event's are its members - never its Main
+      // Event's or a sibling's), Valid only, narrowed to the chosen recipients.
+      // $and keeps the recipient list from replacing the guest filter.
+      const clauses: any[] = [await eventGuestFilter(event), { status: 'Valid' }];
       if (recipientIds && Array.isArray(recipientIds) && recipientIds.length > 0) {
-        query._id = { $in: recipientIds };
+        clauses.push({ _id: { $in: recipientIds } });
       }
+      const query: any = { $and: clauses };
       
       const contacts = await Contact.find(query);
       

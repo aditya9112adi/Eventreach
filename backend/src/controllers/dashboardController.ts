@@ -5,6 +5,7 @@ import { Contact } from '../models/Contact';
 import { Campaign } from '../models/Campaign';
 import { MessageLog } from '../models/MessageLog';
 import { getAuthorizedEventIds, isEventAuthorized } from '../services/eventAuthService';
+import { MAIN_EVENT_FILTER } from '../services/subEventService';
 
 export const getDashboardStats = async (req: Request, res: Response) => {
   try {
@@ -79,7 +80,9 @@ export const getDashboardStats = async (req: Request, res: Response) => {
         : { campaignId: null };
     }
 
-    const totalEvents = await Event.countDocuments(eventQuery);
+    // Events are counted as the Events page lists them - Main Events - while
+    // guests, campaigns and messages above still include their Sub-Events'.
+    const totalEvents = await Event.countDocuments(eventId ? eventQuery : { ...eventQuery, ...MAIN_EVENT_FILTER });
     const totalContacts = await Contact.countDocuments(contactQuery);
     const totalCampaigns = await Campaign.countDocuments(campaignQuery);
 

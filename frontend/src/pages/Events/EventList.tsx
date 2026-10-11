@@ -20,6 +20,7 @@ import {
 import { getPaginatedData, getSerialNumber } from '../../utils/pagination';
 import { formatEventType } from '../../utils/eventType';
 import { getPageSelectionState, toggleSelectAllOnPage, toggleSelection } from '../../utils/selection';
+import { subEventCountLabel } from '../../utils/subEventMembers';
 
 type SortField = 'eventId' | 'eventName' | 'eventType' | 'eventDate' | 'eventVenue' | 'eventStatus' | 'organizerName' | 'organizerMobile';
 type SortDir = 'asc' | 'desc';
@@ -413,7 +414,13 @@ const EventList = () => {
                     <td className="py-3 px-4 text-sm font-mono text-foreground/70 whitespace-nowrap select-all">{event.eventId || '—'}</td>
                     <td className="py-3 px-4 text-sm font-medium text-foreground">{event.organizerName || '—'}</td>
                     <td className="py-3 px-4 text-sm text-foreground/80 whitespace-nowrap">{event.organizerMobile || '—'}</td>
-                    <td className="py-3 px-4 font-medium text-foreground">{event.eventName}</td>
+                    <td className="py-3 px-4 font-medium text-foreground">
+                      {event.eventName}
+                      {/* Sub-events are managed on the event's details page. */}
+                      {Boolean(event.subEventCount) && (
+                        <span className="block text-xs font-normal text-foreground/50">{subEventCountLabel(event.subEventCount!)}</span>
+                      )}
+                    </td>
                     <td className="py-3 px-4 text-sm text-foreground/80">{formatEventType(event.eventType)}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center text-sm text-foreground/80 whitespace-nowrap">
@@ -471,6 +478,11 @@ const EventList = () => {
               </span>
             ) : 'this event'}
             ? This action cannot be undone.
+            {eventToDelete?.subEventCount ? (
+              <span className="block mt-2 text-amber-500">
+                It has {subEventCountLabel(eventToDelete.subEventCount)}, which must be deleted first from the event's details page.
+              </span>
+            ) : null}
           </>
         }
         confirmLabel="Delete"
