@@ -453,7 +453,7 @@ const Composer = () => {
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Campaign Composer</h2>
+          <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Message</h2>
         </div>
         <div className="flex items-center space-x-3">
           {messageMode === 'custom' ? (
