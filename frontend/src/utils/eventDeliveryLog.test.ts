@@ -98,13 +98,11 @@ test('the Event Report keeps its columns', async (t) => {
     }
   });
 
-  // The exports now carry the Delivery Log of the report's events (see
-  // eventReportExport.test.ts) - after the event table, never in place of it.
-  await t.test('the exports still lead with the event table, its columns unchanged', () => {
-    const exportBlock = between(reports, 'const runExport', 'const statusVariant');
-    assert.ok(exportBlock.includes('definition.columns'), 'the report definition supplies the columns');
-    assert.equal(exportBlock.includes('EventDeliveryLog'), false, 'no log component is involved');
-    assert.equal(exportBlock.includes('/reports/event/'), false, 'never the per-event endpoint, one request per event');
+  // The report has no downloads of its own: an event's Delivery Log is
+  // downloaded from its View (EventDeliveryExport), one event at a time.
+  await t.test('the report itself has no export; the event\'s View carries the Delivery Log downloads', () => {
+    assert.equal(reports.includes('const runExport'), false);
+    assert.ok(reports.includes('<EventDeliveryExport'));
   });
 });
 
@@ -124,14 +122,11 @@ test('the Event Report page shows no Delivery Log', async (t) => {
     assert.equal(reports.includes('shows one event at a time'), false);
   });
 
-  await t.test('Reports fetches no log on its own - only the export button reads one', () => {
-    // The View page's component reads one event's log; Reports itself reads
-    // the batch endpoint only inside the export handler, when clicked.
+  await t.test('Reports fetches no log on its own - only the View\'s components read one', () => {
+    // The View page's components read one event's log; Reports itself makes
+    // no Delivery Log request at all.
     assert.equal(reports.includes('api.get(`/reports/event'), false, 'opening Reports cannot fetch it');
-    const exportBlock = between(reports, 'const runExport', 'const statusVariant');
-    const everywhere = (reports.match(/delivery-log/g) || []).length;
-    const inExport = (exportBlock.match(/delivery-log/g) || []).length;
-    assert.equal(everywhere, inExport, 'every delivery-log request in Reports is in the export handler');
+    assert.equal((reports.match(/delivery-log/g) || []).length, 0, 'no delivery-log request anywhere in Reports');
   });
 
   await t.test('a generated report starts no log request of its own', () => {

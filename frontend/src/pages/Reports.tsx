@@ -34,23 +34,13 @@ import {
   type ReportFilters,
   type ReportKey,
 } from '../utils/reportSearch';
-import {
-  buildReportFileName,
-  exportToExcel,
-  exportToPdf,
-  type ReportColumn,
-} from '../utils/reportExport';
+import type { ReportColumn } from '../utils/reportExport';
 import {
   groupRecordsByEvent,
   countUnlinkedRecords,
   accessRecordEventIds,
   contactRecordEventIds,
 } from '../utils/reportEventGroups';
-import {
-  exportEventReportExcel,
-  exportEventReportPdf,
-  fetchReportDeliveryRows,
-} from '../utils/eventReportExport';
 
 interface ReportDefinition {
   key: ReportKey;
@@ -235,7 +225,6 @@ const Reports = () => {
   const [searchValue, setSearchValue] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [isExporting, setIsExporting] = useState(false);
   /** Why the chosen dates cannot produce a report; '' once they can. */
   const [dateError, setDateError] = useState('');
   /**
@@ -490,14 +479,6 @@ const Reports = () => {
     return map;
   }, [events]);
 
-  /** "EVT-000006 | Valentines", as a download names the event it was scoped to. */
-  const eventLabelById = useCallback(
-    (id: string) => {
-      const evt: any = events.find((e: any) => String(e._id) === String(id));
-      return evt ? [evt.eventId, evt.eventName].filter(Boolean).join(' | ') : String(id);
-    },
-    [events]
-  );
 
   /**
    * Contacts come back with only `eventId`, so the event name is resolved from
@@ -676,90 +657,7 @@ const Reports = () => {
     if (currentPage > totalPages && totalPages > 0) setCurrentPage(totalPages);
   }, [tableRows.length, currentPage, rowsPerPage]);
 
-  /**
-   * The Access Report's downloads are named for the event they cover -
-   * AccessReport_EVT000006_09102026, or AccessReport_AllEvents_09102026 -
-   * from the generated filters. The other reports keep their names.
-   */
-  const downloadLabel = useCallback(
-    (filters: ReportFilters | null): string => {
-      if (!EVENT_SCOPED_REPORTS.includes(activeReport)) return reportOption.key;
-      const evt: any = filters?.eventId ? events.find((e: any) => String(e._id) === String(filters.eventId)) : null;
-      return filters?.eventId ? evt?.eventId || 'Event' : 'AllEvents';
-    },
-    [activeReport, reportOption.key, events]
-  );
-  const fileNamePreview = buildReportFileName(definition.fileName, downloadLabel(reportFilters ?? liveFilters));
-
-  // filteredRows is built from reportFilters; the export must use the same
-  // object, never the live inputs, or a download could claim filters the table
-  // never used.
-  const exportFilters = reportFilters ?? liveFilters;
-
   const filtersChanged = searchFirst && hasResults && !pinnedFilters && filtersDiffer(run.applied, liveFilters);
-
-  const runExport = useCallback(
-    async (kind: 'excel' | 'pdf') => {
-      // Guarded here as well as on the button: the file carries the dates in
-      // its own header, so it must never be written without them.
-      const problem = validateReportDateRange(exportFilters.startDate, exportFilters.endDate);
-      if (problem) {
-        setDateError(problem);
-        showToast('warning', problem);
-        return;
-      }
-      if (filteredRows.length === 0) {
-        showToast('warning', 'There is nothing to download for this filter.');
-        return;
-      }
-
-      setIsExporting(true);
-      try {
-        const name = buildReportFileName(definition.fileName, downloadLabel(exportFilters));
-        // The very filters the visible table was built from, so the download
-        // states its own scope and can never describe a different dataset.
-        const meta = {
-          searchValue: exportFilters.searchValue,
-          startDate: exportFilters.startDate,
-          endDate: exportFilters.endDate,
-          // The generated report's event, never the picker's current value.
-          ...(EVENT_SCOPED_REPORTS.includes(activeReport)
-            ? { event: exportFilters.eventId ? eventLabelById(exportFilters.eventId) : 'All Events' }
-            : {}),
-        };
-        if (activeReport === 'event') {
-          /**
-           * The Event Report carries the WhatsApp Delivery Log of every event
-           * it lists. The events are filteredRows - the very rows the table
-           * shows after the search and dates - so the log covers those and
-           * nothing else, and all their ids go in one batch request rather
-           * than one per event. A failure here fails the download: a report
-           * missing part of its log must not look complete.
-           */
-          const deliveryRows = await fetchReportDeliveryRows(
-            filteredRows.map((row: any) => String(row._id)),
-            async (eventIds, page, limit) => {
-              const res = await api.post('/reports/events/delivery-log', { eventIds, page, limit });
-              return { logs: res.data?.logs ?? [], total: res.data?.pagination?.total ?? 0 };
-            }
-          );
-          const write = kind === 'excel' ? exportEventReportExcel : exportEventReportPdf;
-          await write(name, definition.label, definition.columns, filteredRows, deliveryRows, meta);
-        } else if (kind === 'excel') {
-          await exportToExcel(name, definition.label, definition.columns, filteredRows, meta);
-        } else {
-          await exportToPdf(name, definition.label, definition.columns, filteredRows, meta);
-        }
-        showToast('success', `${name}.${kind === 'excel' ? 'xlsx' : 'pdf'} downloaded`);
-      } catch (error) {
-        console.error('Report export failed', error);
-        showToast('error', 'Could not generate the file. Please try again.');
-      } finally {
-        setIsExporting(false);
-      }
-    },
-    [filteredRows, definition, activeReport, exportFilters, eventLabelById, downloadLabel, showToast]
-  );
 
   /**
    * The event View has opened, for its downloads: found in this report's own
@@ -849,7 +747,7 @@ const Reports = () => {
           <h2 className="text-3xl font-sans font-bold text-foreground animate-slide-in uppercase">Reports</h2>
           <p className="text-xs text-foreground/50 mt-1">
             {showReport
-              ? `Filter and download ${definition.label.toLowerCase()}s as Excel or PDF`
+              ? `Filter ${definition.label.toLowerCase()}s, then open an event's View to download it as Excel or PDF`
               : 'Choose a report type under Reports in the sidebar, then set its filters and search'}
           </p>
         </div>
@@ -911,11 +809,7 @@ const Reports = () => {
         }}
         dateError={dateError}
         onClear={clearFilters}
-        onDownloadExcel={() => runExport('excel')}
-        onDownloadPdf={() => runExport('pdf')}
         resultCount={filteredRows.length}
-        isExporting={isExporting}
-        fileNamePreview={fileNamePreview}
         {...(searchFirst
           ? {
               onSearch: runSearch,
@@ -1006,6 +900,7 @@ const Reports = () => {
           eventName={scopedViewEvent?.eventName || ''}
           eventDetails={scopedViewDetails}
           title={definition.detailsTitle || 'Details'}
+          fileName={definition.fileName}
           endpoint={definition.endpoint}
           columns={definition.columns}
           decorate={activeReport === 'contact' ? decorateContact : undefined}

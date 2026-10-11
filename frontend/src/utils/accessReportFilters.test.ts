@@ -156,11 +156,11 @@ test('Search sends the chosen filter, with the event and the dates', async (t) =
 // ─── the downloads ───────────────────────────────────────────────────────────
 
 test('the downloads are the displayed records, named for the event', async (t) => {
-  await t.test('Excel and PDF are written from the table\'s own filtered records', () => {
-    const exportFn = between(reports, 'const runExport = useCallback(', 'const viewedEvent');
-    assert.ok(exportFn.includes('await exportToExcel(name, definition.label, definition.columns, filteredRows, meta);'));
-    assert.ok(exportFn.includes('await exportToPdf(name, definition.label, definition.columns, filteredRows, meta);'));
-    assert.ok(reports.includes('const exportFilters = reportFilters ?? liveFilters;'), 'the generated filters');
+  await t.test('Excel and PDF are in each event\'s View, written from the records it shows', () => {
+    assert.equal(reports.includes('const runExport'), false, 'the report itself has no downloads');
+    const view = fs.readFileSync('frontend/src/components/ui/ReportEventView.tsx', 'utf-8');
+    assert.ok(view.includes("const file = kind === 'excel' ? await exportEventViewExcel(input) : await exportEventViewPdf(input);"));
+    assert.ok(view.includes('rows: shown,'));
   });
 
   await t.test('they state the search and the event, as the Event Report states its search', () => {
@@ -169,9 +169,9 @@ test('the downloads are the displayed records, named for the event', async (t) =
     ]);
   });
 
-  await t.test('the file name says the report, the event (or All Events) and the date', () => {
-    assert.ok(reports.includes('if (!EVENT_SCOPED_REPORTS.includes(activeReport)) return reportOption.key;'));
-    assert.ok(reports.includes('const name = buildReportFileName(definition.fileName, downloadLabel(exportFilters));'));
+  await t.test('the file name says the report, the event and the date', () => {
+    const helper = fs.readFileSync('frontend/src/utils/reportEventViewExport.ts', 'utf-8');
+    assert.ok(helper.includes("buildReportFileName(input.fileName, detail(input.eventDetails, 'Event ID') || 'Event', when)"));
     const when = new Date('2026-10-09T06:00:00.000Z');
     assert.equal(buildReportFileName('AccessReport', 'EVT-000006', when), 'AccessReport_EVT000006_09102026');
     assert.equal(buildReportFileName('AccessReport', 'AllEvents', when), 'AccessReport_AllEvents_09102026');

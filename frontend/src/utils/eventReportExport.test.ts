@@ -530,41 +530,17 @@ test('the export follows the generated report\'s filters', async (t) => {
 
 // ─── the page wiring ─────────────────────────────────────────────────────────
 
-test('Reports.tsx: the Event Report buttons export the report\'s events and their log', async (t) => {
-  const exportFn = reportsSource.slice(
-    reportsSource.indexOf('const runExport = useCallback('),
-    reportsSource.indexOf('const viewedEvent')
-  );
-
+test('Reports.tsx: no report-wide download - each event is downloaded from its View', async (t) => {
   await t.test('the test fixtures mirror the real Event Report definition', () => {
     for (const column of EVENT_COLUMNS) assert.ok(reportsSource.includes(`header: '${column.header}'`));
     assert.ok(reportsSource.includes('text: (row) => `${value(row.eventId)} ${value(row.eventName)}`'));
     assert.ok(reportsSource.includes('date: (row) => row.eventDate,'));
   });
 
-  await t.test('the event branch reads the log from the batch endpoint, once', () => {
-    assert.ok(exportFn.includes("if (activeReport === 'event') {"));
-    assert.equal((reportsSource.match(/\/reports\/events\/delivery-log/g) || []).length, 1);
-    assert.ok(exportFn.includes("api.post('/reports/events/delivery-log', { eventIds, page, limit })"));
-  });
-
-  await t.test('the events are the generated report\'s rows - not the event View has open', () => {
-    assert.ok(exportFn.includes('filteredRows.map((row: any) => String(row._id))'));
-    assert.ok(exportFn.includes('await write(name, definition.label, definition.columns, filteredRows, deliveryRows, meta);'));
-    assert.equal(exportFn.includes('selectedEventId'), false);
-    assert.equal(exportFn.includes('viewedEvent'), false);
-  });
-
-  await t.test('the request is not made inside a loop over the events (no N+1)', () => {
-    const call = exportFn.indexOf("api.post('/reports/events/delivery-log'");
-    const before = exportFn.slice(0, call);
-    assert.equal(/for \(|\.forEach\(|filteredRows\.map\(\s*async/.test(before.slice(before.indexOf("if (activeReport === 'event')"))), false);
-    assert.ok(before.includes('fetchReportDeliveryRows('), 'only through the batch reader');
-  });
-
-  await t.test('the other reports export exactly as before', () => {
-    assert.ok(exportFn.includes('await exportToExcel(name, definition.label, definition.columns, filteredRows, meta);'));
-    assert.ok(exportFn.includes('await exportToPdf(name, definition.label, definition.columns, filteredRows, meta);'));
+  await t.test('no report-wide Excel/PDF, and no batch Delivery Log read for one', () => {
+    assert.equal(reportsSource.includes('const runExport'), false);
+    assert.equal(reportsSource.includes('/reports/events/delivery-log'), false);
+    assert.equal(reportsSource.includes('exportEventReportExcel'), false);
   });
 
   // Where the log is rendered (inside View only) is asserted in eventDeliveryLog.test.ts.

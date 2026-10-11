@@ -316,11 +316,11 @@ test('the Event Report and the downloads are unchanged', async (t) => {
     assert.ok(reports.includes("{activeReport === 'event' && selectedEventId ? ("));
   });
 
-  await t.test('the downloads are still written record by record from filteredRows', () => {
-    const exportFn = between(reports, 'const runExport = useCallback(', 'const viewedEvent');
-    assert.ok(exportFn.includes('await exportToExcel(name, definition.label, definition.columns, filteredRows, meta);'));
-    assert.ok(exportFn.includes('await exportToPdf(name, definition.label, definition.columns, filteredRows, meta);'));
-    assert.equal(exportFn.includes('eventRows'), false);
-    assert.equal(exportFn.includes('tableRows'), false);
+  await t.test('the downloads are written record by record, in the View, from the records it shows', () => {
+    assert.equal(reports.includes('const runExport'), false, 'never from the grouped event rows');
+    const view = fs.readFileSync('frontend/src/components/ui/ReportEventView.tsx', 'utf-8');
+    const exportFn = between(view, 'const runExport = async', 'const canExport');
+    assert.ok(exportFn.includes('rows: shown,'));
+    assert.ok(exportFn.includes('columns,'), 'with the report\'s record columns');
   });
 });

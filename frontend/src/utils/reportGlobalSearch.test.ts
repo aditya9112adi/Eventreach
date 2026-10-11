@@ -105,8 +105,9 @@ test('opening an event clears the search box and keeps the report', async (t) =>
   await t.test('the generated report\'s filters are kept, so its table, View and downloads stay as they were', () => {
     assert.ok(opener.includes('if (reportFilters) setPinnedFilters(reportFilters);'));
     assert.ok(reports.includes('const reportFilters: ReportFilters | null = pinnedFilters ?? generatedFilters;'));
-    assert.ok(reports.includes('const exportFilters = reportFilters ?? liveFilters;'), 'the downloads read the kept filters');
-    assert.ok(reports.includes('searchValue: exportFilters.searchValue,'));
+    // The View - and so its downloads - is given the kept filters' search.
+    assert.ok(reports.includes('...reportFilterParams(activeReport, reportFilters),'));
+    assert.ok(reports.includes('matchParams={viewMatchParams}'));
   });
 
   await t.test('clearing the box searches nothing again', () => {

@@ -346,17 +346,17 @@ test('the Event Report definition itself fixes the nine columns, in order', () =
   ]);
 });
 
-test('the page hands the exporters the dataset it is showing', () => {
+test('the View hands the exporters the records it is showing', () => {
   const page = fs.readFileSync('frontend/src/pages/Reports.tsx', 'utf-8');
-  const exportBlock = page.slice(page.indexOf('const runExport'), page.indexOf('const runExport') + 1400);
+  assert.equal(page.includes('const runExport'), false, 'the report itself has no downloads');
+  const view = fs.readFileSync('frontend/src/components/ui/ReportEventView.tsx', 'utf-8');
+  const exportBlock = view.slice(view.indexOf('const runExport'), view.indexOf('const canExport'));
 
-  assert.ok(exportBlock.includes('filteredRows'), 'exports use the filtered rows');
+  assert.ok(exportBlock.includes('rows: shown,'), 'exports use the records shown');
   assert.ok(!exportBlock.includes('api.get'), 'an export never re-fetches');
   assert.ok(
-    exportBlock.includes('exportFilters.searchValue') &&
-      exportBlock.includes('exportFilters.startDate') &&
-      exportBlock.includes('exportFilters.endDate'),
-    'and the filters printed on it are the ones the table was built from'
+    exportBlock.includes('match: showingMatches ? (JSON.parse(matchKey) as Record<string, string>) : null,'),
+    'and the search printed on it is the one the records were fetched with'
   );
 });
 
@@ -784,7 +784,9 @@ test('the application owns the date validation', async (t) => {
     assert.ok(runSearch.includes('setDateError(problem)'), 'and the message is the application\'s');
   });
 
-  await t.test('the downloads are still what stay disabled', () => {
-    assert.ok(bar.includes('!isExporting && !isSearching && !dateError'), 'no file without a usable range');
+  await t.test('the filter bar has no downloads to disable any more', () => {
+    for (const removed of ['onDownloadExcel', 'onDownloadPdf', 'isExporting', 'fileNamePreview', '>Download<']) {
+      assert.equal(bar.includes(removed), false, removed);
+    }
   });
 });

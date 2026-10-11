@@ -157,11 +157,11 @@ test('the generated filters, not the live inputs, decide the rows', () => {
   assert.ok(reports.includes("filterReportRows(decoratedRows, definition, reportFilters, reportOption.type === 'date')"));
 });
 
-test('the downloads are the displayed records, named for the event', () => {
-  const exportFn = between(reports, 'const runExport = useCallback(', 'const viewedEvent');
-  assert.ok(exportFn.includes('await exportToExcel(name, definition.label, definition.columns, filteredRows, meta);'));
-  assert.ok(exportFn.includes('await exportToPdf(name, definition.label, definition.columns, filteredRows, meta);'));
-  assert.ok(reports.includes('if (!EVENT_SCOPED_REPORTS.includes(activeReport)) return reportOption.key;'));
+test('the downloads are in each event\'s View: the records it shows, named for the event', () => {
+  assert.equal(reports.includes('const runExport'), false, 'the report itself has no downloads');
+  assert.ok(view.includes('rows: shown,'));
+  assert.ok(view.includes("const file = kind === 'excel' ? await exportEventViewExcel(input) : await exportEventViewPdf(input);"));
+  assert.ok(reports.includes('fileName={definition.fileName}'));
 });
 
 test('View opens on the matching contacts when searched, with every contact a click away', () => {

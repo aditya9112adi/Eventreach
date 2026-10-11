@@ -298,10 +298,10 @@ test('an event with no records: nothing to download, and a file would say so hon
     const { shown, sheet } = await generateAndExport('contact', filters({ eventId: C._id }));
     assert.equal(shown.length, 0);
     assert.equal(dataRows(sheet, 'Full Name').length, 0);
-    // The filter bar enables downloads only with results; runExport refuses an empty set too.
-    const bar = read('frontend/src/components/ui/ReportFilterBar.tsx');
-    assert.ok(bar.includes('hasGenerated && resultCount > 0'));
-    assert.ok(reports.includes("if (filteredRows.length === 0) {\n        showToast('warning', 'There is nothing to download for this filter.');"));
+    // Downloads live in each event's View, which offers them only when it shows records.
+    const view = read('frontend/src/components/ui/ReportEventView.tsx');
+    assert.ok(view.includes("const canExport = status === 'success' && shown.length > 0 && exporting === null;"));
+    assert.ok(view.includes("if (exporting || status !== 'success' || shown.length === 0) return;"));
   });
 });
 
@@ -317,13 +317,15 @@ test('the download follows the generated report, not the picker as it is now', a
     assert.equal(filtersDiffer(run.applied, live), true, 'and the page shows the filters have changed');
   });
 
-  await t.test('Reports exports with the generated filters and names their event', () => {
+  await t.test('the report has no downloads of its own; each event\'s View has them, from what it shows', () => {
     assert.ok(reports.includes('searchFirst || serverFiltered ? (hasResults ? run.applied : null) : liveFilters;'));
-    assert.ok(reports.includes('const exportFilters = reportFilters ?? liveFilters;'));
-    const exportFn = between(reports, 'const runExport = useCallback(', 'const viewedEvent');
-    assert.ok(exportFn.includes("? { event: exportFilters.eventId ? eventLabelById(exportFilters.eventId) : 'All Events' }"));
-    assert.equal(exportFn.includes('reportEventId'), false, 'never the picker\'s current value');
-    assert.equal(exportFn.includes('selectedEventId'), false);
+    assert.equal(reports.includes('const runExport'), false, 'no report-wide download');
+    assert.equal(reports.includes('exportFilters'), false);
+    assert.ok(reports.includes('fileName={definition.fileName}'), 'the View names its file for its report');
+    const view = read('frontend/src/components/ui/ReportEventView.tsx');
+    assert.ok(view.includes('rows: shown,'), 'the records the View shows');
+    assert.ok(view.includes('match: showingMatches ? (JSON.parse(matchKey) as Record<string, string>) : null,'),
+      'and the report\'s search when it shows the matching ones');
   });
 });
 

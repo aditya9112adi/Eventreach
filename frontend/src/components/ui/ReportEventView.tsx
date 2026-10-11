@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Download, FileSpreadsheet } from 'lucide-react';
 import api from '../../services/api';
 import { Badge } from './Badge';
 import { PaginationControls } from './PaginationControls';
+import { useToast } from './Toast';
 import { getPaginatedData, getSerialNumber } from '../../utils/pagination';
 import type { ReportColumn } from '../../utils/reportExport';
+import { exportEventViewExcel, exportEventViewPdf } from '../../utils/reportEventViewExport';
 
 /**
  * View for one event of the Access or Contact Report: the event's details,
@@ -17,6 +20,10 @@ import type { ReportColumn } from '../../utils/reportExport';
  * the event alone. Either way the records come from the report's existing
  * endpoint scoped to ?eventId=, so the server authorizes the event and returns
  * only its records; a refusal is shown as the server words it.
+ *
+ * Its Excel and PDF hold exactly the records shown - matching, or all - with
+ * the event's details (see utils/reportEventViewExport.ts). The report itself
+ * has no downloads; they live here, as they do in the Event Report's View.
  */
 interface ReportEventViewProps {
   eventId: string;
@@ -25,6 +32,8 @@ interface ReportEventViewProps {
   eventDetails: Array<[string, string]>;
   /** "Access Details" or "Contact Details". */
   title: string;
+  /** "AccessReport" or "ContactReport", for the download's file name. */
+  fileName: string;
   endpoint: string;
   columns: ReportColumn<any>[];
   /** Adds what a record needs to be shown (a contact's event name). */
@@ -44,6 +53,7 @@ export const ReportEventView = ({
   eventName,
   eventDetails,
   title,
+  fileName,
   endpoint,
   columns,
   decorate,
@@ -60,6 +70,8 @@ export const ReportEventView = ({
   const [showAll, setShowAll] = useState(false);
   const matchKey = matchParams ? JSON.stringify(matchParams) : '';
   const showingMatches = Boolean(matchParams) && !showAll;
+  const { showToast } = useToast();
+  const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,18 +101,69 @@ export const ReportEventView = ({
 
   const paged = useMemo(() => getPaginatedData(shown, currentPage, rowsPerPage), [shown, currentPage, rowsPerPage]);
 
+  /** Downloads exactly the records shown, matching or all, with the event's details. */
+  const runExport = async (kind: 'excel' | 'pdf') => {
+    if (exporting || status !== 'success' || shown.length === 0) return;
+    setExporting(kind);
+    try {
+      const input = {
+        title,
+        fileName,
+        eventDetails,
+        columns,
+        rows: shown,
+        match: showingMatches ? (JSON.parse(matchKey) as Record<string, string>) : null,
+      };
+      const file = kind === 'excel' ? await exportEventViewExcel(input) : await exportEventViewPdf(input);
+      showToast('success', `${file} downloaded`);
+    } catch (err) {
+      console.error('View export failed', err);
+      showToast('error', 'Could not generate the file. Please try again.');
+    } finally {
+      setExporting(null);
+    }
+  };
+  const canExport = status === 'success' && shown.length > 0 && exporting === null;
+  const EXPORT_BUTTON =
+    'inline-flex items-center px-4 py-2 rounded-md font-medium text-sm transition-colors border disabled:opacity-40 disabled:cursor-not-allowed';
+
   return (
     <div className="space-y-4 animate-fade-up">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h3 className="text-lg font-sans font-bold text-foreground uppercase tracking-wider truncate">
           {eventName || 'Event'}
         </h3>
-        <button
-          onClick={onBack}
-          className="text-accent hover:text-accent/80 font-medium text-sm transition-colors"
-        >
-          ← Back to All Events
-        </button>
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
+          {/* Beside the heading, as the Event Report's View has its downloads. */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void runExport('excel')}
+              disabled={!canExport}
+              title={shown.length === 0 && status === 'success' ? 'Nothing to download' : undefined}
+              className={`${EXPORT_BUTTON} bg-accent/10 text-accent hover:bg-accent/20 border-accent/20`}
+            >
+              <FileSpreadsheet className="w-4 h-4 mr-2" />
+              {exporting === 'excel' ? 'Preparing...' : 'Excel'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void runExport('pdf')}
+              disabled={!canExport}
+              title={shown.length === 0 && status === 'success' ? 'Nothing to download' : undefined}
+              className={`${EXPORT_BUTTON} bg-primary/10 text-primary hover:bg-primary/20 border-primary/20`}
+            >
+              <Download className="w-4 h-4 mr-2" />
+              {exporting === 'pdf' ? 'Preparing...' : 'PDF'}
+            </button>
+          </div>
+          <button
+            onClick={onBack}
+            className="text-accent hover:text-accent/80 font-medium text-sm transition-colors"
+          >
+            ← Back to All Events
+          </button>
+        </div>
       </div>
 
       <div className="glass-panel rounded-2xl p-6">
