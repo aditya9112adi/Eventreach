@@ -8,6 +8,8 @@ export interface ReportFilterOption {
   label: string;
   /** `date` swaps the search box for the start/end date range. */
   type: 'text' | 'date';
+  /** The search box's hint; "Search by <label>..." when left out. */
+  placeholder?: string;
 }
 
 interface ReportFilterBarProps {
@@ -146,7 +148,7 @@ export const ReportFilterBar = ({
             value={isDateMode ? '' : searchValue}
             disabled={isDateMode}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder={isDateMode ? 'Select a date range →' : `Search by ${activeOption?.label}...`}
+            placeholder={isDateMode ? 'Select a date range →' : activeOption?.placeholder ?? `Search by ${activeOption?.label}...`}
             className={FIELD}
           />
         </div>

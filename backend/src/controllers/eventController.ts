@@ -29,6 +29,7 @@ import {
   ReportDateRangeError,
   reportDateRangeResponse,
 } from '../utils/reportDateRange';
+import { eventSearchFilter, readReportSearch, ReportSearchError } from '../utils/reportSearch';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -425,6 +426,16 @@ export const getEvents = async (req: Request, res: Response) => {
       throw error;
     }
     Object.assign(query, dateRangeFilter('eventDate', range));
+
+    // ?q=: the Event Report's "All Fields" search, inside the same scope.
+    let search: string | null;
+    try {
+      search = readReportSearch(req.query.q);
+    } catch (error) {
+      if (error instanceof ReportSearchError) return res.status(400).json({ error: error.message });
+      throw error;
+    }
+    if (search) query.$and = [eventSearchFilter(search)];
 
     /**
      * Order. A Main Event's sub-events read as its schedule: by date and time.

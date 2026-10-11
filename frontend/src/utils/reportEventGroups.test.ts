@@ -234,7 +234,8 @@ test('the rows and View keep the generated filters when the picker moves', async
 
 test('View opens the event\'s details and only its records', async (t) => {
   await t.test('the row\'s View opens that row\'s event', () => {
-    assert.ok(reports.includes('onClick={() => setScopedViewEventId(row._id)}'));
+    assert.ok(reports.includes("onClick={() => openEventFromReport('scoped', row._id)}"));
+    assert.ok(reports.includes("const open = target === 'event' ? setSelectedEventId : setScopedViewEventId;"), 'which still opens the event');
     // No generated report is needed: an event's Access Report link opens its View directly.
     assert.ok(reports.includes(') : eventScoped && scopedViewEventId ? ('));
   });
@@ -311,7 +312,7 @@ test('the Event Report and the downloads are unchanged', async (t) => {
 
   await t.test('its View still opens its own drill-down', () => {
     assert.ok(reports.includes("{activeReport === 'event' && (\n                        <td className=\"py-4 text-right\">"));
-    assert.ok(reports.includes('onClick={() => setSelectedEventId(row._id)}'));
+    assert.ok(reports.includes("onClick={() => openEventFromReport('event', row._id)}"));
     assert.ok(reports.includes("{activeReport === 'event' && selectedEventId ? ("));
   });
 

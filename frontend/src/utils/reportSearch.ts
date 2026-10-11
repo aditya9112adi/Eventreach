@@ -43,19 +43,38 @@ export const reportEventParam = (key: ReportKey, filters: ReportFilters): { even
   EVENT_SCOPED_REPORTS.includes(key) && filters.eventId ? { eventId: filters.eventId } : {};
 
 /**
- * The Access and Contact Reports' search, for the server to apply with the
- * event and the dates - so the report, and the downloads written from it, are
- * the server's filtered records. Like the Event Report, one filter is chosen
- * at a time: the name (a username on the Access Report) or the status; the
- * Date choice searches by the period alone. Nothing empty is sent.
+ * The "All Fields" choice every report offers first: the typed value is
+ * searched across every field that report has - for an event, its ID, name,
+ * type, venue, organizer, mobile, description, status, date and time; for a
+ * contact or an access record, its own fields and those of its event. The
+ * server does the matching (?q=), inside the caller's own scope.
+ */
+export const GLOBAL_SEARCH_MODE = 'All';
+
+/**
+ * Whether a report's search is applied by the server: the Access and Contact
+ * Reports always are, and every report is for the "All Fields" choice. The
+ * other Event Report choices filter the loaded events in the page.
+ */
+export const isServerFiltered = (key: ReportKey, mode: string): boolean =>
+  EVENT_SCOPED_REPORTS.includes(key) || mode === GLOBAL_SEARCH_MODE;
+
+/**
+ * A report's search, for the server to apply with the event and the dates -
+ * so the report, and the downloads written from it, are the server's filtered
+ * records. One filter is chosen at a time: "All Fields" (q, every report), or
+ * on the Access and Contact Reports the name (a username on the Access
+ * Report) or the status; the Date choice searches by the period alone.
+ * Nothing empty is sent.
  */
 export const reportFilterParams = (
   key: ReportKey,
   filters: ReportFilters
-): { username?: string; name?: string; status?: string } => {
-  if (key !== 'access' && key !== 'contact') return {};
+): { q?: string; username?: string; name?: string; status?: string } => {
   const text = filters.searchValue.trim();
   if (!text || filters.mode === 'Date') return {};
+  if (filters.mode === GLOBAL_SEARCH_MODE) return { q: text };
+  if (key !== 'access' && key !== 'contact') return {};
   if (filters.mode === 'Status') return { status: text };
   return key === 'access' ? { username: text } : { name: text };
 };
@@ -132,6 +151,9 @@ export const filterReportRows = <T>(
     if (!withinRange(accessors.date(row), filters.startDate, filters.endDate)) return false;
     if (isDateMode) return true;
     if (!needle) return true;
+    // "All Fields" was matched by the server, across fields - an event's date
+    // as printed, a contact's event - that a row alone does not carry.
+    if (filters.mode === GLOBAL_SEARCH_MODE) return true;
     if (filters.mode === 'Status' && accessors.statusMatches) {
       return accessors.statusMatches(accessors.status(row), needle);
     }

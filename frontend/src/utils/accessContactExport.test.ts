@@ -356,7 +356,9 @@ test('Reports.tsx wiring', async (t) => {
   await t.test('the Event Report keeps its own picker and View drill-down unchanged', () => {
     const eventPicker = between(reports, "{showReport && activeReport === 'event' && (", '{showReport && eventScoped && (');
     assert.ok(eventPicker.includes('value={selectedEventId}'));
-    assert.ok(eventPicker.includes('onChange={(id) => setSelectedEventId(id)}'));
+    // Choosing an event opens it (and clears the search box - see openEventFromReport).
+    assert.ok(eventPicker.includes("onChange={(id) => openEventFromReport('event', id)}"));
+    assert.ok(reports.includes("const open = target === 'event' ? setSelectedEventId : setScopedViewEventId;"), 'which still opens the event');
   });
 
   await t.test('switching tabs and Clear start the event filter afresh', () => {

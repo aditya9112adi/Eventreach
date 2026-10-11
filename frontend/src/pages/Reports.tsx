@@ -27,6 +27,8 @@ import {
   parseReportType,
   reportEventParam,
   reportFilterParams,
+  isServerFiltered,
+  GLOBAL_SEARCH_MODE,
   EVENT_SCOPED_REPORTS,
   initialReportRun,
   reportRunReducer,
@@ -93,6 +95,9 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     fileName: 'EventReport',
     endpoint: '/events',
     options: [
+      // Every report opens on "All Fields": searched by the server across the
+      // report's fields (see GLOBAL_SEARCH_MODE). The single-field choices stay.
+      { key: GLOBAL_SEARCH_MODE, label: 'All Fields', type: 'text', placeholder: 'Search event name, ID, venue, date, time...' },
       { key: 'EventName', label: 'Name / ID', type: 'text' },
       { key: 'EventID', label: 'Event ID', type: 'text' },
       { key: 'Status', label: 'Status', type: 'text' },
@@ -124,6 +129,7 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     // The same filter as the Event Report: one choice at a time, with the
     // period always required. The server applies it (see reportFilterParams).
     options: [
+      { key: GLOBAL_SEARCH_MODE, label: 'All Fields', type: 'text', placeholder: 'Search name, email, status, event...' },
       { key: 'UserName', label: 'UserName', type: 'text' },
       { key: 'Status', label: 'Status', type: 'text' },
       { key: 'Date', label: 'Date', type: 'date' },
@@ -156,6 +162,7 @@ const REPORTS: Record<ReportKey, ReportDefinition> = {
     // The same filter as the Event Report: one choice at a time, with the
     // period always required. The server applies it (see reportFilterParams).
     options: [
+      { key: GLOBAL_SEARCH_MODE, label: 'All Fields', type: 'text', placeholder: 'Search name, mobile, email, event...' },
       { key: 'Name', label: 'Name', type: 'text' },
       { key: 'Status', label: 'Status', type: 'text' },
       { key: 'Date', label: 'Date', type: 'date' },
@@ -237,13 +244,20 @@ const Reports = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
 
-  const [mode, setMode] = useState<string>('EventName');
+  const [mode, setMode] = useState<string>(REPORTS.event.options[0].key);
   const [searchValue, setSearchValue] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [isExporting, setIsExporting] = useState(false);
   /** Why the chosen dates cannot produce a report; '' once they can. */
   const [dateError, setDateError] = useState('');
+  /**
+   * Opening an event from a report clears the search box, so the next event
+   * name, ID or venue can be typed straight away. The report keeps the filters
+   * it was generated with - these - for its table, its View and its downloads,
+   * and nothing is searched again, until a filter is changed. Null otherwise.
+   */
+  const [pinnedFilters, setPinnedFilters] = useState<ReportFilters | null>(null);
 
   // Authorization check
   const hasReportAccess = user?.role === 'SuperAdmin' || (user?.accessExpiryDate && new Date(user.accessExpiryDate) > new Date() && !user?.isAccessCancelled);
@@ -362,13 +376,14 @@ const Reports = () => {
    * reloaded when the search has rested for a moment, or the filter choice
    * changes - not on every keystroke. Super Admins search explicitly, as before.
    */
-  const serverFiltered = EVENT_SCOPED_REPORTS.includes(activeReport);
+  const serverFiltered = isServerFiltered(activeReport, mode);
   const [debouncedSearch, setDebouncedSearch] = useState('');
   useEffect(() => {
-    if (searchFirst || !serverFiltered) return;
+    // A search box cleared on opening an event is not a new search.
+    if (searchFirst || !serverFiltered || pinnedFilters) return;
     const timer = setTimeout(() => setDebouncedSearch(searchValue.trim()), 400);
     return () => clearTimeout(timer);
-  }, [searchFirst, serverFiltered, searchValue]);
+  }, [searchFirst, serverFiltered, searchValue, pinnedFilters]);
   const liveFilterQuery = !searchFirst && serverFiltered ? `${debouncedSearch}\u0000${mode}` : '';
 
   /** Fetches a report's rows as one run. */
@@ -449,6 +464,8 @@ const Reports = () => {
     // The cache is what names a contact's event and backs the drill-down, and
     // it is no longer a by-product of the Event Report's own response.
     loadEventsForSelectors();
+    // A new report replaces any kept after an event was opened.
+    setPinnedFilters(null);
     void loadReport(activeReport, liveFilters);
   };
 
@@ -541,6 +558,7 @@ const Reports = () => {
     setStartDate('');
     setEndDate('');
     setDateError('');
+    setPinnedFilters(null);
     setSelectedEventId('');
     setScopedViewEventId('');
     setCurrentPage(1);
@@ -550,6 +568,7 @@ const Reports = () => {
   };
 
   const clearFilters = () => {
+    setPinnedFilters(null);
     setSearchValue('');
     setReportEventId('');
     setScopedViewEventId('');
@@ -624,8 +643,15 @@ const Reports = () => {
   // answer to their last request and the filters that request was made with -
   // so a search still being typed cannot leave the table, or a download, out
   // of step.
-  const reportFilters: ReportFilters | null =
+  const generatedFilters: ReportFilters | null =
     searchFirst || serverFiltered ? (hasResults ? run.applied : null) : liveFilters;
+  // After an event was opened and the search box cleared: the filters kept.
+  const reportFilters: ReportFilters | null = pinnedFilters ?? generatedFilters;
+
+  // Changing a filter releases the kept filters; the report follows the inputs again.
+  useEffect(() => {
+    setPinnedFilters(null);
+  }, [mode, startDate, endDate, reportEventId]);
   const reportOption =
     definition.options.find((option) => option.key === reportFilters?.mode) ?? activeOption;
 
@@ -697,7 +723,7 @@ const Reports = () => {
   // never used.
   const exportFilters = reportFilters ?? liveFilters;
 
-  const filtersChanged = searchFirst && hasResults && filtersDiffer(run.applied, liveFilters);
+  const filtersChanged = searchFirst && hasResults && !pinnedFilters && filtersDiffer(run.applied, liveFilters);
 
   const runExport = useCallback(
     async (kind: 'excel' | 'pdf') => {
@@ -804,6 +830,25 @@ const Reports = () => {
     } as Record<string, string>;
   }, [reportFilters, serverFiltered, activeReport]);
 
+  /**
+   * Opens an event from a report - the Event Report's View or its "Select
+   * Event Name" picker, or an Access/Contact row's View - and clears the
+   * search box so another event can be searched straight away. The opened
+   * event and the generated report stay as they are: the report's filters are
+   * kept (pinnedFilters) and nothing is searched again. Clearing the picker
+   * just closes the event.
+   */
+  const openEventFromReport = (target: 'event' | 'scoped', id: string) => {
+    const open = target === 'event' ? setSelectedEventId : setScopedViewEventId;
+    if (!id) {
+      open('');
+      return;
+    }
+    if (reportFilters) setPinnedFilters(reportFilters);
+    setSearchValue('');
+    open(id);
+  };
+
   const statusVariant = (status: string) => {
     switch (status) {
       case 'Active':
@@ -844,7 +889,7 @@ const Reports = () => {
               <EventSearch
                 events={events}
                 value={selectedEventId}
-                onChange={(id) => setSelectedEventId(id)}
+                onChange={(id) => openEventFromReport('event', id)}
                 placeholder='Search events...'
                 allowClear={true}
                 onOpen={searchFirst ? loadEventsForSelectors : undefined}
@@ -921,7 +966,10 @@ const Reports = () => {
         mode={mode}
         onModeChange={setMode}
         searchValue={searchValue}
-        onSearchChange={setSearchValue}
+        onSearchChange={(value) => {
+          setPinnedFilters(null);
+          setSearchValue(value);
+        }}
         startDate={startDate}
         onStartDateChange={(value) => {
           setStartDate(value);
@@ -1111,7 +1159,7 @@ const Reports = () => {
                       {activeReport === 'event' && (
                         <td className="py-4 text-right">
                           {/* Same View button as the Events list and Audit Logs. */}
-                          <Button variant="secondary" className="text-xs py-1.5 px-3" onClick={() => setSelectedEventId(row._id)}>
+                          <Button variant="secondary" className="text-xs py-1.5 px-3" onClick={() => openEventFromReport('event', row._id)}>
                             View
                           </Button>
                         </td>
@@ -1119,7 +1167,7 @@ const Reports = () => {
                       {eventScoped && (
                         <td className="py-4 text-right">
                           {/* The Event Report's View, for this event's access/contact records. */}
-                          <Button variant="secondary" className="text-xs py-1.5 px-3" onClick={() => setScopedViewEventId(row._id)}>
+                          <Button variant="secondary" className="text-xs py-1.5 px-3" onClick={() => openEventFromReport('scoped', row._id)}>
                             View
                           </Button>
                         </td>

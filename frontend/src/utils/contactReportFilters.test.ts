@@ -170,7 +170,7 @@ test('View opens on the matching contacts when searched, with every contact a cl
 });
 
 test('the Event Report is unchanged', () => {
-  assert.ok(reports.includes('onClick={() => setSelectedEventId(row._id)}'));
+  assert.ok(reports.includes("onClick={() => openEventFromReport('event', row._id)}"));
   assert.ok(reports.includes("{activeReport === 'event' && selectedEventId ? ("));
   assert.ok(reports.includes(': definition.columns;'));
   assert.equal(between(reports, "key: 'event'", "key: 'access'").includes('statusMatches'), false);

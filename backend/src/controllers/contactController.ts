@@ -20,7 +20,8 @@ import { RequestWithId } from '../middleware/requestMiddleware';
 import { isEventAuthorized, getAuthorizedEventIds } from '../services/eventAuthService';
 import { statusesMatching } from '../utils/accessStatus';
 import { Event } from '../models/Event';
-import { eventGuestFilter, isSubEventId } from '../services/subEventService';
+import { eventGuestFilter, isSubEventId, MAIN_EVENT_FILTER } from '../services/subEventService';
+import { eventSearchFilter, readReportSearch, ReportSearchError } from '../utils/reportSearch';
 
 /**
  * A contact is created on a Main Event. A Sub-Event's guests are existing
@@ -700,6 +701,38 @@ export const getAllContacts = async (req: Request, res: Response) => {
     if (statusText) {
       // The statuses the typed text means; a search that names none matches nothing.
       query.status = { $in: statusesMatching(CONTACT_STATUSES, statusText) };
+    }
+
+    /**
+     * Optional ?q= - the Contact Report's "All Fields" search: a contact's own
+     * name, phone, email, status or source, or any searchable field of its
+     * event (eventSearchFilter) - only among the events the caller may see.
+     */
+    let search: string | null;
+    try {
+      search = readReportSearch(req.query.q);
+    } catch (error) {
+      if (error instanceof ReportSearchError) return res.status(400).json({ error: error.message });
+      throw error;
+    }
+    if (search) {
+      const eventQuery: any = { ...MAIN_EVENT_FILTER, ...eventSearchFilter(search) };
+      if (authorizedIds !== null) eventQuery._id = { $in: authorizedIds };
+      const matchingEvents = await Event.find(eventQuery).select('_id').lean();
+      const contains = { $regex: escapeRegex(search), $options: 'i' };
+      query.$and = [
+        ...(query.$and || []),
+        {
+          $or: [
+            { fullName: contains },
+            { phoneNumber: contains },
+            { email: contains },
+            { status: contains },
+            { source: contains },
+            { eventId: { $in: matchingEvents.map((e: any) => e._id) } },
+          ],
+        },
+      ];
     }
 
     /**

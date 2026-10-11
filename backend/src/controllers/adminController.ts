@@ -6,7 +6,8 @@ import { validatePassword } from '@eventreach/shared';
 import { User } from '../models/User';
 import { Admin } from '../models/Admin';
 import { Event } from '../models/Event';
-import { isSubEventId } from '../services/subEventService';
+import { isSubEventId, MAIN_EVENT_FILTER } from '../services/subEventService';
+import { eventSearchFilter, readReportSearch, ReportSearchError, textMatcher } from '../utils/reportSearch';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { getIO, emitPendingApprovalsChanged } from '../services/socketService';
@@ -269,6 +270,14 @@ export const getAccessRecords = async (req: Request, res: Response) => {
     }
     // The statuses the typed text means; a search that names none matches nothing.
     const wantedStatuses = statusText ? statusesMatching(ACCESS_STATUSES, statusText) : null;
+    // ?q=: the "All Fields" search, applied once each record's events are known (below).
+    let search: string | null;
+    try {
+      search = readReportSearch(req.query.q);
+    } catch (error) {
+      if (error instanceof ReportSearchError) return res.status(400).json({ error: error.message });
+      throw error;
+    }
     const nameClause = username
       ? {
           $or: [
@@ -368,6 +377,7 @@ export const getAccessRecords = async (req: Request, res: Response) => {
      * the per-event report uses, and limited to events the caller may see -
      * so every event a row offers opens with View instead of a 403.
      */
+    const visible = await getAuthorizedEventIds(currentUser);
     if (adminScope) {
       records = records.map((r: any) => ({ ...r, accessEventIds: [String(eventId)] }));
     } else {
@@ -375,12 +385,32 @@ export const getAccessRecords = async (req: Request, res: Response) => {
         records.filter((r: any) => r.type === 'User'),
         records.filter((r: any) => r.type === 'Admin').map((r: any) => String(r._id))
       );
-      const visible = await getAuthorizedEventIds(currentUser);
       const allowed = visible === null ? null : new Set(visible);
       records = records.map((r: any) => ({
         ...r,
         accessEventIds: (reach.get(String(r._id)) || []).filter((id) => allowed === null || allowed.has(id)),
       }));
+    }
+
+    /**
+     * The "All Fields" search: a record's own name, email, role, effective
+     * status or assigned event - or any searchable field of an event it can
+     * reach (eventSearchFilter), among the events the caller may see. A record
+     * found only through its events keeps just the events that matched, so a
+     * search for one event lists that event's row and not the person's others.
+     */
+    if (search) {
+      const eventQuery: any = { ...MAIN_EVENT_FILTER, ...eventSearchFilter(search) };
+      if (visible !== null) eventQuery._id = { $in: visible };
+      const matchingEvents = new Set(
+        (await Event.find(eventQuery).select('_id').lean()).map((e: any) => String(e._id))
+      );
+      const matches = textMatcher(search);
+      records = records.flatMap((r: any) => {
+        if (matches(r.name, r.email, r.type, r.accessStatus, r.assignedEventName)) return [r];
+        const via = (r.accessEventIds || []).filter((id: string) => matchingEvents.has(id));
+        return via.length ? [{ ...r, accessEventIds: via }] : [];
+      });
     }
 
     // Approval/rejection metadata is Super Admin information only.

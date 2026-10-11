@@ -152,7 +152,8 @@ test('View opens the event, and the Delivery Log lives there', async (t) => {
   const drill = between(reports, "{activeReport === 'event' && selectedEventId ? (", '      ) : (\n        <div className="glass-panel rounded-2xl p-6');
 
   await t.test('the existing View button still opens the event', () => {
-    assert.ok(reports.includes('onClick={() => setSelectedEventId(row._id)}'));
+    assert.ok(reports.includes("onClick={() => openEventFromReport('event', row._id)}"));
+    assert.ok(reports.includes("const open = target === 'event' ? setSelectedEventId : setScopedViewEventId;"), 'which still opens the event');
     assert.ok(reports.includes("activeReport === 'event' && selectedEventId ?"), 'the View page replaces the table');
   });
 

@@ -16,6 +16,7 @@ import {
   matchesStatusWord,
   reportFilterParams,
   reportEventParam,
+  isServerFiltered,
   reportRunReducer,
   initialReportRun,
   type ReportFilters,
@@ -206,15 +207,20 @@ test('the status a report was generated with is the one it keeps', async (t) => 
 test('every role gets the same server filtering, without a request per keystroke', async (t) => {
   await t.test('roles without a Search button reload when the search rests, or the choice changes', () => {
     const debounce = between(reports, 'const [debouncedSearch, setDebouncedSearch] = useState', 'const loadReport = useCallback(');
-    assert.ok(debounce.includes('if (searchFirst || !serverFiltered) return;'), 'Super Admins keep their Search button');
+    assert.ok(debounce.includes('if (searchFirst || !serverFiltered || pinnedFilters) return;'), 'Super Admins keep their Search button');
     assert.ok(debounce.includes('setTimeout(() => setDebouncedSearch(searchValue.trim()), 400)'), 'a pause, not every keystroke');
     assert.ok(debounce.includes('return () => clearTimeout(timer);'));
     assert.ok(debounce.includes('`${debouncedSearch}\\u0000${mode}`'));
     assert.ok(reports.includes('}, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId, liveFilterQuery]);'));
   });
 
-  await t.test('only the Access and Contact Reports reload; the Event Report filters in the page', () => {
-    assert.ok(reports.includes('const serverFiltered = EVENT_SCOPED_REPORTS.includes(activeReport);'));
+  await t.test('the Access and Contact Reports, and "All Fields" on every report, reload; the other Event Report choices filter in the page', () => {
+    assert.ok(reports.includes('const serverFiltered = isServerFiltered(activeReport, mode);'));
+    assert.equal(isServerFiltered('access', 'UserName'), true);
+    assert.equal(isServerFiltered('contact', 'Date'), true);
+    assert.equal(isServerFiltered('event', 'All'), true);
+    assert.equal(isServerFiltered('event', 'EventName'), false);
+    assert.equal(isServerFiltered('event', 'Status'), false);
   });
 });
 
@@ -233,7 +239,8 @@ test('an event\'s "Access Report" link opens the report on that event', async (t
   await t.test('the Event Report View offers it, and keeps its own View', () => {
     const link = between(reports, "{activeReport === 'event' && selectedEventId && canViewAccessReport && (", "{activeReport === 'event' && selectedEventId ? (");
     assert.ok(link.includes('navigate(`/reports?type=access&eventId=${selectedEventId}`)'), 'by the event\'s id');
-    assert.ok(reports.includes('onClick={() => setSelectedEventId(row._id)}'), 'the Event Report View is unchanged');
+    assert.ok(reports.includes("onClick={() => openEventFromReport('event', row._id)}"), 'the Event Report View still opens the event');
+    assert.ok(reports.includes("const open = target === 'event' ? setSelectedEventId : setScopedViewEventId;"), 'which still opens the event');
   });
 
   await t.test('the Event Details page offers it to the roles that can open it', () => {
