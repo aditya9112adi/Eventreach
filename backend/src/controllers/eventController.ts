@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import mongoose, { ClientSession } from 'mongoose';
 import crypto from 'crypto';
 import { z } from 'zod';
+import { EVENT_TYPE_MAX_LENGTH } from '@eventreach/shared';
 import { Event } from '../models/Event';
 import { Contact } from '../models/Contact';
 import { Campaign } from '../models/Campaign';
@@ -102,7 +103,11 @@ const eventBody = z.object({
   organizerName:    z.string().min(1, 'Event Organizer is required').max(50, 'Event Organizer max 50 characters'),
   organizerMobile:  z.string().regex(/^\d{10}$/, 'Mobile No must be exactly 10 digits'),
   eventName:        z.string().min(1, 'Event Name is required').max(20, 'Event Name max 20 characters'),
-  eventType:        z.string().min(1, 'Event Type is required').max(20, 'Event Type max 20 characters'),
+  // Free text (a listed option, or the type specified under "Other"), trimmed
+  // first: a whitespace-only type used to pass here and then fail in Mongoose
+  // (which trims) as a 500 instead of this 400.
+  eventType:        z.string().trim().min(1, 'Event Type is required')
+                     .max(EVENT_TYPE_MAX_LENGTH, `Event Type max ${EVENT_TYPE_MAX_LENGTH} characters`),
   eventDate:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Event Date must be YYYY-MM-DD')
                      .refine((v) => {
                        const d = new Date(v + 'T00:00:00.000Z');

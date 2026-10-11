@@ -229,6 +229,55 @@ describe('MongoDB is the second validation layer (UI bypassed, API called direct
   });
 });
 
+describe('Event Type: a listed option or a custom type, stored as given in eventType', () => {
+  const create = (eventType: unknown) => call('POST', '/api/events', { token: adminToken, body: validEvent({ eventType }) });
+
+  test('a listed option is stored as chosen', async () => {
+    const res = await create('Corporate Event');
+    assert.equal(res.status, 201);
+    assert.equal(res.body.eventType, 'Corporate Event');
+  });
+
+  test('a custom type (chosen through "Other") is stored as typed, trimmed', async () => {
+    const res = await create('  Product Launch  ');
+    assert.equal(res.status, 201);
+    assert.equal(res.body.eventType, 'Product Launch');
+    const raw = await mongoose.connection.db.collection('events').findOne({ _id: new mongoose.Types.ObjectId(res.body._id) });
+    assert.equal(raw.eventType, 'Product Launch', 'the same eventType field - nothing new is stored');
+    assert.equal('customEventType' in raw, false);
+  });
+
+  test('an empty or whitespace-only type is a 400, never a 500', async () => {
+    for (const blank of ['', '   ']) {
+      const res = await create(blank);
+      assert.equal(res.status, 400, JSON.stringify(blank));
+      assert.match(res.body.error, /Event Type is required/);
+    }
+    assert.equal(await Event.countDocuments({}), 0, 'nothing was written');
+  });
+
+  test('the 20-character limit is unchanged', async () => {
+    assert.equal((await create('x'.repeat(20))).status, 201);
+    const over = await create('x'.repeat(21));
+    assert.equal(over.status, 400);
+    assert.match(over.body.error, /Event Type max 20 characters/);
+  });
+
+  test('existing free-text types keep working, and an edit can switch between option and custom', async () => {
+    const legacy = await create('farewell');
+    assert.equal(legacy.status, 201);
+    assert.equal(legacy.body.eventType, 'farewell', 'not rewritten');
+    const toCustom = await call('PUT', `/api/events/${legacy.body._id}`, { token: adminToken, body: validEvent({ eventType: 'Product Launch' }) });
+    assert.equal(toCustom.status, 200);
+    assert.equal(toCustom.body.eventType, 'Product Launch');
+    const toOption = await call('PUT', `/api/events/${legacy.body._id}`, { token: adminToken, body: validEvent({ eventType: 'Seminar' }) });
+    assert.equal(toOption.body.eventType, 'Seminar');
+    const blank = await call('PUT', `/api/events/${legacy.body._id}`, { token: adminToken, body: validEvent({ eventType: '  ' }) });
+    assert.equal(blank.status, 400);
+    assert.equal((await Event.findById(legacy.body._id).lean()).eventType, 'Seminar', 'a refused edit changes nothing');
+  });
+});
+
 describe('Correct BSON types on stored documents', () => {
   test('organizerMobile is BSON Int64 and eventTime is BSON Date in the raw document', async () => {
     const date = futureDate();

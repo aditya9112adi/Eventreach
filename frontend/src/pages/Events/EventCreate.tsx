@@ -10,11 +10,12 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { useLoader } from '../../components/ui/FullScreenLoader';
 import { useToast } from '../../components/ui/Toast';
+import { EventTypeField } from '../../components/ui/EventTypeField';
+import { refineEventType, resolveEventType } from '../../utils/eventType';
 
 const LIMITS = {
   organizerName: 50,
   name: 20,
-  type: 20,
   venue: 50,
   description: 256,
 };
@@ -23,12 +24,16 @@ const eventSchema = z.object({
   organizerName:    z.string().min(1, 'Event Organizer is required').max(LIMITS.organizerName, `Event Organizer max ${LIMITS.organizerName} characters`),
   organizerMobile:  z.string().regex(/^\d{10}$/, 'Mobile No must be exactly 10 digits'),
   eventName:        z.string().min(1, 'Event Name is required').max(LIMITS.name, `Event Name max ${LIMITS.name} characters`),
-  eventType:        z.string().min(1, 'Event Type is required').max(LIMITS.type, `Event Type max ${LIMITS.type} characters`),
+  // A choice from the shared list; "Other" requires customEventType. Both are
+  // checked by refineEventType below, the same rules in Create and Edit.
+  eventType:        z.string(),
+  customEventType:  z.string().optional(),
   eventDate:        z.string().min(1, 'Event Date is required').regex(/^\d{4}-\d{2}-\d{2}$/, 'Event Date must be YYYY-MM-DD'),
   eventTime:        z.string().min(1, 'Event Time is required').regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Event Time must be a valid HH:MM'),
   eventVenue:       z.string().min(1, 'Event Venue is required').max(LIMITS.venue, `Event Venue max ${LIMITS.venue} characters`),
   eventDescription: z.string().max(LIMITS.description, `Event Description max ${LIMITS.description} characters`).optional(),
 }).superRefine((data, ctx) => {
+  refineEventType(data, ctx);
   if (data.eventDate) {
     const now = new Date();
     const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
@@ -75,6 +80,8 @@ const EventCreate = () => {
 
   const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm<EventForm>({
     resolver: zodResolver(eventSchema),
+    // Nothing chosen yet: the dropdown shows "Select Event Type".
+    defaultValues: { eventType: '', customEventType: '' },
   });
 
   // The Main Event: named in the heading, and its organizer offered as the
@@ -101,7 +108,7 @@ const EventCreate = () => {
     return () => { cancelled = true; };
   }, [parentId, setValue]);
 
-  const [wOrgName, wOrgMobile, wName, wType, wVenue, wDesc] = watch(['organizerName', 'organizerMobile', 'eventName', 'eventType', 'eventVenue', 'eventDescription']);
+  const [wOrgName, wOrgMobile, wName, wType, wCustomType, wVenue, wDesc] = watch(['organizerName', 'organizerMobile', 'eventName', 'eventType', 'customEventType', 'eventVenue', 'eventDescription']);
   const selectedDate = watch('eventDate');
   const selectedTime = watch('eventTime');
 
@@ -123,7 +130,10 @@ const EventCreate = () => {
     }
   }, [selectedDate, selectedTime, minTime, todayStr, setValue, showToast]);
 
-  const onSubmit = async (data: EventForm) => {
+  const onSubmit = async (form: EventForm) => {
+    // eventType is the chosen option, or the type specified under Other.
+    const { customEventType, ...fields } = form;
+    const data = { ...fields, eventType: resolveEventType(form.eventType, customEventType) };
     showLoader(isSubEvent ? 'Creating sub-event...' : 'Creating event...');
     try {
       setError('');
@@ -206,16 +216,14 @@ const EventCreate = () => {
               />
               <CharCount value={wName} max={LIMITS.name} />
             </div>
-            <div>
-              <Input
-                label="Event Type"
-                placeholder="e.g. Conference, Webinar, Wedding"
-                maxLength={LIMITS.type}
-                {...register('eventType')}
-                error={errors.eventType?.message}
-              />
-              <CharCount value={wType} max={LIMITS.type} />
-            </div>
+            <EventTypeField
+              select={register('eventType')}
+              custom={register('customEventType')}
+              selected={wType}
+              customValue={wCustomType}
+              selectError={errors.eventType?.message}
+              customError={errors.customEventType?.message}
+            />
             <Input
               label="Event Date"
               type="date"

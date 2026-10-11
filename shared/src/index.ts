@@ -23,6 +23,36 @@ export interface LoginResponse {
 
 export type EventStatus = 'Upcoming' | 'Completed' | 'Cancelled';
 
+/**
+ * Event Type. Stored as free text in eventType (1-20 characters, trimmed) -
+ * not an enum: the forms offer EVENT_TYPE_OPTIONS, and choosing "Other" saves
+ * the type the user specifies ("Product Launch"), never the word "Other".
+ * Existing records keep whatever they hold.
+ */
+export const EVENT_TYPE_MAX_LENGTH = 20;
+export const OTHER_EVENT_TYPE = 'Other';
+export const EVENT_TYPE_OPTIONS = [
+  'Wedding',
+  'Birthday Party',
+  'Anniversary',
+  'Engagement',
+  'Baby Shower',
+  'Corporate Event',
+  'Conference',
+  'Seminar',
+  'Workshop',
+  'Webinar',
+  'Concert',
+  'Festival',
+  'Graduation',
+  'Sports Event',
+  'Religious Event',
+  'Networking Event',
+  'Farewell',
+  'Charity Event',
+  OTHER_EVENT_TYPE,
+] as const;
+
 export interface Event {
   _id: string;
   eventId: string;               // human-readable unique id, e.g. "EVT-000001"
