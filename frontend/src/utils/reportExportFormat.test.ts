@@ -716,7 +716,7 @@ test('switching report clears every filter', async (t) => {
   await t.test('the other filters start fresh too', () => {
     assert.ok(switchReport.includes("setSearchValue('')"), 'the search text resets');
     assert.ok(switchReport.includes('setMode(REPORTS[key].options[0].key)'), 'the mode resets');
-    assert.ok(switchReport.includes("setReportEventId('')"), 'the chosen event resets');
+    assert.equal(page.includes('reportEventId'), false, 'there is no event filter left to carry over');
     assert.ok(switchReport.includes("setSelectedEventId('')"), 'an open event View closes');
     assert.ok(switchReport.includes("dispatch({ type: 'reset'"), 'the previous report is discarded');
   });

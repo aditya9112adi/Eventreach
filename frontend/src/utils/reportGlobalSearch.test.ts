@@ -122,10 +122,9 @@ test('opening an event clears the search box and keeps the report', async (t) =>
 
   await t.test('it is every way an event is opened from a report', () => {
     assert.ok(reports.includes("onClick={() => openEventFromReport('event', row._id)}"), 'the Event Report View');
-    assert.ok(reports.includes("onChange={(id) => openEventFromReport('event', id)}"), 'the Event Report\'s Select Event Name');
     assert.ok(reports.includes("onClick={() => openEventFromReport('scoped', row._id)}"), 'an Access/Contact row\'s View');
-    // The Access/Contact picker chooses the next report's event; it opens nothing.
-    assert.ok(reports.includes('onChange={(id) => setReportEventId(id)}'));
+    // The "Select Event Name" pickers are gone from every report tab.
+    assert.equal(reports.includes('Select Event Name'), false);
   });
 
   await t.test('a search with no event opened keeps what was typed', () => {
@@ -135,7 +134,7 @@ test('opening an event clears the search box and keeps the report', async (t) =>
 
   await t.test('the next filter change releases the kept filters', () => {
     assert.ok(reports.includes('onSearchChange={(value) => {\n          setPinnedFilters(null);\n          setSearchValue(value);'), 'typing');
-    assert.ok(reports.includes('useEffect(() => {\n    setPinnedFilters(null);\n  }, [mode, startDate, endDate, reportEventId]);'), 'choice, dates, event');
+    assert.ok(reports.includes('useEffect(() => {\n    setPinnedFilters(null);\n  }, [mode, startDate, endDate]);'), 'choice and dates');
     assert.ok(between(reports, 'const runSearch = () => {', 'const clearFilters').includes('setPinnedFilters(null);'), 'Search');
     assert.ok(between(reports, 'const clearFilters = () => {', 'const switchReportRef').includes('setPinnedFilters(null);'), 'Clear');
   });

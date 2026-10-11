@@ -8,7 +8,6 @@ import { FileText, CalendarDays, ShieldCheck, Users } from 'lucide-react';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { PaginationControls } from '../components/ui/PaginationControls';
-import { EventSearch } from '../components/ui/EventSearch';
 import { ReportFilterBar, type ReportFilterOption } from '../components/ui/ReportFilterBar';
 import { EventDeliveryLog } from '../components/ui/EventDeliveryLog';
 import { EventDeliveryExport } from '../components/ui/EventDeliveryExport';
@@ -209,12 +208,6 @@ const Reports = () => {
   const [events, setEvents] = useState<any[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string>('');
   /**
-   * The Access and Contact Reports' "Select Event Name" filter: the event the
-   * next report is generated for. Separate from selectedEventId, which is the
-   * Event Report's View drill-down, so neither can steer the other.
-   */
-  const [reportEventId, setReportEventId] = useState<string>('');
-  /**
    * The event an Access or Contact Report row was opened for with View - the
    * same in-page View the Event Report has, on its own state so neither
    * report's View can open the other's.
@@ -307,8 +300,8 @@ const Reports = () => {
     // list is loaded on demand instead — see loadEventsForSelectors below.
     if (searchFirst) return;
 
-    // Needed by the "Select Event Name" picker and to name each contact's
-    // event in the Contact Report.
+    // Needed to show the Access and Contact Reports one row per event, and to
+    // name each contact's event in the Contact Report.
     api.get('/events')
       .then(res => setEvents(res.data))
       .catch(err => console.error('Failed to fetch events', err));
@@ -320,9 +313,8 @@ const Reports = () => {
       searchValue,
       startDate,
       endDate,
-      eventId: eventScoped ? reportEventId : '',
     }),
-    [mode, searchValue, startDate, endDate, eventScoped, reportEventId]
+    [mode, searchValue, startDate, endDate]
   );
   // Read by the auto-load effect below without making it a dependency: for
   // roles that filter live, editing a filter must not trigger a reload.
@@ -330,41 +322,32 @@ const Reports = () => {
   liveFiltersRef.current = liveFilters;
 
   /**
-   * The complete authorized event list, for the "Select Event Name" picker,
-   * the campaign drill-down, and naming each contact's event in the Contact
-   * Report.
+   * The complete authorized event list, for the Access and Contact Reports'
+   * event rows, the campaign drill-down, and naming each contact's event in
+   * the Contact Report.
    *
    * Deliberately sent WITHOUT the report's date range, and deliberately not
    * filled from the Event Report's response. The Event Report asks the server
    * for the events inside the chosen period; using that answer as this cache
    * would leave a contact whose event falls outside the period with no name to
-   * show, and would empty the picker of everything the report excluded.
+   * show.
    */
   const eventsRequested = useRef(false);
-  /** The picker's list is on its way, or the last attempt to load it failed. */
-  const [eventsLoading, setEventsLoading] = useState(false);
-  const [eventsLoadFailed, setEventsLoadFailed] = useState(false);
   const loadEventsForSelectors = useCallback(() => {
     if (eventsRequested.current) return;
     eventsRequested.current = true;
-    setEventsLoading(true);
-    setEventsLoadFailed(false);
     api.get('/events')
       .then((res) => setEvents(res.data))
       .catch((err) => {
-        eventsRequested.current = false; // allow a retry on the next open
-        setEventsLoadFailed(true);
+        eventsRequested.current = false; // allow a retry on the next search
         console.error('Failed to fetch events', err);
-      })
-      .finally(() => setEventsLoading(false));
+      });
   }, []);
 
   /**
-   * The Access and Contact Reports' "Select Event Name" filter is part of the
-   * report's filters, so its list is fetched as soon as one of those tabs is
-   * shown rather than when the picker is first opened. Opening it then lists
-   * the events straight away instead of an empty dropdown while the request
-   * is still on its way. This is the events list only, never report data.
+   * The Access and Contact Reports show one row per event, so the events list
+   * is fetched as soon as one of those tabs is shown. This is the events list
+   * only, never report data.
    */
   useEffect(() => {
     if (searchFirst && showReport && eventScoped) loadEventsForSelectors();
@@ -445,7 +428,7 @@ const Reports = () => {
 
     setDateError('');
     void loadReport(activeReport, liveFiltersRef.current);
-  }, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId, liveFilterQuery]);
+  }, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, liveFilterQuery]);
 
   /** Super Admin: generate the report for the current filters. */
   const runSearch = () => {
@@ -554,7 +537,6 @@ const Reports = () => {
      */
     setMode(REPORTS[key].options[0].key);
     setSearchValue('');
-    setReportEventId('');
     setStartDate('');
     setEndDate('');
     setDateError('');
@@ -570,7 +552,6 @@ const Reports = () => {
   const clearFilters = () => {
     setPinnedFilters(null);
     setSearchValue('');
-    setReportEventId('');
     setScopedViewEventId('');
     setStartDate('');
     setEndDate('');
@@ -591,14 +572,13 @@ const Reports = () => {
   const switchReportRef = useRef(switchReport);
   switchReportRef.current = switchReport;
   /**
-   * An event link: pick the event in "Select Event Name" and open its View -
-   * the event's details and its records, scoped and authorized by the server.
-   * The View needs no dates, so it opens straight away; Search then generates
-   * the dated report for the same event.
+   * An event link (an event's "Access Report" button): open that event's
+   * View - its details and its records, scoped and authorized by the server.
+   * The View needs no dates, so it opens straight away. No event filter is
+   * left behind: a Search afterwards covers what the search box says.
    */
   const openRequestedEvent = (key: ReportKey) => {
     if (!requestedEventId || !EVENT_SCOPED_REPORTS.includes(key)) return;
-    setReportEventId(requestedEventId);
     setScopedViewEventId(requestedEventId);
   };
 
@@ -611,7 +591,6 @@ const Reports = () => {
     }
     setReportChosen(false);
     setSearchValue('');
-    setReportEventId('');
     setStartDate('');
     setEndDate('');
     setSelectedEventId('');
@@ -651,7 +630,7 @@ const Reports = () => {
   // Changing a filter releases the kept filters; the report follows the inputs again.
   useEffect(() => {
     setPinnedFilters(null);
-  }, [mode, startDate, endDate, reportEventId]);
+  }, [mode, startDate, endDate]);
   const reportOption =
     definition.options.find((option) => option.key === reportFilters?.mode) ?? activeOption;
 
@@ -880,50 +859,6 @@ const Reports = () => {
               : 'Choose a report type under Reports in the sidebar, then set its filters and search'}
           </p>
         </div>
-
-        {showReport && activeReport === 'event' && (
-          <div className="flex flex-col sm:flex-row items-start sm:items-end gap-3 relative z-50">
-            {/* Event Search dropdown — drills into a campaign report */}
-            <div className='flex flex-col w-[260px]'>
-              <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Select Event Name</label>
-              <EventSearch
-                events={events}
-                value={selectedEventId}
-                onChange={(id) => openEventFromReport('event', id)}
-                placeholder='Search events...'
-                allowClear={true}
-                onOpen={searchFirst ? loadEventsForSelectors : undefined}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Access and Contact Reports: the same picker, as the report's event
-            filter. It takes effect when the report is generated. */}
-        {showReport && eventScoped && (
-          <div className="flex flex-col sm:flex-row items-start sm:items-end gap-3 relative z-50">
-            <div className='flex flex-col w-[260px]'>
-              <label className='text-[10px] font-bold uppercase tracking-wider text-foreground/50 mb-1 ml-1'>Select Event Name</label>
-              <EventSearch
-                events={events}
-                value={reportEventId}
-                onChange={(id) => setReportEventId(id)}
-                placeholder='All events'
-                allowClear={true}
-                // Retried on open while the list is still empty - for every
-                // role, so a failed load never leaves the filter unusable.
-                onOpen={events.length === 0 ? loadEventsForSelectors : undefined}
-                emptyText={
-                  eventsLoading
-                    ? 'Loading events...'
-                    : eventsLoadFailed
-                      ? 'Could not load events. Close and reopen to try again.'
-                      : 'No events found'
-                }
-              />
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Report type tabs — roles other than Super Admin, whose report types

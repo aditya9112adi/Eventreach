@@ -211,7 +211,7 @@ test('every role gets the same server filtering, without a request per keystroke
     assert.ok(debounce.includes('setTimeout(() => setDebouncedSearch(searchValue.trim()), 400)'), 'a pause, not every keystroke');
     assert.ok(debounce.includes('return () => clearTimeout(timer);'));
     assert.ok(debounce.includes('`${debouncedSearch}\\u0000${mode}`'));
-    assert.ok(reports.includes('}, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, reportEventId, liveFilterQuery]);'));
+    assert.ok(reports.includes('}, [hasReportAccess, searchFirst, activeReport, loadReport, startDate, endDate, liveFilterQuery]);'));
   });
 
   await t.test('the Access and Contact Reports, and "All Fields" on every report, reload; the other Event Report choices filter in the page', () => {
@@ -248,11 +248,11 @@ test('an event\'s "Access Report" link opens the report on that event', async (t
     assert.ok(eventDetail.includes('navigate(`/reports?type=access&eventId=${event._id}`)'));
   });
 
-  await t.test('the report takes a well-formed id from the link, selects it and opens its View', () => {
+  await t.test('the report takes a well-formed id from the link and opens its View, leaving no event filter behind', () => {
     assert.ok(reports.includes("const requestedEventId = /^[a-f0-9]{24}$/i.test(rawRequestedEventId) ? rawRequestedEventId : '';"));
     const open = between(reports, 'const openRequestedEvent = (key: ReportKey) => {', '};');
-    assert.ok(open.includes('setReportEventId(requestedEventId);'));
     assert.ok(open.includes('setScopedViewEventId(requestedEventId);'));
+    assert.equal(open.includes('setReport'), false, 'nothing but the View - no event filter');
     assert.ok(reports.includes(') : eventScoped && scopedViewEventId ? ('));
   });
 
