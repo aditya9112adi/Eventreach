@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, Send, Image, FileText, Plus, X, AlertTriangle, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Send, FileText, Plus, X, AlertTriangle, CheckCircle2, ShieldCheck } from 'lucide-react';
 import api from '../../services/api';
-import type { Contact, Event, MediaAttachment } from '@eventreach/shared';
+import type { Contact, Event } from '@eventreach/shared';
 import {
   WHATSAPP_MAX_ANY_BYTES,
   WHATSAPP_MEDIA_RULES,
@@ -72,20 +72,10 @@ const Composer = () => {
 
   const [events, setEvents] = useState<Event[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string>(defaultEventId);
-  const [messageText, setMessageText] = useState('');
-  const [attachments, setAttachments] = useState<MediaAttachment[]>([]);
-  const [history, setHistory] = useState<any[]>([]);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
-  
-  // WhatsApp template mode: one approved template, the selected guests, real
-  // messages — each rendered by Meta from that guest's own values.
-  const [messageMode, setMessageMode] = useState<'custom' | 'template'>('custom');
+
+  // The page sends one approved WhatsApp template to the selected guests -
+  // real messages, each rendered by Meta from that guest's own values. (The
+  // free-text "Custom Message" option has been removed.)
   const [templateName, setTemplateName] = useState(TEMPLATES[0].name);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
@@ -97,8 +87,7 @@ const Composer = () => {
   const [isSendingTemplate, setIsSendingTemplate] = useState(false);
   const [templateError, setTemplateError] = useState('');
   const [sendSummary, setSendSummary] = useState<SendSummary | null>(null);
-  // The file a media template's header needs. Held separately from the Custom
-  // Message attachments, which are a different flow entirely.
+  // The file a media template's header needs.
   const [templateAttachment, setTemplateAttachment] = useState<TemplateAttachment | null>(null);
   const [isHeaderUploading, setIsHeaderUploading] = useState(false);
   // Real bytes-sent progress from the request itself, not a timer.
@@ -106,8 +95,6 @@ const Composer = () => {
   // The selection already sent. Holding it here is what stops the same guest
   // being messaged twice by a double click or an impatient second click.
   const [lastSentKey, setLastSentKey] = useState<string | null>(null);
-
-  const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
   // Derive if the currently selected event is completed
   const selectedEvent = events.find(e => e._id === selectedEventId) || null;
@@ -131,31 +118,10 @@ const Composer = () => {
     fetchEvents();
   }, [selectedEventId]);
 
-  useEffect(() => {
-    const fetchCampaign = async () => {
-      if (!selectedEventId) return;
-      try {
-        const response = await api.get(`/campaigns/event/${selectedEventId}`);
-        if (response.data) {
-          setMessageText(response.data.messageText || '');
-          setAttachments(response.data.mediaAttachments || []);
-          setHistory(response.data.history || []);
-        }
-      } catch (err) {
-        console.error('Failed to fetch campaign', err);
-        setMessageText('');
-        setAttachments([]);
-        setHistory([]);
-      }
-    };
-    fetchCampaign();
-  }, [selectedEventId]);
 
 
   /**
-   * Guests of the selected event, for the template send. Loaded only in
-   * template mode — the custom flow picks its recipients on the next page and
-   * nothing about it changes here.
+   * Guests of the selected event, for the template send.
    *
    * Changing the event clears the selection outright: a guest of the previous
    * event must never stay selected, and the server would refuse them anyway.
@@ -165,7 +131,7 @@ const Composer = () => {
     setContacts([]);
     setContactsError('');
 
-    if (messageMode !== 'template' || !selectedEventId) {
+    if (!selectedEventId) {
       setIsContactsLoading(false);
       return;
     }
@@ -195,7 +161,7 @@ const Composer = () => {
     return () => {
       cancelled = true;
     };
-  }, [messageMode, selectedEventId]);
+  }, [selectedEventId]);
 
   /**
    * What the guests would receive. The text comes from the backend, which
@@ -218,7 +184,7 @@ const Composer = () => {
     setSendSummary(null);
     setTemplateError('');
 
-    if (messageMode !== 'template' || !selectedEventId || !previewContactId) {
+    if (!selectedEventId || !previewContactId) {
       setTemplatePreview(null);
       setPreviewError('');
       setIsPreviewLoading(false);
@@ -245,95 +211,7 @@ const Composer = () => {
       .finally(() => {
         if (previewRequestRef.current === requestId) setIsPreviewLoading(false);
       });
-  }, [messageMode, selectedEventId, previewContactId, templateName]);
-
-  const handleFileUpload = async (file: File) => {
-    setIsUploading(true);
-    setUploadProgress(0);
-    const controller = new AbortController();
-    setAbortController(controller);
-    
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
-      const response = await api.post('/campaigns/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        signal: controller.signal,
-        onUploadProgress: (progressEvent) => {
-          if (progressEvent.total) {
-            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            setUploadProgress(percentCompleted);
-          }
-        }
-      });
-      setAttachments(prev => [...prev, response.data]);
-      setUploadFile(null);
-    } catch (error: any) {
-      if (error.name === 'CanceledError' || error.message === 'canceled') {
-        showToast('info', 'Upload cancelled');
-      } else {
-        console.error('Upload failed', error);
-        // The backend explains exactly why (wrong type, too large for this
-        // media type, contents not matching the extension); a generic
-        // "Failed to upload file" hid all of it.
-        showToast('error', error?.response?.data?.error || 'Failed to upload file');
-      }
-    } finally {
-      setIsUploading(false);
-      setUploadProgress(0);
-      setAbortController(null);
-    }
-  };
-
-  const cancelUpload = () => {
-    if (abortController) {
-      abortController.abort();
-    }
-  };
-
-  const removeAttachment = (index: number) => {
-    setAttachments(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleSave = async () => {
-    if (!selectedEventId) return;
-    setIsSaving(true);
-    try {
-      await api.post(`/campaigns/event/${selectedEventId}`, {
-        messageText,
-        mediaAttachments: attachments,
-        status: 'Draft'
-      });
-      showToast('success', 'Draft saved successfully');
-    } catch (err) {
-      console.error('Failed to save', err);
-      showToast('error', 'Failed to save draft');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleSend = async () => {
-    if (!selectedEventId) return;
-
-    setIsSending(true);
-    try {
-      // Save the current draft state first
-      await api.post(`/campaigns/event/${selectedEventId}`, {
-        messageText,
-        mediaAttachments: attachments,
-        status: 'Draft'
-      });
-      
-      // Navigate to the preview/recipient selection page
-      navigate(`/campaigns/send-preview?eventId=${selectedEventId}`);
-    } catch (err) {
-      console.error('Failed to save before preview', err);
-      showToast('error', 'Failed to proceed to preview');
-    } finally {
-      setIsSending(false);
-    }
-  };
+  }, [selectedEventId, previewContactId, templateName]);
 
   const headerPrompt = headerUploadPrompt(templatePreview?.header ?? null);
 
@@ -349,8 +227,8 @@ const Composer = () => {
   };
 
   /**
-   * Uploads the header file through the same endpoint, and with the same
-   * validation, as a Custom Message attachment. The file stays on the server;
+   * Uploads the header file through the campaign upload endpoint, with its
+   * WhatsApp media validation. The file stays on the server;
    * only a WhatsApp media id is ever sent, and only from the backend.
    */
   const handleHeaderUpload = async (file: File) => {
@@ -435,14 +313,6 @@ const Composer = () => {
     }
   };
 
-  const getPreviewText = () => {
-    let preview = messageText;
-    preview = preview.replace(/{{fullName}}/g, 'John Doe');
-    preview = preview.replace(/{{eventName}}/g, events.find(e => e._id === selectedEventId)?.eventName || 'The Event');
-    preview = preview.replace(/{{venue}}/g, events.find(e => e._id === selectedEventId)?.eventVenue || 'The Venue');
-    return preview;
-  };
-
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-2 animate-fade-in">
@@ -456,17 +326,7 @@ const Composer = () => {
           <h2 className="text-3xl font-sans font-bold text-foreground uppercase tracking-wider">Message</h2>
         </div>
         <div className="flex items-center space-x-3">
-          {messageMode === 'custom' ? (
-            <>
-              <Button variant="secondary" onClick={handleSave} isLoading={isSaving} disabled={isSending || isEventCompleted}>
-                <Save className="w-4 h-4 mr-2" /> Save Draft
-              </Button>
-              <Button onClick={handleSend} isLoading={isSending} disabled={!selectedEventId || !messageText || isSaving || isEventCompleted}>
-                <Send className="w-4 h-4 mr-2" /> Proceed to Send
-              </Button>
-            </>
-          ) : (
-            <Button
+          <Button
               onClick={handleSendTemplate}
               isLoading={isSendingTemplate}
               disabled={!canSendTemplate(sendGate)}
@@ -477,7 +337,6 @@ const Composer = () => {
                 ? `Send to ${selectedContactIds.length} Guests`
                 : 'Send to 1 Guest'}
             </Button>
-          )}
         </div>
       </div>
 
@@ -501,37 +360,17 @@ const Composer = () => {
               <div className="w-full max-w-md relative z-20"><EventSearch events={events} value={selectedEventId} onChange={(val) => setSelectedEventId(val)} placeholder="Select an Event..." allowClear={false} /></div>
             </div>
 
-            {/* Message type: the existing free-text campaign, or one approved
-                WhatsApp template sent to a single guest. */}
+            {/* Message type: one approved WhatsApp template, the only option. */}
             <div>
               <label className="block text-sm font-sans text-foreground/80 mb-2">Message Type</label>
               <div className="inline-flex rounded-lg border border-border overflow-hidden">
-                {([
-                  { id: 'custom' as const, label: 'Custom Message' },
-                  { id: 'template' as const, label: 'WhatsApp Template' },
-                ]).map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => setMessageMode(option.id)}
-                    className={`px-4 py-2 text-sm font-medium transition-colors ${
-                      messageMode === option.id
-                        ? 'bg-accent text-white'
-                        : 'bg-surface text-foreground/70 hover:bg-surfaceHover'
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                <span className="px-4 py-2 text-sm font-medium bg-accent text-white">WhatsApp Template</span>
               </div>
               <p className="text-xs text-foreground/50 mt-2">
-                {messageMode === 'custom'
-                  ? 'Free text and attachments, sent to the recipients you pick on the next screen.'
-                  : 'An approved WhatsApp template, sent to the guests you select. Meta fills each message from the event and that guest.'}
+                An approved WhatsApp template, sent to the guests you select. Meta fills each message from the event and that guest.
               </p>
             </div>
 
-            {messageMode === 'template' && (
               <div className="space-y-6">
                 <div>
                   <label className="block text-sm font-sans text-foreground/80 mb-2">Template</label>
@@ -803,124 +642,6 @@ const Composer = () => {
                   The message is sent by the EventReach backend — WhatsApp credentials never reach the browser.
                 </p>
               </div>
-            )}
-
-            {messageMode === 'custom' && (
-            <>
-
-            {/* History Section */}
-            {history.length > 0 && (
-              <div className="mb-6 space-y-4">
-                <label className="block text-sm font-sans font-semibold text-foreground/80 mb-2">Previously Shared Messages</label>
-                {history.map((item, idx) => (
-                  <div key={`hist-box-${idx}`} className="bg-surface/50 border border-border rounded-lg p-4 opacity-80">
-                    <div className="flex justify-between items-center mb-2">
-                      <Badge variant="success">Sent</Badge>
-                      <span className="text-xs text-foreground/50">{new Date(item.sentAt).toLocaleString()}</span>
-                    </div>
-                    {item.messageText && (
-                      <p className="text-sm text-foreground whitespace-pre-wrap">{item.messageText}</p>
-                    )}
-                    {item.mediaAttachments && item.mediaAttachments.length > 0 && (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {item.mediaAttachments.map((att: any, aIdx: number) => (
-                          <div key={`hist-att-${aIdx}`} className="flex items-center gap-1 text-xs bg-black/20 dark:bg-white/10 px-2 py-1 rounded">
-                            {att.type === 'image' ? <Image className="w-3 h-3" /> : <FileText className="w-3 h-3" />}
-                            <span className="truncate max-w-[120px]">{att.filename}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div>
-              <label className="block text-sm font-sans text-foreground/80 mb-2">Message Content</label>
-              <textarea
-                ref={textAreaRef}
-                value={messageText}
-                onChange={(e) => !isEventCompleted && setMessageText(e.target.value)}
-                readOnly={isEventCompleted}
-                className={`w-full h-48 rounded-md border border-border bg-background text-foreground p-3 text-sm focus:ring-2 focus:ring-white/20 outline-none resize-none transition-colors ${isEventCompleted ? 'opacity-60 cursor-not-allowed' : ''}`}
-                placeholder="Type your WhatsApp message here..."
-              />
-            </div>
-
-            {!isEventCompleted && (
-            <div>
-              <label className="block text-sm font-sans text-foreground/80 mb-2">Attachments</label>
-              <div className="space-y-4">
-                {attachments.length > 0 && (
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {attachments.map((att, idx) => (
-                      <div key={idx} className="relative group rounded-lg border border-border overflow-hidden bg-surface/50 flex flex-col items-center justify-center p-4">
-                        {att.type === 'image' ? (
-                          <Image className="w-8 h-8 text-accent mb-2" />
-                        ) : (
-                          <FileText className="w-8 h-8 text-accent mb-2" />
-                        )}
-                        <span className="text-xs text-center truncate w-full text-foreground/70" title={att.filename}>
-                          {att.filename}
-                        </span>
-                        <button 
-                          onClick={() => removeAttachment(idx)}
-                          className="absolute top-1 right-1 p-1 bg-surfaceHover/80 hover:bg-destructive/10 text-foreground/50 hover:text-destructive rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="max-w-md">
-                  <FileUpload 
-                    onFileSelect={handleFileUpload} 
-                    selectedFile={uploadFile}
-                    onClear={() => setUploadFile(null)}
-                    accept={{
-                      'image/jpeg': ['.jpeg', '.jpg'],
-                      'image/png': ['.png'],
-                      'application/pdf': ['.pdf'],
-                      'audio/mpeg': ['.mp3'],
-                      'video/mp4': ['.mp4']
-                    }}
-                    // The real WhatsApp ceilings, from the same definition the
-                    // upload endpoint enforces — so the UI can never promise a
-                    // size the backend will refuse.
-                    maxSize={WHATSAPP_MAX_ANY_BYTES}
-                    perTypeMaxBytes={WHATSAPP_MEDIA_MAX_BYTES}
-                    limitSummary={whatsAppMediaLimitSummary()}
-                  />
-                  {isUploading && (
-                    <div className="mt-4 bg-surface border border-border rounded-lg p-4 animate-fade-in shadow-sm">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm text-foreground font-medium tracking-wide">Uploading... {uploadProgress}%</span>
-                        <button 
-                          onClick={cancelUpload}
-                          className="text-foreground/40 hover:text-destructive transition-colors p-1.5 rounded-full hover:bg-destructive/10"
-                          title="Cancel upload"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <div className="w-full bg-black/10 dark:bg-white/10 rounded-full h-2.5 overflow-hidden">
-                        <div 
-                          className="bg-accent h-2.5 rounded-full transition-all duration-200 ease-out" 
-                          style={{ width: uploadProgress + '%' }}
-                        ></div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-            )} {/* end !isEventCompleted */}
-
-            </>
-            )} {/* end messageMode === 'custom' */}
 
           </div>
         </div>
@@ -941,7 +662,7 @@ const Composer = () => {
                   <ArrowLeft className="w-5 h-5" />
                   <div className="flex-1">
                     <h4 className="font-semibold text-sm">
-                      {messageMode === 'template' && templatePreview
+                      {templatePreview
                         ? templatePreview.recipient.fullName
                         : 'Guest Preview'}
                     </h4>
@@ -952,11 +673,10 @@ const Composer = () => {
                 {/* WA Chat Body */}
                 <div className="flex-1 p-4 overflow-y-auto" style={{ backgroundImage: "url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')", backgroundSize: 'contain' }}>
 
-                  {messageMode === 'template' ? (
-                    /* The approved body as Meta holds it, with the resolved
-                       values substituted. No wording is invented here: when the
-                       body cannot be read, the values are listed instead. */
-                    templatePreview ? (
+                  {/* The approved body as Meta holds it, with the resolved
+                      values substituted. No wording is invented here: when the
+                      body cannot be read, the values are listed instead. */}
+                  {templatePreview ? (
                       <div className="bg-white p-2 rounded-lg shadow-sm w-[85%] float-left clear-both rounded-tl-none relative pb-6 text-[13px] text-slate-800 whitespace-pre-wrap">
                         {templatePreview.bodyText
                           ? renderTemplateBody(templatePreview.bodyText, templatePreview.variables)
@@ -971,52 +691,6 @@ const Composer = () => {
                       <div className="bg-white/80 p-2 rounded-lg shadow-sm w-[85%] float-left clear-both rounded-tl-none text-[12px] text-slate-500">
                         Select an event and at least one guest to preview the approved template.
                       </div>
-                    )
-                  ) : (
-                  <>
-
-                  {/* History Messages */}
-                  {history.map((item, idx) => (
-                    <div key={`wa-hist-${idx}`}>
-                      {item.mediaAttachments && item.mediaAttachments.map((att: any, aIdx: number) => (
-                        <div key={`wa-hist-att-${aIdx}`} className="bg-white p-1 rounded-lg shadow-sm w-[85%] mb-2 float-left clear-both rounded-tl-none opacity-90">
-                          <div className="bg-slate-100 h-32 rounded flex items-center justify-center text-slate-400 mb-1">
-                            {att.type === 'image' ? <Image className="w-8 h-8" /> : <FileText className="w-8 h-8" />}
-                          </div>
-                          <p className="text-xs text-slate-500 truncate px-1">{att.filename}</p>
-                        </div>
-                      ))}
-                      {item.messageText && (
-                        <div className="bg-white p-2 rounded-lg shadow-sm w-[85%] mb-4 float-left clear-both rounded-tl-none relative pb-6 text-[13px] text-slate-800 whitespace-pre-wrap opacity-90">
-                          {item.messageText}
-                          <span className="absolute bottom-1 right-2 text-[10px] text-slate-400">
-                            {new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-
-                  {/* Current Draft Messages */}
-                  {attachments.map((att, idx) => (
-                    <div key={idx} className="bg-white p-1 rounded-lg shadow-sm w-[85%] mb-2 float-left clear-both rounded-tl-none">
-                      <div className="bg-slate-100 h-32 rounded flex items-center justify-center text-slate-400 mb-1">
-                        {att.type === 'image' ? <Image className="w-8 h-8" /> : <FileText className="w-8 h-8" />}
-                      </div>
-                      <p className="text-xs text-slate-500 truncate px-1">{att.filename}</p>
-                    </div>
-                  ))}
-
-                  {messageText && (
-                    <div className="bg-white p-2 rounded-lg shadow-sm w-[85%] float-left clear-both rounded-tl-none relative pb-6 text-[13px] text-slate-800 whitespace-pre-wrap">
-                      {getPreviewText()}
-                      <span className="absolute bottom-1 right-2 text-[10px] text-slate-400">
-                        {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                  )}
-
-                  </>
                   )}
 
                 </div>
