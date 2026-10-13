@@ -116,7 +116,8 @@ const SendPreview = () => {
       navigate(newCampaignId ? `/campaigns/${newCampaignId}/report` : `/events/${eventId}`);
     } catch (err) {
       console.error('Failed to send', err);
-      await showError('Failed to send campaign');
+      // The server says why (for example, the event's WhatsApp sender is not usable).
+      await showError((err as any)?.response?.data?.error || 'Failed to send campaign');
     } finally {
       setIsSending(false);
     }

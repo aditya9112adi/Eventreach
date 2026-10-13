@@ -7,7 +7,8 @@ import { Admin } from '../models/Admin';
 import { WhatsAppSender } from '../models/WhatsAppSender';
 import { AuditService } from '../services/AuditService';
 import { isEventAuthorized } from '../services/eventAuthService';
-import { refreshSenderStatusIfStale, syncWhatsAppSenders } from '../services/whatsappSenderSyncService';
+import { forceRefreshSenderStatus, refreshSenderStatusIfStale, syncWhatsAppSenders } from '../services/whatsappSenderSyncService';
+import { canEditEventContact } from '../services/eventOwnership';
 import { isSenderStatusFresh } from '../services/whatsappSenderPolicy';
 
 const senderSettingsSchema = z.object({
@@ -107,17 +108,32 @@ export const updateWhatsAppSender = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * A Super Admin's "Refresh status": asks Meta now and says so. If Meta was
+ * asked about this sender within the last minute, nothing is requested and
+ * the answer says that the stored status is being shown (429). A failure
+ * leaves the stored status unchanged and says so (502). `refreshed` is true
+ * only when Meta actually answered.
+ */
 export const refreshWhatsAppSenderStatus = async (req: Request, res: Response) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid sender id' });
     const sender: any = await WhatsAppSender.findById(req.params.id);
     if (!sender) return res.status(404).json({ error: 'Sender not found' });
-    const status = await refreshSenderStatusIfStale(sender);
-    const current: any = await WhatsAppSender.findById(sender._id).select('statusCheckedAt').lean();
-    return res.json({ phoneNumberId: sender.phoneNumberId, metaStatus: status, checkedAt: current?.statusCheckedAt ?? null });
+    const result = await forceRefreshSenderStatus(sender);
+    const current: any = await WhatsAppSender.findById(sender._id).select('metaStatus statusCheckedAt').lean();
+    if (!result.refreshed) {
+      return res.status(429).json({
+        refreshed: false,
+        error: `This sender's status was checked with Meta less than a minute ago. The stored status is shown; try again in ${result.retryAfterSeconds}s.`,
+        metaStatus: current?.metaStatus ?? null,
+        checkedAt: current?.statusCheckedAt ?? null,
+      });
+    }
+    return res.json({ refreshed: true, phoneNumberId: sender.phoneNumberId, metaStatus: result.status, checkedAt: current?.statusCheckedAt ?? null });
   } catch (error: any) {
     console.error('WhatsApp sender status refresh failed:', error?.message || 'unknown error');
-    return res.status(502).json({ error: 'Unable to refresh sender status from Meta.' });
+    return res.status(502).json({ refreshed: false, error: 'Unable to refresh sender status from Meta. The stored status was not changed.' });
   }
 };
 
@@ -222,6 +238,11 @@ export const updateEventContact = async (req: Request, res: Response) => {
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || 'Invalid contact settings' });
     const event: any = await Event.findById(req.params.id);
     if (!event) return res.status(404).json({ error: 'Event not found' });
+    // Decision B: seeing an event (isEventAuthorized, above) is not enough to
+    // change its POC or sender - only its owning Admin or a Super Admin may.
+    if (!(await canEditEventContact(user, event))) {
+      return res.status(403).json({ error: "Only the event's owning Admin or a Super Admin can edit its contact settings." });
+    }
 
     if (parsed.data.poc !== undefined && parsed.data.poc !== null) {
       const mobile = parsePhoneNumberFromString(parsed.data.poc.mobile, 'IN');

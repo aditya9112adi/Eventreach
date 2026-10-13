@@ -215,15 +215,25 @@ export const refreshSenderStatusIfStale = async (
     );
   }
 
-  statusRefreshAttemptAt.set(sender.phoneNumberId, now);
+  return runStatusRefresh(sender.phoneNumberId, client, now);
+};
+
+/**
+ * One status request to Meta for a sender, recorded with the time it was
+ * made. Concurrent callers share the request that is already in flight.
+ */
+const runStatusRefresh = async (
+  phoneNumberId: string,
+  client: MetaSenderClient,
+  now: number
+): Promise<string | null> => {
+  statusRefreshAttemptAt.set(phoneNumberId, now);
 
   const refresh = (async () => {
-    const status = await client.getPhoneNumberStatus(
-      sender.phoneNumberId
-    );
+    const status = await client.getPhoneNumberStatus(phoneNumberId);
 
     await WhatsAppSender.updateOne(
-      { phoneNumberId: sender.phoneNumberId },
+      { phoneNumberId },
       {
         $set: {
           metaStatus: status,
@@ -235,15 +245,49 @@ export const refreshSenderStatusIfStale = async (
     return status;
   })();
 
-  statusRefreshesInFlight.set(sender.phoneNumberId, refresh);
+  statusRefreshesInFlight.set(phoneNumberId, refresh);
 
   try {
     return await refresh;
   } finally {
-    if (
-      statusRefreshesInFlight.get(sender.phoneNumberId) === refresh
-    ) {
-      statusRefreshesInFlight.delete(sender.phoneNumberId);
+    if (statusRefreshesInFlight.get(phoneNumberId) === refresh) {
+      statusRefreshesInFlight.delete(phoneNumberId);
     }
   }
+};
+
+/** A manual refresh asks Meta at most this often per sender. */
+export const MANUAL_REFRESH_COOLDOWN_MS = 60 * 1000;
+
+export type ForcedRefreshResult =
+  | { refreshed: true; status: string | null }
+  | { refreshed: false; reason: 'cooldown'; retryAfterSeconds: number };
+
+/**
+ * A Super Admin's "Refresh status": asks Meta now, even if the stored status
+ * is still fresh - unless Meta was asked about this sender within the last
+ * minute, in which case nothing is requested and the caller is told so. A
+ * request already in flight is joined rather than repeated. A failure
+ * throws, leaving the stored status as it was.
+ */
+export const forceRefreshSenderStatus = async (
+  sender: { phoneNumberId: string },
+  client: MetaSenderClient = metaSenderClient,
+  now = Date.now()
+): Promise<ForcedRefreshResult> => {
+  const current = statusRefreshesInFlight.get(sender.phoneNumberId);
+  if (current) {
+    return { refreshed: true, status: await current };
+  }
+
+  const lastAttempt = statusRefreshAttemptAt.get(sender.phoneNumberId);
+  if (lastAttempt !== undefined && now - lastAttempt < MANUAL_REFRESH_COOLDOWN_MS) {
+    return {
+      refreshed: false,
+      reason: 'cooldown',
+      retryAfterSeconds: Math.max(1, Math.ceil((lastAttempt + MANUAL_REFRESH_COOLDOWN_MS - now) / 1000)),
+    };
+  }
+
+  return { refreshed: true, status: await runStatusRefresh(sender.phoneNumberId, client, now) };
 };

@@ -4,7 +4,7 @@ import api from '../../services/api';
 import { useToast } from '../../components/ui/Toast';
 import { Button } from '../../components/ui/Button';
 import { formatDateTime } from '../../utils/datetime';
-import { isStatusFresh } from '../../utils/eventContactDisplay';
+import { isStatusFresh, senderRefreshMessage } from '../../utils/eventContactDisplay';
 
 type Sender = {
   _id: string; phoneNumberId: string; wabaId: string; isEnvironmentSender?: boolean; displayPhoneNumber: string;
@@ -43,8 +43,9 @@ export default function WhatsAppSenders() {
     catch (e: any) { showToast('error', e.response?.data?.error || 'Could not save sender settings.'); }
   };
   const refresh = async (sender: Sender) => {
-    try { await api.post(`/whatsapp-senders/${sender._id}/refresh-status`); await load(); showToast('success', 'Sender status refreshed.'); }
-    catch (e: any) { showToast('error', e.response?.data?.error || 'Status refresh failed.'); }
+    // Only a real answer from Meta is reported as a refresh (senderRefreshMessage).
+    try { const res = await api.post(`/whatsapp-senders/${sender._id}/refresh-status`); await load(); const m = senderRefreshMessage(res.status, res.data); showToast(m.type, m.text); }
+    catch (e: any) { await load(); const m = senderRefreshMessage(e.response?.status ?? 0, e.response?.data); showToast(m.type, m.text); }
   };
 
   return <div className="max-w-6xl mx-auto space-y-6">
@@ -57,7 +58,7 @@ export default function WhatsAppSenders() {
         <div className="flex flex-wrap justify-between gap-3"><div className="flex gap-3"><div className="rounded-lg bg-accent/10 p-3 h-fit"><Smartphone className="w-5 h-5 text-accent" /></div><div><h2 className="font-semibold">{sender.displayPhoneNumber} · {sender.verifiedName} {sender.isEnvironmentSender && <span className="text-xs font-normal rounded bg-accent/10 text-accent px-2 py-1 ml-1">Environment sender</span>}</h2><p className="text-xs text-foreground/50 break-all">Phone Number ID: {sender.phoneNumberId}</p><p className="text-sm mt-1">Meta status: <strong>{sender.metaStatus || 'Unknown'}</strong>{sender.metaStatus ? (isStatusFresh(sender.statusCheckedAt) ? ` (checked ${formatDateTime(sender.statusCheckedAt)})` : ' (not verified in the last 15 minutes)') : ''} · Quality: {sender.qualityRating || 'Unknown'} · {sender.listedInMeta ? 'Listed in Meta' : 'Not listed in latest sync'}</p></div></div><Button variant="secondary" onClick={() => refresh(sender)}><RefreshCw className="w-4 h-4 mr-2" />Refresh status</Button></div>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="text-sm">Internal label<input className="mt-1 block w-full rounded-lg border border-border bg-background p-2" defaultValue={sender.label || ''} onBlur={e => { if (e.target.value !== (sender.label || '')) void save(sender, { label: e.target.value }); }} placeholder="e.g. Wedding Team" /></label>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sender.enabled} onChange={e => void save(sender, { enabled: e.target.checked })} /> Enabled for assignment <span className="text-xs text-foreground/50">(requires CONNECTED status)</span></label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sender.enabled} onChange={e => void save(sender, { enabled: e.target.checked })} /> Enabled for assignment <span className="text-xs text-foreground/50">(an enabled sender can be assigned and used only while Meta reports it CONNECTED)</span></label>
         </div>
         <div><p className="text-sm font-medium mb-2"><ShieldCheck className="inline w-4 h-4 mr-1" />Admins allowed to assign this sender</p><div className="flex flex-wrap gap-3">{admins.map(admin => <label key={admin._id} className="flex gap-2 items-center text-sm"><input type="checkbox" checked={sender.allowedAdminIds.includes(admin._id)} onChange={e => { const next = e.target.checked ? [...sender.allowedAdminIds, admin._id] : sender.allowedAdminIds.filter(id => id !== admin._id); void save(sender, { allowedAdminIds: next }); }} />{admin.name || admin.email}</label>)}</div>{admins.length === 0 && <p className="text-xs text-foreground/50">Admin list unavailable or no Admin accounts found.</p>}</div>
       </section>)}</div>}

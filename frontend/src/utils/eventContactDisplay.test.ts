@@ -12,6 +12,7 @@ import {
   pocSourceLabel,
   senderChoices,
   senderSourceLabel,
+  senderRefreshMessage,
   senderStatusNote,
   SENDER_STATUS_FRESHNESS_MS,
   type EffectiveSender,
@@ -113,5 +114,37 @@ describe('how the panel is wired', () => {
   test('clearing the POC or the sender sends null, restoring inheritance', () => {
     assert.ok(panel.includes('whatsappSenderId: senderId || null,'));
     assert.ok(/poc: name\.trim\(\) \? \{[\s\S]*?\} : null,/.test(panel));
+  });
+});
+
+describe('"Refresh status" on the Senders page says what really happened', () => {
+  test('a refresh is reported only when Meta actually answered', () => {
+    assert.deepEqual(senderRefreshMessage(200, { refreshed: true, metaStatus: 'CONNECTED' }), { type: 'success', text: 'Status refreshed from Meta: CONNECTED.' });
+    assert.equal(senderRefreshMessage(200, { refreshed: true, metaStatus: null }).text, 'Status refreshed from Meta: no status reported.');
+    for (const [status, data] of [[429, { refreshed: false }], [502, { refreshed: false }], [200, {}], [200, { refreshed: false }], [0, undefined]] as const) {
+      const m = senderRefreshMessage(status, data);
+      assert.notEqual(m.type, 'success', `${status}`);
+      assert.equal(/refreshed from Meta/.test(m.text), false, `${status}`);
+    }
+  });
+
+  test("the server's explanation is shown for a cooldown or a failure", () => {
+    assert.deepEqual(senderRefreshMessage(429, { error: 'Checked less than a minute ago. The stored status is shown; try again in 40s.' }), { type: 'warning', text: 'Checked less than a minute ago. The stored status is shown; try again in 40s.' });
+    assert.equal(senderRefreshMessage(502, { error: 'Unable to refresh sender status from Meta. The stored status was not changed.' }).type, 'error');
+    assert.equal(senderRefreshMessage(0, undefined).text, 'Status refresh failed. The stored status was not changed.');
+  });
+
+  test('the Senders page uses it, and states the CONNECTED rule as the backend enforces it', () => {
+    const page = read('frontend/src/pages/Admin/WhatsAppSenders.tsx');
+    assert.ok(page.includes('const m = senderRefreshMessage(res.status, res.data); showToast(m.type, m.text);'));
+    assert.ok(page.includes('const m = senderRefreshMessage(e.response?.status ?? 0, e.response?.data); showToast(m.type, m.text);'));
+    assert.equal(page.includes("'Sender status refreshed.'"), false, 'no unconditional success message');
+    assert.equal(page.includes('(requires CONNECTED status)'), false, 'enabling does not itself require CONNECTED');
+    assert.ok(page.includes('an enabled sender can be assigned and used only while Meta reports it CONNECTED'));
+  });
+
+  test("the legacy campaign page shows the server's reason when a send is refused", () => {
+    const page = read('frontend/src/pages/Campaigns/SendPreview.tsx');
+    assert.ok(page.includes("await showError((err as any)?.response?.data?.error || 'Failed to send campaign');"));
   });
 });

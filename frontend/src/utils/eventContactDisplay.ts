@@ -93,3 +93,21 @@ export const senderChoices = (senders: SenderOption[], localSenderId: string | n
   }
   return choices;
 };
+
+/**
+ * The Senders page's message after "Refresh status". It says the status was
+ * refreshed only when the server reports that Meta actually answered
+ * (refreshed: true); otherwise it says the stored status is still shown.
+ */
+export const senderRefreshMessage = (httpStatus: number, data: any): { type: 'success' | 'warning' | 'error'; text: string } => {
+  if (httpStatus === 200 && data?.refreshed === true) {
+    return { type: 'success', text: `Status refreshed from Meta: ${data.metaStatus ?? 'no status reported'}.` };
+  }
+  if (httpStatus === 429) {
+    return { type: 'warning', text: data?.error || 'The status was checked moments ago. The stored status is shown.' };
+  }
+  if (httpStatus === 200) {
+    return { type: 'warning', text: 'Meta was not asked. The stored status is shown.' };
+  }
+  return { type: 'error', text: data?.error || 'Status refresh failed. The stored status was not changed.' };
+};
