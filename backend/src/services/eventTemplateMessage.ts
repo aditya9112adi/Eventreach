@@ -109,14 +109,16 @@ export const EVENT_TEMPLATES: Record<string, EventTemplateSpec> = {
   },
   /**
    * Approved under the production WABA (Meta template id 1129562792755797) as
-   * a MARKETING template in "en", with no header and no buttons. Its body
-   * takes one value, the guest's name ({{1}}); the rest of its wording is set
-   * by the approved template and is read from Meta for the preview, never
-   * written here. Like the others, it can be sent for any event.
+   * a MARKETING template in "en", with no header and no buttons. It is sent
+   * exactly as approved: nothing is filled in - no guest name - so no body
+   * component is built for it. Its wording is read from Meta for the
+   * preview, never written here; if the approved body does take values
+   * (numbered or named), the preview's placeholder check blocks sending.
+   * Like the others, it can be sent for any event.
    */
   pranjali_ankit_wedding_invite: {
     languageCode: 'en',
-    fields: ['recipientName'],
+    fields: [],
   },
 };
 

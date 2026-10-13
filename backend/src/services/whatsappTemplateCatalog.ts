@@ -78,10 +78,16 @@ const cache = new Map<string, { at: number; value: TemplateDefinition | null }>(
 /** Exported for tests; also lets a deployment drop a stale definition. */
 export const clearTemplateCatalogCache = () => cache.clear();
 
+/**
+ * Distinct placeholders in a template text: numbered ({{1}}) and named
+ * ({{guest_name}}) alike. A named one still needs a value at send time, so
+ * counting only numbered ones would let a body that takes values look as if
+ * it takes none.
+ */
 export const countPlaceholders = (bodyText: string): number => {
-  const seen = new Set<number>();
-  for (const match of bodyText.matchAll(/\{\{\s*(\d+)\s*\}\}/g)) {
-    seen.add(Number(match[1]));
+  const seen = new Set<string>();
+  for (const match of bodyText.matchAll(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g)) {
+    seen.add(/^\d+$/.test(match[1]) ? String(Number(match[1])) : match[1]);
   }
   return seen.size;
 };
