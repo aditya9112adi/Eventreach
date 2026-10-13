@@ -62,6 +62,12 @@ const TEMPLATES = [
     description:
       'Approved utility template with a fixed message and an MP4 video attached. Its wording is set by the approved template and cannot be edited here.',
   },
+  {
+    name: 'pranjali_ankit_wedding_invite',
+    label: 'Pranjali & Ankit wedding invite',
+    description:
+      'Approved marketing template. Fills the guest name; the rest of its wording is set by the approved template and cannot be edited here.',
+  },
 ];
 
 const Composer = () => {
