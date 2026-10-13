@@ -2,6 +2,8 @@ import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { Event } from '../models/Event';
 import { normalizeIndianPhone } from '../utils/indianPhone';
+import { AuditService, type AuditParams } from './AuditService';
+import { BulkPocRecovery, BULK_POC_RECOVERY_RETENTION_DAYS } from '../models/BulkPocRecovery';
 
 /**
  * One user-initiated change of the POC mobile number across every event in
@@ -26,6 +28,24 @@ import { normalizeIndianPhone } from '../utils/indianPhone';
  * The write is a series of bounded updateMany calls. MongoDB does not make
  * them one transaction here, so a failure part-way is reported as exactly
  * that: some events updated, the rest counted as failed.
+ *
+ * AUDIT AND RECOVERY. A run has one id (bulkOperationId) shared by everything
+ * it leaves behind:
+ *  1. BULK_EVENT_POC_STARTED is written before any event is touched. If it
+ *     cannot be saved, nothing is changed (AUDIT_UNAVAILABLE, 503).
+ *  2. Before each batch is changed, the numbers its events hold are saved in
+ *     full to BulkPocRecovery (a protected, expiring collection - read
+ *     models/BulkPocRecovery.ts before touching it). If that cannot be saved,
+ *     the batch is not changed and is reported as failed.
+ *  3. An event is changed only while it still holds exactly the value that was
+ *     saved, so an edit made meanwhile is never overwritten by this run.
+ *  4. BULK_EVENT_POC_UPDATED records the outcome (completed, partial or
+ *     failed). If it cannot be saved the changes stand and the result says
+ *     `audit.completed: false`, rather than reporting a clean audited success.
+ * Audit entries carry only the masked number. A run that stops abruptly
+ * leaves its STARTED entry with no UPDATED entry, plus its batches' recovery
+ * documents, which is how an unfinished run is recognised. Nothing resumes or
+ * undoes a run automatically: it is not atomic and has no rollback.
  */
 
 export const BULK_POC_BATCH_SIZE = 500;
@@ -84,10 +104,16 @@ export interface BulkPocResult extends BulkPocPreview {
   skipped: { alreadySet: number; noLocalPoc: number; changedMeanwhile: number };
   failed: number;
   failures: { batch: number; events: number; reason: string }[];
+  /** What was recorded about this run. `completed: false`: the outcome record could not be saved. */
+  audit: { runId: string; started: boolean; completed: boolean };
+  /** Recovery documents written for this run, and how long they are kept. */
+  recovery: { batches: number; retentionDays: number };
 }
 
 export interface BulkPocDeps {
   batchSize?: number;
+  /** Who is acting and from where, as AuditService reads them off the request; for the run's audit entries. */
+  auditContext?: { actor?: AuditParams['actor']; request?: AuditParams['request'] };
   /** Applies one batch; injectable so a failure part-way can be tested. */
   updateBatch?: (filter: Record<string, unknown>, mobile: string, batchIndex: number) => Promise<{ matchedCount: number; modifiedCount: number }>;
   /** Reads the ids to update, in id order; injectable so a read failing part-way can be tested. */
@@ -230,14 +256,34 @@ export const applyBulkPocUpdate = async (
       return { matchedCount: r.matchedCount, modifiedCount: r.modifiedCount };
     });
 
+    // The run's id and its start record. Nothing is changed unless the start
+    // record was saved: a run that cannot be audited does not begin.
+    const runId = `BULK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+    const auditActor = deps.auditContext?.actor ?? { userId: actor?.id ?? null, email: null, name: null, role: actor?.role ?? null };
+    const maskedMobile = maskMobile(mobile);
+    const started = await AuditService.log({
+      action: 'BULK_EVENT_POC_STARTED',
+      collectionName: 'events',
+      actor: auditActor,
+      request: deps.auditContext?.request,
+      bulkOperationId: runId,
+      bulk: { isBulk: true, operationType: 'UPDATE', totalRecords: expected },
+      metadata: { scope: scope.kind, includePast, newMobile: maskedMobile, expected, recoveryCollection: 'bulk_poc_recovery', recoveryRetentionDays: BULK_POC_RECOVERY_RETENTION_DAYS },
+      description: `Started updating the POC mobile number to ${maskedMobile} on ${expected} events (${preview.scope.label})`,
+    });
+    if (!started) {
+      throw new BulkPocError('AUDIT_UNAVAILABLE', 'This update could not be recorded in the audit log, so nothing was changed. Try again shortly.', 503);
+    }
+
     let updated = 0;
     let changedMeanwhile = 0;
     let failed = 0;
+    let recoveryBatches = 0;
     const failures: BulkPocResult['failures'] = [];
+    const expiresAt = new Date(Date.now() + BULK_POC_RECOVERY_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
     // Ids are read in order, a batch at a time, so memory stays bounded however
-    // many events there are. Each batch re-applies the full condition, so an
-    // event whose POC was removed or already changed meanwhile is left alone.
+    // many events there are.
     const cursor = deps.readIds
       ? deps.readIds(willUpdate, batchSize)
       : (Event.find(willUpdate).select('_id').sort({ _id: 1 }).lean().cursor({ batchSize }) as unknown as AsyncIterable<{ _id: unknown }>);
@@ -250,13 +296,44 @@ export const applyBulkPocUpdate = async (
       batch = [];
       batchIndex += 1;
       processed += ids.length;
+      let responsible = ids.length; // events this batch is answerable for if it fails
       try {
-        const r = await updateBatch({ $and: [{ _id: { $in: ids } }, willUpdate] }, mobile, batchIndex);
+        // What each event holds right now, read just before it is changed and
+        // still limited to events that qualify. Anything that no longer
+        // qualifies (POC removed, event completed, already set) is left alone.
+        const rows: any[] = await Event.find({ $and: [{ _id: { $in: ids } }, willUpdate] }).select('_id poc.mobile').lean();
+        changedMeanwhile += ids.length - rows.length;
+        responsible = rows.length;
+        if (rows.length === 0) return;
+
+        // Save those values BEFORE changing anything. No recovery data, no change.
+        const entries = rows.map((row) => ({ eventId: row._id, previousMobile: String(row.poc.mobile) }));
+        try {
+          await BulkPocRecovery.create({ runId, batchIndex, actorId: actor?.id ? String(actor.id) : null, newMobile: mobile, entries, expiresAt });
+        } catch (error: any) {
+          failed += rows.length;
+          failures.push({ batch: batchIndex, events: rows.length, reason: 'Recovery data could not be saved, so this batch was not changed.' });
+          console.error('Bulk POC recovery data not saved:', { runId, batch: batchIndex, error: error?.name || 'unknown' });
+          return;
+        }
+        recoveryBatches += 1;
+
+        // Each event is changed only while it still holds exactly what was saved.
+        const r = await updateBatch(
+          { $and: [{ $or: entries.map((e) => ({ _id: e.eventId, 'poc.mobile': e.previousMobile })) }, willUpdate] },
+          mobile,
+          batchIndex
+        );
         updated += r.modifiedCount;
-        changedMeanwhile += ids.length - r.matchedCount;
+        changedMeanwhile += rows.length - r.matchedCount;
+        try {
+          await BulkPocRecovery.updateOne({ runId, batchIndex }, { $set: { status: 'applied', outcome: { matched: r.matchedCount, modified: r.modifiedCount } } });
+        } catch {
+          // The saved record is still valid; it just stays 'prepared'.
+        }
       } catch (error: any) {
-        failed += ids.length;
-        failures.push({ batch: batchIndex, events: ids.length, reason: error?.name === 'ValidationError' ? 'The stored data failed validation.' : 'The database refused the update.' });
+        failed += responsible;
+        failures.push({ batch: batchIndex, events: responsible, reason: error?.name === 'ValidationError' ? 'The stored data failed validation.' : 'The database refused the update.' });
       }
     };
     try {
@@ -277,15 +354,40 @@ export const applyBulkPocUpdate = async (
       }
     }
 
-    return {
+    const result: BulkPocResult = {
       ...preview,
-      bulkOperationId: `BULK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+      bulkOperationId: runId,
       expected,
       updated,
       skipped: { alreadySet: counts.alreadySet, noLocalPoc: counts.noLocalPoc, changedMeanwhile },
       failed,
       failures,
+      audit: { runId, started: true, completed: false },
+      recovery: { batches: recoveryBatches, retentionDays: BULK_POC_RECOVERY_RETENTION_DAYS },
     };
+    const skipped = result.skipped.alreadySet + result.skipped.noLocalPoc + result.skipped.changedMeanwhile;
+    result.audit.completed = await AuditService.log({
+      action: 'BULK_EVENT_POC_UPDATED',
+      collectionName: 'events',
+      actor: auditActor,
+      request: deps.auditContext?.request,
+      bulkOperationId: runId,
+      bulk: { isBulk: true, operationType: 'UPDATE', totalRecords: expected, successfulRecords: updated, failedRecords: failed },
+      metadata: {
+        scope: scope.kind,
+        includePast,
+        newMobile: maskedMobile,
+        outcome: failed === 0 ? 'completed' : updated > 0 ? 'partial' : 'failed',
+        skipped: result.skipped,
+        failedBatches: failures.length,
+        recoveryBatches,
+        recoveryRetentionDays: BULK_POC_RECOVERY_RETENTION_DAYS,
+      },
+      description: `Updated the POC mobile number to ${maskedMobile} on ${updated} of ${expected} events (${preview.scope.label}); ${skipped} skipped, ${failed} failed`,
+      success: failed === 0,
+    });
+    if (!result.audit.completed) console.error('Bulk POC outcome record not saved:', { runId });
+    return result;
   } finally {
     running.delete(key);
   }

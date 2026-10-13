@@ -38,6 +38,8 @@ const { Admin } = require('../backend/dist/models/Admin');
 const { User } = require('../backend/dist/models/User');
 const { Event } = require('../backend/dist/models/Event');
 const { AuditLog } = require('../backend/dist/models/AuditLog');
+const { AuditService } = require('../backend/dist/services/AuditService');
+const { BulkPocRecovery } = require('../backend/dist/models/BulkPocRecovery');
 const { WhatsAppSender } = require('../backend/dist/models/WhatsAppSender');
 
 const NEW = '+919876543210';
@@ -141,6 +143,7 @@ beforeEach(async () => {
   await Event.deleteMany({});
   await User.deleteMany({});
   await AuditLog.deleteMany({});
+  await BulkPocRecovery.deleteMany({});
   const A = fx.adminA._id;
   const B = fx.adminB._id;
   // Admin A owns these.
@@ -454,7 +457,7 @@ describe('large scopes are written in bounded batches', () => {
     const result = await bulk.applyBulkPocUpdate(actor(fx.adminA, 'Admin'), await svcReviewed(actor(fx.adminA, 'Admin'), { mobile: NEW }, 28), {
       batchSize: 10,
       updateBatch: async (filter: any, mobile: string) => {
-        sizes.push(filter.$and[0]._id.$in.length);
+        sizes.push(filter.$and[0].$or.length);
         assert.ok(filter.$and[1], 'the full condition is applied to every batch');
         const r = await Event.updateMany(filter, { $set: { 'poc.mobile': mobile } });
         return { matchedCount: r.matchedCount, modifiedCount: r.modifiedCount };
@@ -485,5 +488,279 @@ describe('the stored number matches what a single-event edit stores', () => {
       assert.equal(bulkPreview.status, 400, `bulk refuses ${typed}`);
       assert.equal(bulkPreview.body.code, 'INVALID_MOBILE');
     }
+  });
+});
+
+// ── run audit, recovery data and audit failures ─────────────────────────────
+
+const SOMEONE_ELSES = '+919833333333';
+const FULL_NUMBERS = ['9811111111', '9876543210', '9833333333'];
+
+/** Everything written to the console while fn runs. */
+const captureConsole = async <T>(fn: () => Promise<T>): Promise<{ value: T; output: string }> => {
+  const lines: string[] = [];
+  const saved: Record<string, any> = {};
+  for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+    saved[level] = (console as any)[level];
+    (console as any)[level] = (...args: any[]) => lines.push(args.map((a) => { try { return typeof a === 'string' ? a : JSON.stringify(a); } catch { return String(a); } }).join(' '));
+  }
+  try { return { value: await fn(), output: lines.join('\n') }; } finally { for (const level of Object.keys(saved)) (console as any)[level] = saved[level]; }
+};
+
+/** AuditService.log made to fail for the entries `failWhen` picks; restored afterwards. */
+const withAuditFailing = async <T>(failWhen: (params: any) => boolean, fn: () => Promise<T>): Promise<T> => {
+  const real = AuditService.log;
+  AuditService.log = async (params: any) => (failWhen(params) ? false : real.call(AuditService, params));
+  try { return await fn(); } finally { AuditService.log = real; }
+};
+
+const realUpdateMany = async (filter: any, mobile: string) => {
+  const r = await Event.updateMany(filter, { $set: { 'poc.mobile': mobile } });
+  return { matchedCount: r.matchedCount, modifiedCount: r.modifiedCount };
+};
+const runEntries = async (runId: string) => ((await AuditLog.find({ bulkOperationId: runId }).sort({ timestamp: 1, _id: 1 }).lean()) as any[]);
+const recoveryOf = async (runId: string) => ((await BulkPocRecovery.find({ runId }).sort({ batchIndex: 1 }).lean()) as any[]);
+
+describe('every run is audited before, during and after, and can be recovered', () => {
+  const superActor = () => actor(fx.superAdmin, 'SuperAdmin');
+
+  test('a start record exists, and the recovery data is saved, before the first event changes', async () => {
+    const scope = await svcReviewed(superActor(), { mobile: NEW }, 6);
+    let seenAtFirstWrite: any = null;
+    const result = await bulk.applyBulkPocUpdate(superActor(), scope, {
+      batchSize: 6,
+      updateBatch: async (filter: any, mobile: string, batchIndex: number) => {
+        const started: any[] = await AuditLog.find({ action: 'BULK_EVENT_POC_STARTED' }).lean();
+        const finished = await AuditLog.countDocuments({ action: 'BULK_EVENT_POC_UPDATED' });
+        const recovery = await recoveryOf(started[0]?.bulkOperationId);
+        seenAtFirstWrite = {
+          started: started.length, finished, recoveryBatches: recovery.length, status: recovery[0]?.status,
+          entries: recovery[0]?.entries.length, eventsStillOld: await Event.countDocuments({ 'poc.mobile': OLD }),
+        };
+        return realUpdateMany(filter, mobile);
+      },
+    });
+    assert.deepEqual(seenAtFirstWrite, { started: 1, finished: 0, recoveryBatches: 1, status: 'prepared', entries: 6, eventsStillOld: 7 });
+    const entries = await runEntries(result.bulkOperationId);
+    assert.deepEqual(entries.map((e) => e.action), ['BULK_EVENT_POC_STARTED', 'BULK_EVENT_POC_UPDATED'], 'one run id links the start and the outcome');
+    assert.deepEqual(result.audit, { runId: result.bulkOperationId, started: true, completed: true });
+    assert.equal(entries[0].bulk.totalRecords, 6);
+    assert.equal(entries[1].metadata.outcome, 'completed');
+    assert.equal(entries[1].success, true);
+  });
+
+  test('recovery data keeps every previous number in full; audit entries and console output never show a full number', async () => {
+    const { value: res, output } = await captureConsole(async () => confirm(fx.a, { mobile: NEW }, 3));
+    assert.equal(res.status, 200, res.raw);
+    const runId = res.body.bulkOperationId;
+    const docs = await recoveryOf(runId);
+    assert.equal(docs.length, 1);
+    const [doc] = docs;
+    assert.equal(doc.status, 'applied');
+    assert.deepEqual(doc.outcome, { matched: 3, modified: 3 });
+    assert.equal(doc.newMobile, NEW);
+    assert.deepEqual(doc.entries.map((e: any) => String(e.eventId)).sort(), [fx.mainA, fx.subOwnA, fx.creatorA].map((e: any) => String(e._id)).sort());
+    assert.ok(doc.entries.every((e: any) => e.previousMobile === OLD), 'previous values are kept in full');
+    assert.equal(doc.actorId, String(fx.adminA._id));
+    const keptDays = (new Date(doc.expiresAt).getTime() - Date.now()) / 86_400_000;
+    assert.ok(keptDays > 89 && keptDays <= 90.01, `kept for about 90 days, got ${keptDays}`);
+    assert.equal(res.body.recovery.batches, 1);
+    assert.equal(res.body.recovery.retentionDays, 90);
+
+    const audit = JSON.stringify(await runEntries(runId));
+    for (const n of FULL_NUMBERS) {
+      assert.equal(audit.includes(n), false, `audit entries must not contain ${n}`);
+      assert.equal(output.includes(n), false, `console output must not contain ${n}`);
+    }
+    assert.ok(audit.includes('+91******3210'), 'the number is shown masked');
+  });
+
+  test('the saved data is enough to put events back (manual procedure: only where the event still holds the new number)', async () => {
+    const res = await confirm(fx.super, { mobile: NEW }, 6);
+    const docs = await recoveryOf(res.body.bulkOperationId);
+    // Someone edits one event after the run: that one must not be restored over.
+    await Event.updateOne({ _id: fx.mainB._id }, { $set: { 'poc.mobile': SOMEONE_ELSES } });
+    let restored = 0;
+    for (const doc of docs) {
+      for (const entry of doc.entries) {
+        const r = await Event.updateOne({ _id: entry.eventId, 'poc.mobile': doc.newMobile }, { $set: { 'poc.mobile': entry.previousMobile } });
+        restored += r.modifiedCount;
+      }
+    }
+    assert.equal(restored, 5);
+    for (const e of [fx.mainA, fx.subOwnA, fx.creatorA, fx.oddSub, fx.superEvent]) assert.equal(await mobileOf(e), OLD);
+    assert.equal(await mobileOf(fx.mainB), SOMEONE_ELSES, 'a later edit is not overwritten by the restore');
+  });
+
+  test('a partial failure is recorded as partial, under the same run id; the unfinished batch stays recoverable', async () => {
+    const scope = await svcReviewed(superActor(), { mobile: NEW }, 6);
+    const result = await bulk.applyBulkPocUpdate(superActor(), scope, {
+      batchSize: 2,
+      updateBatch: async (filter: any, mobile: string, batchIndex: number) => {
+        if (batchIndex === 2) throw new Error('write failed');
+        return realUpdateMany(filter, mobile);
+      },
+    });
+    assert.equal(result.updated, 4);
+    assert.equal(result.failed, 2);
+    const entries = await runEntries(result.bulkOperationId);
+    assert.deepEqual(entries.map((e) => e.action), ['BULK_EVENT_POC_STARTED', 'BULK_EVENT_POC_UPDATED']);
+    assert.equal(entries[1].success, false);
+    assert.equal(entries[1].metadata.outcome, 'partial');
+    assert.equal(entries[1].bulk.successfulRecords, 4);
+    assert.equal(entries[1].bulk.failedRecords, 2);
+    assert.equal(entries[1].metadata.failedBatches, 1);
+    const docs = await recoveryOf(result.bulkOperationId);
+    assert.deepEqual(docs.map((d) => [d.batchIndex, d.status, d.entries.length]), [[1, 'applied', 2], [2, 'prepared', 2], [3, 'applied', 2]]);
+    for (const entry of docs[1].entries) assert.equal(await mobileOf({ _id: entry.eventId }), OLD, 'the failed batch changed nothing');
+  });
+
+  test('if the start record cannot be saved, nothing is changed', async () => {
+    const reviewedScope = await reviewed(fx.super, { mobile: NEW }, 6);
+    const before = await snapshot();
+    const res = await withAuditFailing((p) => p.action === 'BULK_EVENT_POC_STARTED', () => apply(fx.super, reviewedScope));
+    assert.equal(res.status, 503);
+    assert.equal(res.body.code, 'AUDIT_UNAVAILABLE');
+    assert.deepEqual(await snapshot(), before);
+    assert.equal(await BulkPocRecovery.countDocuments({}), 0);
+    assert.equal(await AuditLog.countDocuments({ action: { $regex: /^BULK_EVENT_POC/ } }), 0);
+    // The failure does not poison the account: the same review can be confirmed once audit works again.
+    const again = await apply(fx.super, reviewedScope);
+    assert.equal(again.status, 200, again.raw);
+  });
+
+  test('if the outcome record cannot be saved, the changes stand and the result says it is not fully audited', async () => {
+    const reviewedScope = await reviewed(fx.a, { mobile: NEW }, 3);
+    const res = await withAuditFailing((p) => p.action === 'BULK_EVENT_POC_UPDATED', () => apply(fx.a, reviewedScope));
+    assert.equal(res.status, 207, 'not a clean success');
+    assert.equal(res.body.updated, 3);
+    assert.equal(res.body.failed, 0);
+    assert.deepEqual(res.body.audit, { runId: res.body.bulkOperationId, started: true, completed: false });
+    assert.equal(await mobileOf(fx.mainA), NEW);
+    const entries = await runEntries(res.body.bulkOperationId);
+    assert.deepEqual(entries.map((e) => e.action), ['BULK_EVENT_POC_STARTED'], 'an unfinished-looking run: a start with no outcome');
+    assert.equal((await recoveryOf(res.body.bulkOperationId)).length, 1);
+  });
+
+  test('a clean run reports itself as fully audited', async () => {
+    const res = await confirm(fx.a, { mobile: NEW }, 3);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.audit.completed, true);
+  });
+
+  test('if a batch\'s recovery data cannot be saved, that batch is not changed and is reported as failed', async () => {
+    const scope = await svcReviewed(superActor(), { mobile: NEW }, 6);
+    const realCreate = BulkPocRecovery.create.bind(BulkPocRecovery);
+    BulkPocRecovery.create = async (doc: any) => { if (doc.batchIndex === 2) throw new Error(`disk full for ${doc.entries[0].previousMobile}`); return realCreate(doc); };
+    let outcome: any;
+    try {
+      outcome = await captureConsole(() => bulk.applyBulkPocUpdate(superActor(), scope, { batchSize: 2 }));
+    } finally { BulkPocRecovery.create = realCreate; }
+    const result = outcome.value;
+    assert.equal(result.updated, 4);
+    assert.equal(result.failed, 2);
+    assert.deepEqual(result.failures, [{ batch: 2, events: 2, reason: 'Recovery data could not be saved, so this batch was not changed.' }]);
+    assert.equal(await Event.countDocuments({ 'poc.mobile': OLD }), 3, 'the two events of the failed batch and the completed event still hold their old number');
+    assert.equal(result.recovery.batches, 2);
+    for (const n of FULL_NUMBERS) assert.equal(outcome.output.includes(n), false, 'the error text is not logged');
+    assert.equal((await runEntries(result.bulkOperationId))[1].metadata.outcome, 'partial');
+  });
+
+  test('a run that stops mid-way leaves a start record, no outcome, and recovery data for what was in flight', async () => {
+    const scope = await svcReviewed(superActor(), { mobile: NEW }, 6);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const running = bulk.applyBulkPocUpdate(superActor(), scope, {
+      batchSize: 2,
+      updateBatch: async (filter: any, mobile: string, batchIndex: number) => {
+        if (batchIndex === 2) await gate; // the process "stops" here: batch 2 is saved but not applied
+        return realUpdateMany(filter, mobile);
+      },
+    });
+    // Wait until batch 2's recovery data is saved and the batch is waiting.
+    let docs: any[] = [];
+    for (let i = 0; i < 100 && !(docs.length === 2 && docs[0].status === 'applied'); i++) {
+      await new Promise((r) => setTimeout(r, 30));
+      const started: any[] = await AuditLog.find({ action: 'BULK_EVENT_POC_STARTED' }).lean();
+      docs = started[0] ? await recoveryOf(started[0].bulkOperationId) : [];
+    }
+    const started: any[] = await AuditLog.find({ action: 'BULK_EVENT_POC_STARTED' }).lean();
+    assert.equal(started.length, 1);
+    assert.equal(await AuditLog.countDocuments({ action: 'BULK_EVENT_POC_UPDATED' }), 0, 'no outcome yet: the run is recognisably unfinished');
+    assert.deepEqual(docs.map((d) => [d.batchIndex, d.status]), [[1, 'applied'], [2, 'prepared']]);
+    for (const entry of docs[0].entries) assert.equal(await mobileOf({ _id: entry.eventId }), NEW);
+    for (const entry of docs[1].entries) {
+      assert.equal(entry.previousMobile, OLD);
+      assert.equal(await mobileOf({ _id: entry.eventId }), OLD, 'batch 2 is saved but not applied');
+    }
+    release();
+    const result = await running;
+    assert.equal(result.updated, 6);
+  });
+
+  test('an edit made after the previous values were saved is never overwritten', async () => {
+    const scope = await svcReviewed(superActor(), { mobile: NEW }, 6);
+    const result = await bulk.applyBulkPocUpdate(superActor(), scope, {
+      batchSize: 6,
+      updateBatch: async (filter: any, mobile: string) => {
+        // After the snapshot, before the write: someone sets a different number on one event.
+        await Event.updateOne({ _id: fx.mainA._id }, { $set: { 'poc.mobile': SOMEONE_ELSES } });
+        return realUpdateMany(filter, mobile);
+      },
+    });
+    assert.equal(result.updated, 5);
+    assert.equal(result.skipped.changedMeanwhile, 1);
+    assert.equal(await mobileOf(fx.mainA), SOMEONE_ELSES);
+  });
+
+  test('two runs by different accounts racing over the same events change each event exactly once', async () => {
+    const second = await Admin.create({ name: 'Super Two', email: 'super2-bp@example.com', passwordHash: 'x', role: 'SuperAdmin', status: 'Active' });
+    const first = superActor();
+    const other = actor(second, 'SuperAdmin');
+    const reviewedFirst = await svcReviewed(first, { mobile: NEW }, 6);
+    const reviewedOther = await svcReviewed(other, { mobile: NEW }, 6);
+    // Hold both runs after they have saved their previous values, so both have seen the old numbers.
+    let arrived = 0;
+    let open!: () => void;
+    const barrier = new Promise<void>((r) => { open = r; });
+    const hold = async (filter: any, mobile: string, batchIndex: number) => {
+      if (batchIndex === 1) { arrived += 1; if (arrived === 2) open(); await barrier; }
+      return realUpdateMany(filter, mobile);
+    };
+    const [a, b] = await Promise.all([
+      bulk.applyBulkPocUpdate(first, reviewedFirst, { batchSize: 2, updateBatch: hold }),
+      bulk.applyBulkPocUpdate(other, reviewedOther, { batchSize: 2, updateBatch: hold }),
+    ]);
+    assert.equal(a.updated + b.updated, 6, 'each event is changed by exactly one of the two runs');
+    assert.notEqual(a.bulkOperationId, b.bulkOperationId);
+    for (const run of [a, b]) {
+      assert.equal(run.audit.completed, true);
+      for (const doc of await recoveryOf(run.bulkOperationId)) assert.ok(doc.entries.every((e: any) => e.previousMobile === OLD), 'no run ever recorded the new number as "previous"');
+    }
+    assert.equal(await Event.countDocuments({ 'poc.mobile': NEW }), 6);
+  });
+
+  test('the recovery collection can only be reached by the service: no route, controller or report uses it', async () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const users: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of fs.readdirSync(dir)) {
+        const full = path.join(dir, name);
+        if (fs.statSync(full).isDirectory()) walk(full);
+        else if (/\.tsx?$/.test(name) && fs.readFileSync(full, 'utf8').includes('BulkPocRecovery')) users.push(path.relative('backend/src', full).replace(/\\/g, '/'));
+      }
+    };
+    walk('backend/src');
+    assert.deepEqual(users.sort(), ['models/BulkPocRecovery.ts', 'services/bulkPocService.ts']);
+  });
+
+  test('recovery documents are one per batch and expire: unique run+batch, and a TTL index', async () => {
+    await BulkPocRecovery.init();
+    const indexes: any[] = await BulkPocRecovery.collection.indexes();
+    const ttl = indexes.find((i) => i.key.expiresAt === 1);
+    assert.equal(ttl?.expireAfterSeconds, 0);
+    const unique = indexes.find((i) => i.key.runId === 1 && i.key.batchIndex === 1);
+    assert.equal(unique?.unique, true);
   });
 });

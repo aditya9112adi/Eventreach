@@ -51,6 +51,18 @@ test('the outcome never claims more than was done', () => {
   assert.equal(plural(1, 'event'), '1 event');
 });
 
+test('an update whose outcome could not be audited is never shown as a clean success', () => {
+  const audited = (completed: boolean, failed = 0): BulkPocResult => ({ ...result(3, failed), audit: { runId: 'BULK-20261013-ABCD1234', started: true, completed } });
+  assert.deepEqual(bulkPocOutcome(audited(true)), { tone: 'success', text: 'Updated 3 events; 3 skipped; 0 failed.' });
+  assert.deepEqual(bulkPocOutcome(audited(false)), { tone: 'warning', text: 'Updated 3 events; 3 skipped; 0 failed. The outcome could not be written to the audit log.' });
+  // A failure keeps its own tone; the audit gap is still said.
+  const both = bulkPocOutcome(audited(false, 1));
+  assert.equal(both.tone, 'warning');
+  assert.ok(both.text.endsWith('The outcome could not be written to the audit log.'));
+  const page = read('frontend/src/pages/Events/BulkPocUpdate.tsx');
+  assert.ok(page.includes('result.audit?.completed === false'), 'the page says so, beside the reference');
+});
+
 test('the page reviews first, confirms once with the reviewed count, and keeps the number out of the URL', () => {
   const page = read('frontend/src/pages/Events/BulkPocUpdate.tsx');
   assert.ok(page.includes("api.post('/events/poc-bulk/preview', { mobile, includePast })"));

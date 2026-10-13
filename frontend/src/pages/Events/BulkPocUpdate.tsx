@@ -129,6 +129,7 @@ const BulkPocUpdate = () => {
     {result && <section className="rounded-xl border border-border bg-surface p-5 space-y-2 text-sm" role="status" aria-live="polite">
       <h2 className="font-semibold">{bulkPocOutcome(result).text}</h2>
       <p>Already had the number: {result.skipped.alreadySet} · No POC of their own: {result.skipped.noLocalPoc} · Changed by someone else meanwhile: {result.skipped.changedMeanwhile}</p>
+      {result.audit?.completed === false && <p className="text-amber-500">The update was applied, but its outcome could not be written to the audit log. Its start record and recovery data were saved; give the reference below to whoever maintains the system.</p>}
       {result.failed > 0 && <p className="text-red-500">{plural(result.failed, 'event')} could not be updated. Review again to retry the rest - events already updated are skipped.</p>}
       <p className="text-xs text-foreground/50">Reference: {result.bulkOperationId}</p>
     </section>}

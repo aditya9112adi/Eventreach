@@ -121,8 +121,13 @@ export interface AuditParams {
 }
 
 export class AuditService {
-  static async log(params: AuditParams) {
-    if (params.collectionName === 'audit_logs') return; // Prevent infinite loops
+  /**
+   * Writes one audit entry. It never throws - an audit failure must not crash
+   * the business action - but it returns whether the entry was actually saved,
+   * for the few callers that must stop (or say so) when it was not.
+   */
+  static async log(params: AuditParams): Promise<boolean> {
+    if (params.collectionName === 'audit_logs') return true; // Prevent infinite loops
 
     try {
       let changedFields: string[] = [];
@@ -159,9 +164,11 @@ export class AuditService {
       });
 
       await logEntry.save();
+      return true;
     } catch (err) {
       console.error('Audit Logging failed:', err);
       // We do NOT throw here. Audit failures should not crash business logic unless critical.
+      return false;
     }
   }
 

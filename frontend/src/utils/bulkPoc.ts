@@ -31,6 +31,8 @@ export interface BulkPocResult extends BulkPocPreview {
   skipped: { alreadySet: number; noLocalPoc: number; changedMeanwhile: number };
   failed: number;
   failures: { batch: number; events: number; reason: string }[];
+  /** `completed: false`: the update was applied but its outcome could not be written to the audit log. */
+  audit?: { runId: string; started: boolean; completed: boolean };
 }
 
 /** '' when the number looks like an Indian mobile, otherwise why not. */
@@ -48,7 +50,10 @@ export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n ==
 /** The headline after a run, and whether it is a success. Never claims more than was done. */
 export const bulkPocOutcome = (result: BulkPocResult): { tone: 'success' | 'warning' | 'error'; text: string } => {
   const skipped = result.skipped.alreadySet + result.skipped.noLocalPoc + result.skipped.changedMeanwhile;
-  const text = `Updated ${plural(result.updated, 'event')}; ${skipped} skipped; ${result.failed} failed.`;
+  const auditGap = result.audit?.completed === false;
+  const text = `Updated ${plural(result.updated, 'event')}; ${skipped} skipped; ${result.failed} failed.${auditGap ? ' The outcome could not be written to the audit log.' : ''}`;
   if (result.failed > 0) return { tone: result.updated > 0 ? 'warning' : 'error', text };
+  // Applied, but not fully audited: never shown as a clean success.
+  if (auditGap) return { tone: 'warning', text };
   return { tone: 'success', text };
 };
