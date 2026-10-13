@@ -9,6 +9,7 @@ import {
   getSystemHealth,
   adminResetUserPassword,
   setWhatsAppTemplateAccess,
+  getAssignableAdmins,
 } from '../controllers/adminController';
 import { getAccessReport } from '../controllers/accessReportController';
 import { requireAuth } from '../middleware/authMiddleware';
@@ -21,6 +22,7 @@ router.use(requireAuth);
 
 // SuperAdmin only routes
 router.get('/users/pending', requireRole('SuperAdmin'), getPendingUsers);
+router.get('/users/assignable-admins', requireRole('SuperAdmin'), getAssignableAdmins);
 router.put('/users/:id/approve', requireRole('SuperAdmin'), approveUser);
 router.put('/users/:id/reject', requireRole('SuperAdmin'), rejectUser);
 router.put('/users/:id/revoke-access', requireRole('SuperAdmin'), revokeAccess);

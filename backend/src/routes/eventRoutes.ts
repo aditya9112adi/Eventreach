@@ -3,6 +3,7 @@ import { createEvent, createSubEvent, getEvents, getEventById, updateEvent, dele
 import { listMembers, listMemberCandidates, addMembers, removeMember } from '../controllers/eventMemberController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { requireRole } from '../middleware/roleMiddleware';
+import { getEventContact, updateEventContact } from '../controllers/whatsappSenderController';
 
 const router = Router();
 
@@ -25,6 +26,8 @@ router.put('/:id', updateEvent);
 router.delete('/:id', requireAdmin, deleteEvent);
 router.get('/:id/users', getEventUsers);
 router.get('/:id/statistics', getEventStatistics);
+router.get('/:id/contact', getEventContact);
+router.put('/:id/contact', updateEventContact);
 
 /**
  * Sub-Events. Creating one is administrative, as creating an event is in the

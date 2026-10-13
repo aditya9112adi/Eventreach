@@ -33,6 +33,7 @@ const AuditLogs = lazy(() => import('./pages/Admin/AuditLogs'));
 const WhatsAppTemplates = lazy(() => import('./pages/WhatsApp/Templates'));
 const WhatsAppTemplateEditor = lazy(() => import('./pages/WhatsApp/TemplateEditor'));
 const WhatsAppTemplateDetail = lazy(() => import('./pages/WhatsApp/TemplateDetail'));
+const WhatsAppSenders = lazy(() => import('./pages/Admin/WhatsAppSenders'));
 
 const PageLoader = () => (
   <div className="flex items-center justify-center h-[60vh]">
@@ -108,6 +109,7 @@ function AnimatedRoutes() {
             path="/admin/just-access"
             element={<PageWrapper><RoleRoute allow={['SuperAdmin', 'Admin']}><JustAccess /></RoleRoute></PageWrapper>}
           />
+          <Route path="/admin/whatsapp-senders" element={<PageWrapper><RoleRoute allow={["SuperAdmin"]}><WhatsAppSenders /></RoleRoute></PageWrapper>} />
           <Route
             path="/admin/audit-logs"
             element={<PageWrapper><RoleRoute allow={['SuperAdmin']}><AuditLogs /></RoleRoute></PageWrapper>}

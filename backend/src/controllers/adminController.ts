@@ -780,3 +780,15 @@ export const setWhatsAppTemplateAccess = async (req: RequestWithId, res: Respons
     res.status(500).json({ error: 'Failed to change WhatsApp template access' });
   }
 };
+
+/** Minimal Admin directory for SuperAdmin sender permission assignment. */
+export const getAssignableAdmins = async (_req: Request, res: Response) => {
+  try {
+    const admins = await Admin.find({ role: 'Admin', status: 'Active', isAccessCancelled: { $ne: true } })
+      .select('_id name email role').sort({ name: 1 }).lean();
+    res.json(admins);
+  } catch (error) {
+    console.error('Get assignable Admins failed:', error);
+    res.status(500).json({ error: 'Failed to fetch Admin accounts' });
+  }
+};

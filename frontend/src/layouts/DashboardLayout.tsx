@@ -20,7 +20,8 @@ import {
   Shield,
   ShieldCheck,
   KeyRound,
-  FileText
+  FileText,
+  Smartphone
 } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
 import { useToast } from '../components/ui/Toast';
@@ -251,6 +252,7 @@ const DashboardLayout = () => {
     navItems.push({ name: 'User Approvals', to: '/admin/approvals', icon: Users });
     navItems.push({ name: 'Just Access', to: '/admin/just-access', icon: MessageSquare });
     navItems.push({ name: 'Audit Logs', to: '/admin/audit-logs', icon: Shield });
+    navItems.push({ name: 'WhatsApp Senders', to: '/admin/whatsapp-senders', icon: Smartphone });
     navItems.push({ name: 'Settings', to: '/settings', icon: Settings });
 
     // Super Admins choose a report type here rather than on the Reports page.
