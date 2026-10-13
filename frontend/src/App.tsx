@@ -13,6 +13,7 @@ const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const EventList = lazy(() => import('./pages/Events/EventList'));
 const EventCreate = lazy(() => import('./pages/Events/EventCreate'));
+const BulkPocUpdate = lazy(() => import('./pages/Events/BulkPocUpdate'));
 const EventDetail = lazy(() => import('./pages/Events/EventDetail'));
 const EventEdit = lazy(() => import('./pages/Events/EventEdit'));
 const ContactList = lazy(() => import('./pages/Contacts/ContactList'));
@@ -79,6 +80,7 @@ function AnimatedRoutes() {
           <Route path="/dashboard" element={<PageWrapper><Dashboard /></PageWrapper>} />
           <Route path="/events" element={<PageWrapper><EventList /></PageWrapper>} />
           <Route path="/events/create" element={<PageWrapper><EventCreate /></PageWrapper>} />
+          <Route path="/events/poc-bulk" element={<PageWrapper><RoleRoute allow={['SuperAdmin', 'Admin']}><BulkPocUpdate /></RoleRoute></PageWrapper>} />
           <Route path="/events/:id" element={<PageWrapper><EventDetail /></PageWrapper>} />
           <Route path="/events/:id/edit" element={<PageWrapper><EventEdit /></PageWrapper>} />
           <Route
