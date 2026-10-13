@@ -11,18 +11,24 @@ import {
   TEMPLATES_API,
   WHATSAPP_TEMPLATE_VARIABLE_SOURCE_LABELS,
   formFromTemplate,
+  BUTTON_TYPE_LABELS,
+  canConfirmSubmission,
   historyLabel,
   outcomeToast,
+  parseReview,
+  prettyPayload,
+  submitBody,
   renderPreview,
   stateDisplay,
   templateActions,
   toApiProblem,
   type ApiProblem,
+  type SubmissionReview,
   type TemplateView,
   type ToastKind,
 } from '../../utils/whatsappTemplates';
 
-type Confirming = 'submit' | 'delete' | null;
+type Confirming = 'delete' | null;
 
 const Row = ({ label, children }: { label: string; children: ReactNode }) => (
   <div className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4 py-2 border-b border-border/50 last:border-0">
@@ -44,6 +50,10 @@ const TemplateDetail = () => {
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<Confirming>(null);
   const [eventName, setEventName] = useState<string | null>(null);
+  // The payload review that precedes any submission to Meta.
+  const [review, setReview] = useState<SubmissionReview | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
 
   const load = useCallback(async () => {
     setLoadProblem(null);
@@ -71,12 +81,12 @@ const TemplateDetail = () => {
   }, [template?.eventId]);
 
   /** Submit, Check status and Refresh status answer 200 with an outcome and the template as stored. */
-  const runOutcomeAction = async (path: 'submit' | 'reconcile' | 'refresh') => {
+  const runOutcomeAction = async (path: 'submit' | 'reconcile' | 'refresh', body?: Record<string, unknown>) => {
     setBusy(true);
     setActionProblem(null);
     setOutcome(null);
     try {
-      const response = await api.post(`${TEMPLATES_API}/${id}/${path}`);
+      const response = await api.post(`${TEMPLATES_API}/${id}/${path}`, body);
       if (response.data?.template) setTemplate(response.data.template);
       const toast = outcomeToast(response.data);
       setOutcome(toast);
@@ -89,6 +99,40 @@ const TemplateDetail = () => {
     } finally {
       setBusy(false);
     }
+  };
+
+  /** Fetches exactly what a submission would send. Reading it sends nothing to Meta. */
+  const openReview = async () => {
+    setBusy(true);
+    setActionProblem(null);
+    setOutcome(null);
+    try {
+      const response = await api.get(`${TEMPLATES_API}/${id}/payload`);
+      const parsed = parseReview(response.data);
+      if (!parsed) {
+        setActionProblem({ kind: 'unknown', status: null, code: null, message: 'The review could not be read. Nothing was submitted.', fieldErrors: {} });
+        return;
+      }
+      setReview(parsed);
+      setAcknowledged(false);
+      setReviewOpen(true);
+    } catch (error) {
+      setActionProblem(toApiProblem(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const closeReview = () => {
+    setReviewOpen(false);
+    setAcknowledged(false);
+  };
+
+  /** Only reachable from the review, once its payload is ticked as reviewed. */
+  const submitReviewed = async () => {
+    if (!review || !canConfirmSubmission(review, acknowledged, busy)) return;
+    closeReview();
+    await runOutcomeAction('submit', submitBody(review));
   };
 
   const remove = async () => {
@@ -107,7 +151,6 @@ const TemplateDetail = () => {
   const confirm = async () => {
     const action = confirming;
     setConfirming(null);
-    if (action === 'submit') await runOutcomeAction('submit');
     if (action === 'delete') await remove();
   };
 
@@ -168,8 +211,8 @@ const TemplateDetail = () => {
               </Button>
             )}
             {actions.submit && (
-              <Button onClick={() => setConfirming('submit')} disabled={busy}>
-                <Send className="w-4 h-4 mr-2" />Submit to WhatsApp
+              <Button onClick={openReview} disabled={busy}>
+                <Send className="w-4 h-4 mr-2" />Review &amp; submit
               </Button>
             )}
             {actions.delete && (
@@ -271,6 +314,21 @@ const TemplateDetail = () => {
             )}
           </section>
 
+          {template.buttons.length > 0 && (
+            <section className="bg-surface rounded-xl border border-border p-5 space-y-3" aria-label="Buttons">
+              <h3 className="font-semibold text-foreground">Buttons</h3>
+              <ul className="space-y-1 text-sm">
+                {template.buttons.map((b, i) => (
+                  <li key={i}>
+                    <span className="text-foreground/50">{BUTTON_TYPE_LABELS[b.type]}:</span> {b.text}
+                    {b.url ? <span className="font-mono text-xs text-foreground/60"> · {b.url}</span> : null}
+                    {b.phoneNumber ? <span className="font-mono text-xs text-foreground/60"> · {b.phoneNumber}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           <section className="bg-surface rounded-xl border border-border p-5 space-y-3">
             <h3 className="font-semibold text-foreground">History</h3>
             {template.history.length === 0 ? (
@@ -299,26 +357,62 @@ const TemplateDetail = () => {
             <p className="whitespace-pre-wrap break-words">{renderPreview(template.body, rows)}</p>
             {template.footer && <p className="text-xs text-black/50">{template.footer}</p>}
           </div>
+          {template.buttons.length > 0 && (
+            <div className="space-y-1">
+              {template.buttons.map((b, i) => (
+                <div key={i} className="rounded-lg bg-white text-[#027eb5] text-sm text-center py-2 shadow-sm">{b.text}</div>
+              ))}
+            </div>
+          )}
           <p className="text-[11px] text-foreground/40">Shown with the example values.</p>
         </aside>
       </div>
 
+      {reviewOpen && review && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Review before submitting">
+          <div className="bg-surface border border-border p-6 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-spring-up space-y-4">
+            <h3 className="text-xl font-bold text-foreground">Review before submitting to WhatsApp</h3>
+            <p className="text-foreground/70 leading-relaxed text-sm">
+              This is exactly what will be sent to Meta, built by the server from the saved template. Submitting asks Meta to review it - it does not send any message.
+              Meta decides whether to approve it and in which category, and it can no longer be edited here afterwards.
+            </p>
+            {review.blockers.length > 0 && (
+              <ul className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 space-y-1" role="alert">
+                {review.blockers.map((b) => <li key={b}>{b}</li>)}
+              </ul>
+            )}
+            {review.errors && review.errors.length > 0 && (
+              <ul className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive space-y-1" role="alert">
+                {review.errors.map((e) => <li key={`${e.field}-${e.message}`}>{e.message}</li>)}
+              </ul>
+            )}
+            {review.payload && (
+              <pre className="rounded-lg border border-border bg-background p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap break-words max-h-80" aria-label="Payload sent to Meta">{prettyPayload(review.payload)}</pre>
+            )}
+            {review.canSubmit && (
+              <label className="flex items-start gap-2 text-sm text-foreground">
+                <input type="checkbox" className="mt-1" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} />
+                <span>I have reviewed this payload and want to submit it to WhatsApp for review.</span>
+              </label>
+            )}
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={closeReview}>Cancel</Button>
+              <Button onClick={submitReviewed} disabled={!canConfirmSubmission(review, acknowledged, busy)}>Submit to WhatsApp</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {confirming && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center" role="dialog" aria-modal="true">
           <div className="bg-surface border border-border p-6 rounded-xl shadow-2xl max-w-md w-full mx-4 animate-spring-up">
-            <h3 className="text-xl font-bold mb-3 text-foreground">
-              {confirming === 'submit' ? 'Submit to WhatsApp?' : 'Delete this draft?'}
-            </h3>
+            <h3 className="text-xl font-bold mb-3 text-foreground">Delete this draft?</h3>
             <p className="text-foreground/70 mb-6 leading-relaxed text-sm">
-              {confirming === 'submit'
-                ? 'Meta reviews the template and decides whether to approve it and in which category. After submitting, it can no longer be edited here.'
-                : 'The draft is deleted from EventReach. It was never sent to WhatsApp. This cannot be undone.'}
+              The draft is deleted from EventReach. It was never sent to WhatsApp. This cannot be undone.
             </p>
             <div className="flex justify-end gap-3">
               <Button variant="secondary" onClick={() => setConfirming(null)}>Cancel</Button>
-              <Button variant={confirming === 'delete' ? 'danger' : 'primary'} onClick={confirm}>
-                {confirming === 'submit' ? 'Submit' : 'Delete'}
-              </Button>
+              <Button variant="danger" onClick={confirm}>Delete</Button>
             </div>
           </div>
         </div>

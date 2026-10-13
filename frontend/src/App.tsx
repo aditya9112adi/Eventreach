@@ -32,6 +32,7 @@ const UserApprovals = lazy(() => import('./pages/Admin/UserApprovals'));
 const JustAccess = lazy(() => import('./pages/Admin/JustAccess'));
 const AuditLogs = lazy(() => import('./pages/Admin/AuditLogs'));
 const WhatsAppTemplates = lazy(() => import('./pages/WhatsApp/Templates'));
+const WhatsAppTestSend = lazy(() => import('./pages/WhatsApp/TestSend'));
 const WhatsAppTemplateEditor = lazy(() => import('./pages/WhatsApp/TemplateEditor'));
 const WhatsAppTemplateDetail = lazy(() => import('./pages/WhatsApp/TemplateDetail'));
 const WhatsAppSenders = lazy(() => import('./pages/Admin/WhatsAppSenders'));
@@ -95,6 +96,8 @@ function AnimatedRoutes() {
           <Route path="/reports" element={<PageWrapper><Reports /></PageWrapper>} />
           {/* WhatsApp templates: Super Admins, and Admins granted access. The API checks every request. */}
           <Route path="/whatsapp/templates" element={<PageWrapper><TemplateAccessRoute><WhatsAppTemplates /></TemplateAccessRoute></PageWrapper>} />
+          {/* Sending an approved template from the POC sender. The API checks sender, template, recipient and permission on every request. */}
+          <Route path="/whatsapp/test-send" element={<PageWrapper><TemplateAccessRoute><WhatsAppTestSend /></TemplateAccessRoute></PageWrapper>} />
           <Route path="/whatsapp/templates/new" element={<PageWrapper><TemplateAccessRoute><WhatsAppTemplateEditor /></TemplateAccessRoute></PageWrapper>} />
           <Route path="/whatsapp/templates/:id" element={<PageWrapper><TemplateAccessRoute><WhatsAppTemplateDetail /></TemplateAccessRoute></PageWrapper>} />
           <Route path="/whatsapp/templates/:id/edit" element={<PageWrapper><TemplateAccessRoute><WhatsAppTemplateEditor /></TemplateAccessRoute></PageWrapper>} />

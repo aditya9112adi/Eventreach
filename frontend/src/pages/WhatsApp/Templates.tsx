@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, X, ShieldAlert, AlertTriangle, RotateCcw, FileText, Eye, Pencil } from 'lucide-react';
+import { Plus, Search, Send, X, ShieldAlert, AlertTriangle, RotateCcw, FileText, Eye, Pencil } from 'lucide-react';
 import api from '../../services/api';
 import { useAuth } from '../../store/authStore';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { PaginationControls } from '../../components/ui/PaginationControls';
+import AccountTemplates from './AccountTemplates';
 import { formatDateTime } from '../../utils/datetime';
 import {
   COMMON_TEMPLATE_LANGUAGES,
@@ -13,6 +14,7 @@ import {
   TEMPLATES_API,
   WHATSAPP_TEMPLATE_CATEGORIES,
   WHATSAPP_TEMPLATE_STATES,
+  canBrowseAccount,
   hasActiveFilters,
   listParams,
   listViewState,
@@ -39,6 +41,7 @@ const Templates = () => {
   const [problem, setProblem] = useState<ApiProblem | null>(null);
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<{ _id: string; eventName: string }[]>([]);
+  const [tab, setTab] = useState<'mine' | 'account'>('mine');
 
   // Typing settles before the list is fetched again.
   useEffect(() => {
@@ -99,11 +102,35 @@ const Templates = () => {
           </p>
         </div>
         {view !== 'forbidden' && (
-          <Link to="/whatsapp/templates/new">
-            <Button><Plus className="w-4 h-4 mr-2" />Create template</Button>
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/whatsapp/test-send">
+              <Button variant="secondary"><Send className="w-4 h-4 mr-2" />Test send</Button>
+            </Link>
+            <Link to="/whatsapp/templates/new">
+              <Button><Plus className="w-4 h-4 mr-2" />Create template</Button>
+            </Link>
+          </div>
         )}
       </div>
+
+      {canBrowseAccount(user) && view !== 'forbidden' && (
+        <div className="flex gap-1 border-b border-border" role="tablist" aria-label="Template source">
+          {([['mine', 'EventReach templates'], ['account', 'WhatsApp account (Meta)']] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              onClick={() => setTab(key)}
+              className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${tab === key ? 'border-accent text-foreground' : 'border-transparent text-foreground/50 hover:text-foreground'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab === 'account' && canBrowseAccount(user) && <AccountTemplates />}
 
       {view === 'notConfigured' && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-600" role="alert">
@@ -112,7 +139,7 @@ const Templates = () => {
         </div>
       )}
 
-      <div className="bg-surface rounded-xl border border-border overflow-hidden animate-fade-up stagger-1">
+      <div className={`bg-surface rounded-xl border border-border overflow-hidden animate-fade-up stagger-1 ${tab === 'account' ? 'hidden' : ''}`}>
         <div className="p-4 border-b border-border space-y-3">
           <div className="space-y-3">
             <div className="relative">

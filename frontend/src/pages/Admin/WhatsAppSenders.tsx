@@ -9,7 +9,7 @@ import { isStatusFresh, senderRefreshMessage } from '../../utils/eventContactDis
 type Sender = {
   _id: string; phoneNumberId: string; wabaId: string; isEnvironmentSender?: boolean; displayPhoneNumber: string;
   verifiedName: string; qualityRating?: string | null; metaStatus?: string | null;
-  listedInMeta: boolean; enabled: boolean; label?: string; allowedAdminIds: string[];
+  listedInMeta: boolean; enabled: boolean; pocTestEnabled?: boolean; label?: string; allowedAdminIds: string[];
   lastSyncedAt?: string | null;
   statusCheckedAt?: string | null;
 };
@@ -59,6 +59,7 @@ export default function WhatsAppSenders() {
         <div className="grid gap-4 md:grid-cols-2">
           <label className="text-sm">Internal label<input className="mt-1 block w-full rounded-lg border border-border bg-background p-2" defaultValue={sender.label || ''} onBlur={e => { if (e.target.value !== (sender.label || '')) void save(sender, { label: e.target.value }); }} placeholder="e.g. Wedding Team" /></label>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sender.enabled} onChange={e => void save(sender, { enabled: e.target.checked })} /> Enabled for assignment <span className="text-xs text-foreground/50">(an enabled sender can be assigned and used only while Meta reports it CONNECTED)</span></label>
+          <label className="flex items-center gap-2 text-sm md:col-span-2"><input type="checkbox" checked={sender.pocTestEnabled === true} onChange={e => void save(sender, { pocTestEnabled: e.target.checked })} /> POC test sender <span className="text-xs text-foreground/50">(lets the Admins allowed below send approved templates, one at a time, to people who agreed to receive tests - from the Test send page. It is not used for events or campaigns.)</span></label>
         </div>
         <div><p className="text-sm font-medium mb-2"><ShieldCheck className="inline w-4 h-4 mr-1" />Admins allowed to assign this sender</p><div className="flex flex-wrap gap-3">{admins.map(admin => <label key={admin._id} className="flex gap-2 items-center text-sm"><input type="checkbox" checked={sender.allowedAdminIds.includes(admin._id)} onChange={e => { const next = e.target.checked ? [...sender.allowedAdminIds, admin._id] : sender.allowedAdminIds.filter(id => id !== admin._id); void save(sender, { allowedAdminIds: next }); }} />{admin.name || admin.email}</label>)}</div>{admins.length === 0 && <p className="text-xs text-foreground/50">Admin list unavailable or no Admin accounts found.</p>}</div>
       </section>)}</div>}

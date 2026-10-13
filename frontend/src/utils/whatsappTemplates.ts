@@ -1,5 +1,7 @@
 import {
   COMMON_TEMPLATE_LANGUAGES,
+  WHATSAPP_TEMPLATE_BUTTON_LIMITS,
+  WHATSAPP_TEMPLATE_BUTTON_TYPES,
   WHATSAPP_TEMPLATE_CATEGORIES,
   WHATSAPP_TEMPLATE_EDITABLE_STATES,
   WHATSAPP_TEMPLATE_LIMITS,
@@ -9,6 +11,7 @@ import {
   scanTemplatePlaceholders,
   validateTemplateDraft,
   type TemplateFieldError,
+  type WhatsAppTemplateButtonType,
   type WhatsAppTemplateState,
   type WhatsAppTemplateVariableSource,
 } from '@eventreach/shared';
@@ -24,6 +27,8 @@ import {
 
 export {
   COMMON_TEMPLATE_LANGUAGES,
+  WHATSAPP_TEMPLATE_BUTTON_LIMITS,
+  WHATSAPP_TEMPLATE_BUTTON_TYPES,
   WHATSAPP_TEMPLATE_CATEGORIES,
   WHATSAPP_TEMPLATE_LIMITS,
   WHATSAPP_TEMPLATE_STATES,
@@ -43,6 +48,13 @@ export interface TemplateVariableView {
   fixedValue?: string;
   fallback?: string;
   sample: string;
+}
+
+export interface TemplateButtonView {
+  type: WhatsAppTemplateButtonType;
+  text: string;
+  url?: string;
+  phoneNumber?: string;
 }
 
 export interface TemplateHistoryView {
@@ -69,6 +81,7 @@ export interface TemplateView {
   body: string;
   footer: string | null;
   variables: TemplateVariableView[];
+  buttons: TemplateButtonView[];
   localState: WhatsAppTemplateState;
   metaTemplateId: string | null;
   metaStatus: string | null;
@@ -277,6 +290,30 @@ export interface VariableRow {
   sample: string;
 }
 
+/** One button as typed: every field is text until it is validated. */
+export interface ButtonRow {
+  type: WhatsAppTemplateButtonType;
+  text: string;
+  url: string;
+  phoneNumber: string;
+}
+
+export const BUTTON_TYPE_LABELS: Record<WhatsAppTemplateButtonType, string> = {
+  QUICK_REPLY: 'Quick reply',
+  URL: 'Link',
+  PHONE_NUMBER: 'Phone number',
+};
+
+export const emptyButtonRow = (type: WhatsAppTemplateButtonType = 'QUICK_REPLY'): ButtonRow => ({ type, text: '', url: '', phoneNumber: '' });
+
+/** Which types can still be added, from Meta's per-type limits. */
+export const addableButtonTypes = (rows: ButtonRow[]): WhatsAppTemplateButtonType[] => {
+  const L = WHATSAPP_TEMPLATE_BUTTON_LIMITS;
+  if (rows.length >= L.total) return [];
+  const count = (type: WhatsAppTemplateButtonType) => rows.filter((r) => r.type === type).length;
+  return WHATSAPP_TEMPLATE_BUTTON_TYPES.filter((type) => (type === 'URL' ? count(type) < L.url : type === 'PHONE_NUMBER' ? count(type) < L.phoneNumber : count(type) < L.quickReply));
+};
+
 export interface TemplateForm {
   displayName: string;
   name: string;
@@ -288,6 +325,7 @@ export interface TemplateForm {
   body: string;
   footer: string;
   variables: VariableRow[];
+  buttons: ButtonRow[];
 }
 
 export const EMPTY_FORM: TemplateForm = {
@@ -301,6 +339,7 @@ export const EMPTY_FORM: TemplateForm = {
   body: '',
   footer: '',
   variables: [],
+  buttons: [],
 };
 
 export const formFromTemplate = (t: TemplateView): TemplateForm => ({
@@ -316,6 +355,7 @@ export const formFromTemplate = (t: TemplateView): TemplateForm => ({
   variables: [...t.variables]
     .sort((a, b) => a.position - b.position)
     .map((v) => ({ position: v.position, label: v.label, source: v.source, fixedValue: v.fixedValue ?? '', fallback: v.fallback ?? '', sample: v.sample })),
+  buttons: (t.buttons ?? []).map((b) => ({ type: b.type, text: b.text, url: b.url ?? '', phoneNumber: b.phoneNumber ?? '' })),
 });
 
 /** A Meta-style name from a display name: "Wedding Invite!" -> "wedding_invite". */
@@ -385,6 +425,12 @@ export const buildTemplatePayload = (form: TemplateForm, options: { includeOwner
     ...(v.source === 'fixed' ? { fixedValue: v.fixedValue.trim() } : {}),
     ...(v.fallback.trim() ? { fallback: v.fallback.trim() } : {}),
     sample: v.sample.trim(),
+  })),
+  buttons: form.buttons.map((b) => ({
+    type: b.type,
+    text: b.text.trim(),
+    ...(b.type === 'URL' ? { url: b.url.trim() } : {}),
+    ...(b.type === 'PHONE_NUMBER' ? { phoneNumber: b.phoneNumber.trim() } : {}),
   })),
 });
 
@@ -473,3 +519,108 @@ export const applyTemplateAccess = <T extends AccessRecordLike>(records: T[], re
   typeof response?.id === 'string' && typeof response?.canManageWhatsAppTemplates === 'boolean'
     ? records.map((r) => ((r._id ?? r.id) === response.id ? { ...r, canManageWhatsAppTemplates: response.canManageWhatsAppTemplates } : r))
     : records;
+
+// ── payload review and confirmed submission ─────────────────────────────────
+
+/** GET /:id/payload: exactly what a submission would send, built by the server. */
+export interface SubmissionReview {
+  template: TemplateView;
+  payload: Record<string, unknown> | null;
+  payloadHash: string | null;
+  canSubmit: boolean;
+  blockers: string[];
+  errors?: TemplateFieldError[];
+}
+
+/** The review as the page may use it: a malformed answer can never enable a submission. */
+export const parseReview = (body: any): SubmissionReview | null => {
+  if (!body || typeof body !== 'object' || typeof body.canSubmit !== 'boolean') return null;
+  const hash = typeof body.payloadHash === 'string' && /^[0-9a-f]{64}$/.test(body.payloadHash) ? body.payloadHash : null;
+  const payload = body.payload && typeof body.payload === 'object' ? body.payload : null;
+  return {
+    template: body.template,
+    payload,
+    payloadHash: hash,
+    canSubmit: body.canSubmit === true && !!hash && !!payload,
+    blockers: Array.isArray(body.blockers) ? body.blockers.filter((b: unknown) => typeof b === 'string') : [],
+    errors: Array.isArray(body.errors) ? body.errors : undefined,
+  };
+};
+
+/** The submit button is enabled only for a submittable review the person has ticked as reviewed. */
+export const canConfirmSubmission = (review: SubmissionReview | null, acknowledged: boolean, busy: boolean) =>
+  !!review && review.canSubmit && acknowledged && !busy;
+
+/** The body POST /:id/submit needs: the hash of the payload that was reviewed. */
+export const submitBody = (review: SubmissionReview) => ({ confirmPayloadHash: review.payloadHash });
+
+export const prettyPayload = (payload: unknown) => JSON.stringify(payload, null, 2);
+
+// ── the WhatsApp account's templates, as Meta lists them ────────────────────
+
+export interface AccountTemplateView {
+  id: string;
+  name: string;
+  language: string;
+  status: string | null;
+  category: string | null;
+  rejectedReason: string | null;
+  headerFormat: string | null;
+  headerText: string | null;
+  bodyText: string | null;
+  footerText: string | null;
+  buttons: { type: string; text: string }[];
+  localTemplateId: string | null;
+  sendableFromHere: boolean;
+}
+
+export interface AccountPage {
+  templates: AccountTemplateView[];
+  nextCursor: string | null;
+  skipped: number;
+  fetchedAt: string | null;
+}
+
+/** Meta's own statuses, kept distinct from EventReach's local states. */
+export const META_STATUS_DISPLAY: Record<string, { label: string; variant: BadgeVariant; hint: string }> = {
+  APPROVED: { label: 'Approved by Meta', variant: 'success', hint: 'Meta lists this template as approved.' },
+  PENDING: { label: 'In review at Meta', variant: 'warning', hint: 'Meta has not decided yet.' },
+  IN_APPEAL: { label: 'In appeal', variant: 'warning', hint: 'Meta is reviewing an appeal.' },
+  REJECTED: { label: 'Rejected by Meta', variant: 'error', hint: 'Meta rejected it.' },
+  PAUSED: { label: 'Paused by Meta', variant: 'warning', hint: 'Meta paused it because of quality.' },
+  DISABLED: { label: 'Disabled by Meta', variant: 'error', hint: 'Meta disabled it.' },
+  PENDING_DELETION: { label: 'Being deleted', variant: 'warning', hint: 'Meta is deleting it.' },
+  DELETED: { label: 'Deleted at Meta', variant: 'default', hint: 'Deleted at Meta.' },
+  LIMIT_EXCEEDED: { label: 'Limit exceeded', variant: 'warning', hint: 'Meta reports the sending limit was exceeded.' },
+  ARCHIVED: { label: 'Archived', variant: 'default', hint: 'Archived by Meta.' },
+};
+
+/** An unrecognised or missing status is shown as unknown, never guessed. */
+export const metaStatusDisplay = (status: string | null | undefined) =>
+  (status && META_STATUS_DISPLAY[status]) || { label: status ? `Unknown status (${status})` : 'Status unknown', variant: 'default' as BadgeVariant, hint: 'EventReach does not recognise this status.' };
+
+export const canBrowseAccount = (viewer: Viewer | null | undefined) => viewer?.role === 'SuperAdmin';
+
+export const parseAccountPage = (body: any): AccountPage => ({
+  templates: Array.isArray(body?.templates) ? body.templates.filter((t: any) => t && typeof t.id === 'string' && typeof t.name === 'string') : [],
+  nextCursor: typeof body?.nextCursor === 'string' && body.nextCursor ? body.nextCursor : null,
+  skipped: typeof body?.skipped === 'number' && body.skipped > 0 ? body.skipped : 0,
+  fetchedAt: typeof body?.fetchedAt === 'string' ? body.fetchedAt : null,
+});
+
+/** Appends a loaded page, dropping any template already shown (a cursor can overlap). */
+export const appendAccountPage = (current: AccountPage | null, next: AccountPage): AccountPage => {
+  if (!current) return next;
+  const seen = new Set(current.templates.map((t) => t.id));
+  return { ...next, templates: [...current.templates, ...next.templates.filter((t) => !seen.has(t.id))], skipped: current.skipped + next.skipped };
+};
+
+export const accountListParams = (cursor: string | null, limit = 25) => ({ limit, ...(cursor ? { after: cursor } : {}) });
+
+/** Why a listed template cannot be used from here, in words. Empty when it can. */
+export const accountUsabilityNote = (t: AccountTemplateView): string => {
+  if (t.sendableFromHere) return '';
+  if (!t.localTemplateId) return 'Not in EventReach. It exists only at Meta, so it cannot be sent from here.';
+  if (t.status !== 'APPROVED') return `Meta lists it as ${metaStatusDisplay(t.status).label.toLowerCase()}.`;
+  return 'EventReach has not recorded it as approved yet. Refresh its status on its own page.';
+};

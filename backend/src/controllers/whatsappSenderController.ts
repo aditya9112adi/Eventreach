@@ -13,6 +13,7 @@ import { isSenderStatusFresh } from '../services/whatsappSenderPolicy';
 
 const senderSettingsSchema = z.object({
   enabled: z.boolean().optional(),
+  pocTestEnabled: z.boolean().optional(),
   label: z.string().trim().max(100).optional(),
   allowedAdminIds: z.array(z.string().regex(/^[a-f\d]{24}$/i)).optional(),
 }).strict();
@@ -40,10 +41,10 @@ const senderPublic = (sender: any, viewerRole?: string) => ({
   label: sender.label ?? '',
   lastSyncedAt: sender.lastSyncedAt ?? null,
   statusCheckedAt: sender.statusCheckedAt ?? null,
-  // The Business Account id and the allowlist (other Admins' ids) are for
-  // Super Admins only. Any other viewer - or none given - gets neither, so a
+  // The Business Account id, the allowlist (other Admins' ids) and the POC designation are for
+  // Super Admins only. Any other viewer - or none given - gets none of them, so a
   // new caller of this function is private by default.
-  ...(viewerRole === 'SuperAdmin' ? { wabaId: sender.wabaId, allowedAdminIds: (sender.allowedAdminIds || []).map(String) } : {}),
+  ...(viewerRole === 'SuperAdmin' ? { wabaId: sender.wabaId, allowedAdminIds: (sender.allowedAdminIds || []).map(String), pocTestEnabled: Boolean(sender.pocTestEnabled) } : {}),
 });
 
 export const listWhatsAppSenders = async (req: Request, res: Response) => {
@@ -96,6 +97,7 @@ export const updateWhatsAppSender = async (req: Request, res: Response) => {
       sender.allowedAdminIds = unique;
     }
     if (updates.enabled !== undefined) sender.enabled = updates.enabled;
+    if (updates.pocTestEnabled !== undefined) sender.pocTestEnabled = updates.pocTestEnabled;
     if (updates.label !== undefined) sender.label = updates.label;
     await sender.save();
     await AuditService.log({

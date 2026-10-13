@@ -4,9 +4,11 @@ import {
   createTemplateDraft,
   deleteTemplateDraft,
   getTemplate,
+  listAccountTemplates,
   listTemplates,
   reconcileTemplate,
   refreshTemplateStatus,
+  reviewTemplateSubmission,
   submitTemplate,
   updateTemplateDraft,
   type TemplateActor,
@@ -84,10 +86,34 @@ export const deleteTemplateHandler = async (req: Request, res: Response) => {
   }
 };
 
-/** Every recorded outcome is a 200 with `outcome`; refused requests are 4xx/5xx. */
-export const submitTemplateHandler = async (req: Request, res: Response) => {
+/** One page of the account's templates as Meta lists them. Read only. */
+export const listAccountTemplatesHandler = async (req: Request, res: Response) => {
   try {
-    res.json(await submitTemplate(actorOf(req), req.params.id));
+    res.json(await listAccountTemplates(actorOf(req), { after: req.query.after, limit: req.query.limit }));
+  } catch (error) {
+    fail(res, error, 'account list');
+  }
+};
+
+/** The exact payload a submission would send, and a hash to confirm it with. Sends nothing. */
+export const reviewTemplateHandler = async (req: Request, res: Response) => {
+  try {
+    res.json(await reviewTemplateSubmission(actorOf(req), req.params.id));
+  } catch (error) {
+    fail(res, error, 'review');
+  }
+};
+
+/**
+ * Every recorded outcome is a 200 with `outcome`; refused requests are 4xx/5xx.
+ * The body must carry the hash of the payload the person reviewed.
+ */
+export const submitTemplateHandler = async (req: Request, res: Response) => {
+  const hash = req.body && typeof req.body === 'object' ? (req.body as any).confirmPayloadHash : undefined;
+  try {
+    res.json(
+      await submitTemplate(actorOf(req), req.params.id, {}, { requireConfirmation: true, confirmPayloadHash: typeof hash === 'string' && hash ? hash : undefined })
+    );
   } catch (error) {
     fail(res, error, 'submit');
   }

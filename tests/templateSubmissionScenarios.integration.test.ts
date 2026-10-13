@@ -236,7 +236,6 @@ describe('unsupported structures are refused by name, never silently dropped', (
   };
 
   for (const [field, value, pattern] of [
-    ['buttons', [{ type: 'URL', text: 'RSVP', url: 'https://example.com' }], /Buttons are not supported/],
     ['headerFormat', 'IMAGE', /Image, video and document headers are not supported/],
     ['headerMedia', { id: 'x' }, /not supported/],
     ['components', [{ type: 'BODY', text: 'Hi' }], /raw components are not accepted/],

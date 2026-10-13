@@ -71,6 +71,22 @@ export const buildMetaCreatePayload = (template: ValidatedTemplate) => {
 
   if (template.footer) components.push({ type: 'FOOTER', text: template.footer });
 
+  // [Meta: components - BUTTONS] one component holding the buttons, after the
+  // footer. Only fields Meta documents for these types are sent: no example,
+  // because the links here are fixed and have no variable.
+  if (template.buttons.length > 0) {
+    components.push({
+      type: 'BUTTONS',
+      buttons: template.buttons.map((b) =>
+        b.type === 'URL'
+          ? { type: 'URL', text: b.text, url: b.url }
+          : b.type === 'PHONE_NUMBER'
+            ? { type: 'PHONE_NUMBER', text: b.text, phone_number: b.phoneNumber }
+            : { type: 'QUICK_REPLY', text: b.text }
+      ),
+    });
+  }
+
   return {
     name: template.name,
     language: template.language,

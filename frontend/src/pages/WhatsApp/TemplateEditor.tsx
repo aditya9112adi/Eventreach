@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle, Info, Lock, Save, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Info, Lock, Plus, Save, ShieldAlert, Trash2 } from 'lucide-react';
 import api from '../../services/api';
 import { useAuth } from '../../store/authStore';
 import { useToast } from '../../components/ui/Toast';
 import { Button } from '../../components/ui/Button';
 import { useUnsavedChangesGuard } from '../../components/useUnsavedChangesGuard';
 import {
+  BUTTON_TYPE_LABELS,
   COMMON_TEMPLATE_LANGUAGES,
   EMPTY_FORM,
+  WHATSAPP_TEMPLATE_BUTTON_LIMITS,
+  addableButtonTypes,
+  emptyButtonRow,
   TEMPLATES_API,
   WHATSAPP_TEMPLATE_CATEGORIES,
   WHATSAPP_TEMPLATE_LIMITS,
@@ -25,6 +29,7 @@ import {
   toApiProblem,
   validateForm,
   type ApiProblem,
+  type ButtonRow,
   type TemplateForm,
   type TemplateView,
   type VariableRow,
@@ -226,6 +231,15 @@ const TemplateEditor = () => {
     );
   }
 
+  const setButtons = (buttons: ButtonRow[]) => {
+    setForm((f) => ({ ...f, buttons }));
+    setErrors((prev) => Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith('buttons'))));
+  };
+  const patchButton = (index: number, patch: Partial<ButtonRow>) => {
+    setForm((f) => ({ ...f, buttons: f.buttons.map((b, i) => (i === index ? { ...b, ...patch } : b)) }));
+    setErrors((prev) => Object.fromEntries(Object.entries(prev).filter(([key]) => key !== 'buttons' && !key.startsWith(`buttons[${index}]`))));
+  };
+
   const preview = renderPreview(form.body, form.variables, { blankGuestName: previewBlankGuest });
   const hasGuestName = form.variables.some((v) => v.source === 'guest.name');
 
@@ -379,6 +393,70 @@ const TemplateEditor = () => {
             </div>
           </section>
 
+          <section className="bg-surface rounded-xl border border-border p-5 space-y-4" aria-label="Buttons">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold text-foreground">Buttons (optional)</h3>
+                <p className="text-xs text-foreground/50">
+                  Up to {WHATSAPP_TEMPLATE_BUTTON_LIMITS.total} buttons: quick replies, up to {WHATSAPP_TEMPLATE_BUTTON_LIMITS.url} links and {WHATSAPP_TEMPLATE_BUTTON_LIMITS.phoneNumber} phone number.
+                  Put all quick replies together. Links are fixed addresses - no placeholders.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 justify-end">
+                {addableButtonTypes(form.buttons).map((type) => (
+                  <Button key={type} variant="secondary" type="button" onClick={() => setButtons([...form.buttons, emptyButtonRow(type)])}>
+                    <Plus className="w-4 h-4 mr-1" />{BUTTON_TYPE_LABELS[type]}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <FieldError message={errors.buttons} />
+            {form.buttons.length === 0 ? (
+              <p className="text-sm text-foreground/50 italic">No buttons.</p>
+            ) : (
+              <div className="space-y-3">
+                {form.buttons.map((button, index) => {
+                  const key = `buttons[${index}]`;
+                  return (
+                    <div key={index} className="rounded-lg border border-border/60 p-3 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-foreground/60">{BUTTON_TYPE_LABELS[button.type]}</span>
+                        <button type="button" className="text-foreground/50 hover:text-destructive" aria-label={`Remove button ${index + 1}`} onClick={() => setButtons(form.buttons.filter((_, i) => i !== index))}>
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className={`grid grid-cols-1 gap-3 ${button.type === 'QUICK_REPLY' ? '' : 'md:grid-cols-2'}`}>
+                        <div>
+                          <label className={labelClass} htmlFor={`btn-text-${index}`}>Button text</label>
+                          <input id={`btn-text-${index}`} className={inputClass} value={button.text} onChange={(e) => patchButton(index, { text: e.target.value })} maxLength={WHATSAPP_TEMPLATE_BUTTON_LIMITS.text + 10} />
+                          <div className="flex justify-between mt-1">
+                            <FieldError message={errors[`${key}.text`]} />
+                            <Counter value={button.text} limit={WHATSAPP_TEMPLATE_BUTTON_LIMITS.text} />
+                          </div>
+                        </div>
+                        {button.type === 'URL' && (
+                          <div>
+                            <label className={labelClass} htmlFor={`btn-url-${index}`}>Address</label>
+                            <input id={`btn-url-${index}`} className={inputClass} value={button.url} onChange={(e) => patchButton(index, { url: e.target.value })} placeholder="https://example.com/rsvp" />
+                            <FieldError message={errors[`${key}.url`]} />
+                          </div>
+                        )}
+                        {button.type === 'PHONE_NUMBER' && (
+                          <div>
+                            <label className={labelClass} htmlFor={`btn-phone-${index}`}>Phone number</label>
+                            <input id={`btn-phone-${index}`} className={inputClass} value={button.phoneNumber} onChange={(e) => patchButton(index, { phoneNumber: e.target.value })} placeholder="+919876543210" />
+                            <FieldError message={errors[`${key}.phoneNumber`]} />
+                          </div>
+                        )}
+                      </div>
+                      <FieldError message={errors[`${key}.type`]} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
           <section className="bg-surface rounded-xl border border-border p-5 space-y-4">
             <div>
               <h3 className="font-semibold text-foreground">Placeholders</h3>
@@ -475,6 +553,13 @@ const TemplateEditor = () => {
             <p className="whitespace-pre-wrap break-words">{preview || <span className="text-black/40">Your message appears here.</span>}</p>
             {form.footer.trim() && <p className="text-xs text-black/50">{form.footer.trim()}</p>}
           </div>
+          {form.buttons.some((b) => b.text.trim()) && (
+            <div className="space-y-1" aria-label="Button preview">
+              {form.buttons.filter((b) => b.text.trim()).map((b, i) => (
+                <div key={i} className="rounded-lg bg-white text-[#027eb5] text-sm text-center py-2 shadow-sm">{b.text.trim()}</div>
+              ))}
+            </div>
+          )}
           <p className="text-[11px] text-foreground/40">Shown with the example values. Each guest receives their own details.</p>
         </aside>
       </div>

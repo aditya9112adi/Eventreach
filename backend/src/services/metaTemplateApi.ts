@@ -175,6 +175,100 @@ export const findMetaTemplatesByName = async (name: string, deps: MetaTemplateAp
     }));
 };
 
+// ── account listing ─────────────────────────────────────────────────────────
+
+/** One template of the account, as Meta lists it. Only what the UI shows. */
+export interface MetaAccountTemplate extends MetaTemplateStatusNode {
+  headerFormat: string | null;
+  headerText: string | null;
+  bodyText: string | null;
+  footerText: string | null;
+  buttons: { type: string; text: string }[];
+}
+
+export const ACCOUNT_PAGE_SIZE_DEFAULT = 25;
+export const ACCOUNT_PAGE_SIZE_MAX = 100;
+/**
+ * Meta's paging cursors are opaque base64-like strings. One is only ever passed
+ * back from a previous answer, so anything of another shape is refused rather
+ * than forwarded into a request.
+ */
+export const META_CURSOR_PATTERN = /^[A-Za-z0-9+/=_.-]{1,512}$/;
+
+const clip = (value: unknown, max: number): string | null => (typeof value === 'string' ? value.slice(0, max) : null);
+
+const summarizeAccountTemplate = (t: any): MetaAccountTemplate | null => {
+  const idOk = typeof t?.id === 'string' || typeof t?.id === 'number';
+  if (!idOk || typeof t?.name !== 'string' || typeof t?.language !== 'string') return null;
+  const components: any[] = Array.isArray(t.components) ? t.components : [];
+  const part = (type: string) => components.find((c) => c?.type === type);
+  const header = part('HEADER');
+  const buttons: any[] = Array.isArray(part('BUTTONS')?.buttons) ? part('BUTTONS').buttons : [];
+  return {
+    id: String(t.id),
+    name: t.name.slice(0, 512),
+    language: t.language.slice(0, 20),
+    status: typeof t.status === 'string' ? t.status : null,
+    category: typeof t.category === 'string' ? t.category : null,
+    rejectedReason: typeof t.rejected_reason === 'string' ? t.rejected_reason : null,
+    headerFormat: clip(header?.format, 20),
+    headerText: clip(header?.text, 1024),
+    bodyText: clip(part('BODY')?.text, 1100),
+    footerText: clip(part('FOOTER')?.text, 120),
+    // Type and label only: a link's address and a phone number are not needed to list.
+    buttons: buttons.filter((b) => typeof b?.type === 'string').map((b) => ({ type: String(b.type).slice(0, 30), text: clip(b.text, 60) ?? '' })),
+  };
+};
+
+/**
+ * One page of the account's templates [Meta: GET /{WABA_ID}/message_templates,
+ * fields id,name,language,status,category,components, cursor paging with
+ * `after`]. A read: nothing is created or changed. An entry that does not look
+ * like a template is skipped and counted, never guessed at. The next cursor is
+ * returned only when Meta says there is a next page.
+ */
+export const listMetaTemplates = async (
+  options: { after?: string | null; limit?: number } = {},
+  deps: MetaTemplateApiDeps = {}
+): Promise<{ templates: MetaAccountTemplate[]; nextCursor: string | null; skipped: number }> => {
+  if (options.after && !META_CURSOR_PATTERN.test(options.after)) {
+    throw new MetaTemplateApiError('CONFIGURATION', 'The page cursor is not valid.');
+  }
+  const connection = requireConnection(deps);
+  const get = deps.get ?? (axios.get as unknown as MetaHttpGet);
+  const limit = Math.min(Math.max(Math.trunc(options.limit ?? ACCOUNT_PAGE_SIZE_DEFAULT) || ACCOUNT_PAGE_SIZE_DEFAULT, 1), ACCOUNT_PAGE_SIZE_MAX);
+
+  let data: any;
+  try {
+    const response = await get(graphUrl(connection, `${connection.wabaId}/message_templates`), {
+      headers: { Authorization: `Bearer ${connection.accessToken}` },
+      params: {
+        fields: 'id,name,language,status,category,rejected_reason,components',
+        limit: String(limit),
+        ...(options.after ? { after: options.after } : {}),
+      },
+      timeout: REQUEST_TIMEOUT_MS,
+    });
+    data = response?.data;
+  } catch (error: any) {
+    throw classify(error, connection.accessToken, 'list');
+  }
+
+  if (!Array.isArray(data?.data)) {
+    throw new MetaTemplateApiError('AMBIGUOUS', 'WhatsApp returned a template list that could not be read.');
+  }
+  const templates: MetaAccountTemplate[] = [];
+  let skipped = 0;
+  for (const entry of data.data) {
+    const summary = summarizeAccountTemplate(entry);
+    if (summary) templates.push(summary);
+    else skipped += 1;
+  }
+  const after = data?.paging?.cursors?.after;
+  const nextCursor = data?.paging?.next && typeof after === 'string' && META_CURSOR_PATTERN.test(after) ? after : null;
+  return { templates, nextCursor, skipped };
+};
+
 /** Meta template ids are numeric strings. */
 export const META_TEMPLATE_ID_PATTERN = /^\d{1,30}$/;
 

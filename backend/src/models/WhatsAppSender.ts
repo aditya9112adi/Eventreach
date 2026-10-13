@@ -9,6 +9,8 @@ export interface IWhatsAppSender extends Document {
   metaStatus: string | null;
   listedInMeta: boolean;
   enabled: boolean;
+  /** Designated by a Super Admin for POC test messages (services/pocTestSendService). Off for every sender until set. */
+  pocTestEnabled: boolean;
   label?: string;
   allowedAdminIds: Schema.Types.ObjectId[];
   lastSyncedAt?: Date;
@@ -27,6 +29,8 @@ const WhatsAppSenderSchema = new Schema<IWhatsAppSender>({
   listedInMeta: { type: Boolean, default: true, index: true },
   // Newly discovered numbers must never be eligible to send until explicitly enabled.
   enabled: { type: Boolean, default: false, index: true },
+  // Never set by sync: a number becomes a POC test sender only when a Super Admin says so.
+  pocTestEnabled: { type: Boolean, default: false, index: true },
   label: { type: String, trim: true, maxlength: 100 },
   allowedAdminIds: [{ type: Schema.Types.ObjectId, ref: 'Admin' }],
   lastSyncedAt: Date,

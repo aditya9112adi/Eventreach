@@ -557,6 +557,7 @@ export interface TemplateDraftInput {
   body?: unknown;
   footer?: unknown;
   variables?: unknown;
+  buttons?: unknown;
 }
 
 export interface ValidatedTemplateVariable {
@@ -578,6 +579,7 @@ export interface ValidatedTemplate {
   body: string;
   footer: string | null;
   variables: ValidatedTemplateVariable[];
+  buttons: ValidatedTemplateButton[];
 }
 
 // ── placeholders ────────────────────────────────────────────────────────────
@@ -635,9 +637,115 @@ const badParameterText = (value: string): boolean => /[\n\r\t]/.test(value) || /
  * Validates a template definition. Returns every problem at once, each tied to
  * the field the editor shows it beside.
  */
+// ── buttons ─────────────────────────────────────────────────────────────────
+
+/**
+ * The button types this editor can build and the send path can fill: a quick
+ * reply, a static link and a phone number. Field names and limits are Meta's
+ * [Meta: message template components - BUTTONS]: QUICK_REPLY {text}, URL
+ * {text, url}, PHONE_NUMBER {text, phone_number}; text up to 25 characters, a
+ * URL up to 2000, a phone number up to 20; at most 10 buttons, 2 URL and 1
+ * phone number; quick replies and the other types form two groups.
+ *
+ * Not offered, and refused by name: a link whose URL ends in a {{variable}}
+ * and a copy-code button. Both need a parameter at send time that the send
+ * path does not build, so a template using one could never be sent from here.
+ */
+export const WHATSAPP_TEMPLATE_BUTTON_TYPES = ['QUICK_REPLY', 'URL', 'PHONE_NUMBER'] as const;
+export type WhatsAppTemplateButtonType = (typeof WHATSAPP_TEMPLATE_BUTTON_TYPES)[number];
+
+export const WHATSAPP_TEMPLATE_BUTTON_LIMITS = {
+  total: 10, // [Meta]
+  quickReply: 10, // [Meta]
+  url: 2, // [Meta]
+  phoneNumber: 1, // [Meta]
+  text: 25, // [Meta]
+  urlLength: 2000, // [Meta]
+  phoneLength: 20, // [Meta]
+} as const;
+
+export interface TemplateButtonInput {
+  type?: unknown;
+  text?: unknown;
+  url?: unknown;
+  phoneNumber?: unknown;
+}
+
+export interface ValidatedTemplateButton {
+  type: WhatsAppTemplateButtonType;
+  text: string;
+  /** URL buttons only: an https address with no variable. */
+  url?: string;
+  /** Phone-number buttons only: international format, "+" and digits. */
+  phoneNumber?: string;
+}
+
+const E164_PHONE = /^\+[1-9]\d{6,14}$/;
+
+const validateTemplateButtons = (raw: unknown, fail: (field: string, message: string) => void): ValidatedTemplateButton[] => {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    fail('buttons', 'Buttons must be a list.');
+    return [];
+  }
+  const L = WHATSAPP_TEMPLATE_BUTTON_LIMITS;
+  if (raw.length > L.total) fail('buttons', `A template can have at most ${L.total} buttons.`);
+
+  const buttons: ValidatedTemplateButton[] = [];
+  const kinds: string[] = [];
+  raw.forEach((entry: any, i) => {
+    const field = `buttons[${i}]`;
+    const type = text(entry?.type).toUpperCase();
+    if (!(WHATSAPP_TEMPLATE_BUTTON_TYPES as readonly string[]).includes(type)) {
+      fail(`${field}.type`, type === 'COPY_CODE' ? 'Copy-code buttons are not supported yet.' : 'Choose Quick reply, Link or Phone number.');
+      return;
+    }
+    kinds.push(type);
+    let valid = true;
+    const bad = (key: string, message: string) => { valid = false; fail(`${field}.${key}`, message); };
+
+    const label = text(entry?.text);
+    if (!label) bad('text', 'Button text is required.');
+    else if (label.length > L.text) bad('text', `Button text must be at most ${L.text} characters.`);
+    else if (/[\n\r\t]/.test(label) || label.includes('{{') || label.includes('}}')) bad('text', 'Button text cannot contain line breaks or placeholders.');
+
+    let url: string | undefined;
+    let phoneNumber: string | undefined;
+    if (type === 'URL') {
+      const value = text(entry?.url);
+      if (!value) bad('url', 'Enter the address the button opens.');
+      else if (value.includes('{{') || value.includes('}}')) bad('url', 'A link with a variable is not supported yet. Use a fixed address.');
+      else if (value.length > L.urlLength) bad('url', `The address must be at most ${L.urlLength} characters.`);
+      else {
+        let parsed: URL | null = null;
+        try { parsed = new URL(value); } catch { parsed = null; }
+        if (!parsed || /\s/.test(value)) bad('url', 'Enter a complete address such as https://example.com/rsvp.');
+        else if (parsed.protocol !== 'https:') bad('url', 'The address must start with https://.');
+        else if (parsed.username || parsed.password) bad('url', 'The address cannot contain a user name or password.');
+        else url = value;
+      }
+    } else if (type === 'PHONE_NUMBER') {
+      const value = text(entry?.phoneNumber).replace(/[\s()-]/g, '');
+      if (!value) bad('phoneNumber', 'Enter the number the button calls.');
+      else if (value.length > L.phoneLength || !E164_PHONE.test(value)) bad('phoneNumber', 'Enter the number in international format, for example +919876543210.');
+      else phoneNumber = value;
+    }
+    if (valid) buttons.push({ type: type as WhatsAppTemplateButtonType, text: label, ...(url ? { url } : {}), ...(phoneNumber ? { phoneNumber } : {}) });
+  });
+
+  const count = (kind: string) => kinds.filter((k) => k === kind).length;
+  if (count('QUICK_REPLY') > L.quickReply) fail('buttons', `A template can have at most ${L.quickReply} quick replies.`);
+  if (count('URL') > L.url) fail('buttons', `A template can have at most ${L.url} link buttons.`);
+  if (count('PHONE_NUMBER') > L.phoneNumber) fail('buttons', `A template can have at most ${L.phoneNumber} phone number button.`);
+  // [Meta] quick replies and the other types form two groups, in either order.
+  const isQuick = kinds.map((k) => k === 'QUICK_REPLY');
+  const switches = isQuick.filter((q, i) => i > 0 && q !== isQuick[i - 1]).length;
+  if (switches > 1) fail('buttons', 'Put all quick replies together: before, or after, the link and phone number buttons.');
+  return buttons;
+};
+
 /** Template structures not supported yet, and how a request for each is refused. */
 export const UNSUPPORTED_TEMPLATE_FIELDS: readonly (readonly [string, string])[] = [
-  ['buttons', 'Buttons are not supported yet. Remove them to create this template here.'],
   ['components', 'Send the header, body and footer as separate fields; raw components are not accepted.'],
   ['headerFormat', 'Only a text header is supported. Image, video and document headers are not supported yet.'],
   ['headerType', 'Only a text header is supported. Image, video and document headers are not supported yet.'],
@@ -782,6 +890,8 @@ export const validateTemplateDraft = (
     }
   }
 
+  const buttons = validateTemplateButtons(input.buttons, fail);
+
   if (errors.length > 0) return { value: null, errors };
   return {
     value: {
@@ -794,6 +904,7 @@ export const validateTemplateDraft = (
       body,
       footer,
       variables,
+      buttons,
     },
     errors: [],
   };

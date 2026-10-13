@@ -45,7 +45,7 @@ const { WhatsAppSender } = require('../backend/dist/models/WhatsAppSender');
 
 /** Everything an Admin needs from a sender, and nothing more. */
 const ADMIN_FIELDS = ['_id', 'isEnvironmentSender', 'displayPhoneNumber', 'label', 'lastSyncedAt', 'listedInMeta', 'enabled', 'metaStatus', 'phoneNumberId', 'qualityRating', 'statusCheckedAt', 'verifiedName'].sort();
-const SUPER_ONLY = ['allowedAdminIds', 'wabaId'];
+const SUPER_ONLY = ['allowedAdminIds', 'pocTestEnabled', 'wabaId'];
 
 let server: any;
 let baseUrl = '';

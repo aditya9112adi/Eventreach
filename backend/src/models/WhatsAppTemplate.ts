@@ -31,6 +31,13 @@ export interface TemplateVariableMapping {
   sample: string;
 }
 
+export interface TemplateButton {
+  type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER';
+  text: string;
+  url?: string;
+  phoneNumber?: string;
+}
+
 export interface TemplateHistoryEntry {
   at: Date;
   type: string;
@@ -56,6 +63,7 @@ export interface IWhatsAppTemplate extends Document {
   body: string;
   footer: string | null;
   variables: TemplateVariableMapping[];
+  buttons: TemplateButton[];
   localState: TemplateLocalState;
   metaTemplateId: string | null;
   metaStatus: string | null;
@@ -80,6 +88,17 @@ const variableSchema = new Schema<TemplateVariableMapping>(
     fixedValue: { type: String, trim: true, maxlength: 1024 },
     fallback: { type: String, trim: true, maxlength: 1024 },
     sample: { type: String, required: true, trim: true, maxlength: 1024 },
+  },
+  { _id: false }
+);
+
+// What Meta allows is validated in @eventreach/shared before anything is stored.
+const buttonSchema = new Schema<TemplateButton>(
+  {
+    type: { type: String, required: true, enum: ['QUICK_REPLY', 'URL', 'PHONE_NUMBER'] },
+    text: { type: String, required: true, trim: true, maxlength: 25 },
+    url: { type: String, trim: true, maxlength: 2000 },
+    phoneNumber: { type: String, trim: true, maxlength: 20 },
   },
   { _id: false }
 );
@@ -114,6 +133,7 @@ const whatsAppTemplateSchema = new Schema<IWhatsAppTemplate>(
     body: { type: String, required: true, maxlength: 1024 },
     footer: { type: String, default: null, maxlength: 60 },
     variables: { type: [variableSchema], default: [] },
+    buttons: { type: [buttonSchema], default: [] },
     localState: { type: String, required: true, enum: TEMPLATE_LOCAL_STATES, default: 'Draft' },
     metaTemplateId: { type: String, default: null },
     metaStatus: { type: String, default: null },

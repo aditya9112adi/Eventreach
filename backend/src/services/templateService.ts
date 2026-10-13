@@ -20,6 +20,8 @@ import {
   createMetaTemplate,
   findMetaTemplatesByName,
   getMetaTemplateById,
+  listMetaTemplates,
+  META_CURSOR_PATTERN,
   META_TEMPLATE_ID_PATTERN,
   MetaTemplateApiError,
   type MetaTemplateApiDeps,
@@ -192,6 +194,7 @@ const definitionOf = (t: IWhatsAppTemplate): TemplateDraftInput => ({
   body: t.body,
   footer: t.footer,
   variables: (t.variables || []).map((v: any) => ({ ...(v.toObject ? v.toObject() : v) })),
+  buttons: (t.buttons || []).map((b: any) => ({ ...(b.toObject ? b.toObject() : b) })),
 });
 
 /** Meta's error, as a sentence a client can act on. Already scrubbed of the token. */
@@ -219,6 +222,7 @@ export const toTemplateView = (t: IWhatsAppTemplate | any, viewer?: TemplateActo
     body: o.body,
     footer: o.footer ?? null,
     variables: o.variables ?? [],
+    buttons: o.buttons ?? [],
     localState: o.localState,
     metaTemplateId: o.metaTemplateId ?? null,
     metaStatus: o.metaStatus ?? null,
@@ -288,7 +292,7 @@ export const updateTemplateDraft = async (caller: TemplateActor, id: unknown, in
   }
 
   const merged: TemplateDraftInput = { ...definitionOf(existing) };
-  for (const key of ['displayName', 'name', 'language', 'category', 'allowCategoryChange', 'headerText', 'body', 'footer', 'variables'] as const) {
+  for (const key of ['displayName', 'name', 'language', 'category', 'allowCategoryChange', 'headerText', 'body', 'footer', 'variables', 'buttons'] as const) {
     if (input[key] !== undefined) (merged as any)[key] = input[key];
   }
   const value = requireValid(merged);
@@ -401,7 +405,66 @@ const viewOf = async (id: any, viewer?: TemplateActor) => toTemplateView(await W
 const finishAttempt = (id: any, attemptId: string, set: Record<string, any>, entry: ReturnType<typeof historyEntry>) =>
   WhatsAppTemplate.updateOne({ _id: id, localState: 'Submitting', 'submission.attemptId': attemptId }, { $set: set, $push: pushHistory(entry) });
 
-export const submitTemplate = async (caller: TemplateActor, id: unknown, deps: TemplateServiceDeps = {}): Promise<SubmissionResult> => {
+/**
+ * The hash of exactly what would be sent to Meta. The review shows it with the
+ * payload; a submission that carries it can only send that payload, so what
+ * the person reviewed is what is sent.
+ */
+export const payloadHashOf = (payload: unknown) => crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+
+export interface SubmissionReview {
+  template: ReturnType<typeof toTemplateView>;
+  /** The request body, exactly as it would be POSTed to Meta. Contains no credentials. */
+  payload: ReturnType<typeof buildMetaCreatePayload> | null;
+  payloadHash: string | null;
+  canSubmit: boolean;
+  blockers: string[];
+  errors?: FieldError[];
+}
+
+/**
+ * What submitting this template would send, built on the server from the
+ * stored definition. Read only: nothing is sent, claimed or changed. A
+ * template that cannot be submitted comes back with the reasons.
+ */
+export const reviewTemplateSubmission = async (caller: TemplateActor, id: unknown, deps: TemplateServiceDeps = {}): Promise<SubmissionReview> => {
+  const { template, actor } = await loadManageable(caller, id);
+  const view = toTemplateView(template, actor);
+  const blockers: string[] = [];
+
+  if (!EDITABLE_STATES.includes(template.localState)) {
+    blockers.push(
+      template.localState === 'Unknown'
+        ? 'The last submission had no clear answer from WhatsApp. Check its status before submitting again.'
+        : `This template has already been submitted (${template.localState}).`
+    );
+  }
+  const connection = connectionOf(deps);
+  if (!connection.accessToken || !connection.wabaId) blockers.push('WhatsApp template management is not configured on the server.');
+  else if (connection.wabaId !== template.wabaId) blockers.push('This template belongs to a different WhatsApp Business Account than the one configured.');
+
+  const { value, errors } = validateTemplateDraft(definitionOf(template));
+  if (!value) {
+    blockers.push('The template has problems that must be fixed first.');
+    return { template: view, payload: null, payloadHash: null, canSubmit: false, blockers, errors };
+  }
+  const payload = buildMetaCreatePayload(value);
+  return { template: view, payload, payloadHash: payloadHashOf(payload), canSubmit: blockers.length === 0, blockers };
+};
+
+export interface SubmitOptions {
+  /** The hash from the review. When given it must match what would be sent. */
+  confirmPayloadHash?: string;
+  /** The HTTP route sets this: a submission without a reviewed hash is refused. */
+  requireConfirmation?: boolean;
+}
+
+export const submitTemplate = async (
+  caller: TemplateActor,
+  id: unknown,
+  deps: TemplateServiceDeps = {},
+  options: SubmitOptions = {}
+): Promise<SubmissionResult> => {
   const { template, actor } = await loadManageable(caller, id);
 
   if (!EDITABLE_STATES.includes(template.localState)) {
@@ -421,6 +484,13 @@ export const submitTemplate = async (caller: TemplateActor, id: unknown, deps: T
   }
   if (connection.wabaId !== template.wabaId) {
     throw new TemplateServiceError('ACCOUNT_MISMATCH', 'This template belongs to a different WhatsApp Business Account than the one configured.', 409);
+  }
+  const payload = buildMetaCreatePayload(value);
+  if (options.requireConfirmation && !options.confirmPayloadHash) {
+    throw new TemplateServiceError('CONFIRMATION_REQUIRED', 'Review the payload and confirm it before submitting.', 400);
+  }
+  if (options.confirmPayloadHash && options.confirmPayloadHash !== payloadHashOf(payload)) {
+    throw new TemplateServiceError('PAYLOAD_CHANGED', 'The template changed after it was reviewed. Review the payload again before submitting.', 409);
   }
 
   const now = nowOf(deps);
@@ -446,7 +516,7 @@ export const submitTemplate = async (caller: TemplateActor, id: unknown, deps: T
   if (!claimed) throw new TemplateServiceError('SUBMISSION_IN_PROGRESS', 'This template is already being submitted.', 409);
 
   try {
-    const created = await createMetaTemplate(buildMetaCreatePayload(value), metaDeps(deps));
+    const created = await createMetaTemplate(payload, metaDeps(deps));
     const localState = mapMetaStatus(created.status);
     await finishAttempt(
       claimed._id,
@@ -595,6 +665,84 @@ export const reconcileTemplate = async (caller: TemplateActor, id: unknown, deps
     }
     throw error;
   }
+};
+
+// ── the account's templates, as Meta lists them ─────────────────────────────
+
+/** A Meta failure while listing, as this API's error. Nothing is stored either way. */
+const listError = (error: MetaTemplateApiError): TemplateServiceError => {
+  switch (error.kind) {
+    case 'CONFIGURATION':
+      return new TemplateServiceError('CONFIGURATION_ERROR', error.message, 503);
+    case 'AUTHENTICATION':
+      return new TemplateServiceError('META_AUTH_ERROR', error.message, 502);
+    case 'RATE_LIMITED':
+      return new TemplateServiceError('RATE_LIMITED', "WhatsApp's rate limit was reached. Try again later.", 429);
+    case 'AMBIGUOUS':
+      return new TemplateServiceError('META_UNAVAILABLE', error.message, 502);
+    default:
+      return new TemplateServiceError('META_ERROR', `WhatsApp refused the request: ${error.message}`, 502);
+  }
+};
+
+export interface AccountTemplateListing {
+  templates: Array<Awaited<ReturnType<typeof listMetaTemplates>>['templates'][number] & { localTemplateId: string | null; sendableFromHere: boolean }>;
+  nextCursor: string | null;
+  skipped: number;
+  fetchedAt: string;
+}
+
+/**
+ * One page of the whole WhatsApp Business Account's templates, read from Meta
+ * on request - never on a timer. The account's templates are not all this
+ * person's, so only a Super Admin may see the list. Nothing is written: a
+ * listed status never changes a stored template. `sendableFromHere` is true
+ * only for a template EventReach also holds, in the Approved state, with
+ * Meta's own listed status APPROVED - the listing alone sends nothing.
+ */
+export const listAccountTemplates = async (
+  caller: TemplateActor,
+  query: { after?: unknown; limit?: unknown } = {},
+  deps: TemplateServiceDeps = {}
+): Promise<AccountTemplateListing> => {
+  const actor = await requireManager(caller);
+  if (!isSuperAdmin(actor)) {
+    throw new TemplateServiceError('ACCESS_DENIED', 'Only a Super Admin can browse every template of the WhatsApp Business Account.', 403);
+  }
+  if (query.after !== undefined && (typeof query.after !== 'string' || !META_CURSOR_PATTERN.test(query.after))) {
+    throw new TemplateServiceError('VALIDATION_ERROR', 'The page cursor is not valid.', 400);
+  }
+  const limit = query.limit === undefined ? undefined : Number(query.limit);
+  if (limit !== undefined && (!Number.isFinite(limit) || limit < 1)) {
+    throw new TemplateServiceError('VALIDATION_ERROR', 'The page size must be a positive number.', 400);
+  }
+  const connection = connectionOf(deps);
+  if (!connection.accessToken || !connection.wabaId) {
+    throw new TemplateServiceError('CONFIGURATION_ERROR', 'WhatsApp template management is not configured on the server.', 503);
+  }
+
+  let page;
+  try {
+    page = await listMetaTemplates({ after: query.after as string | undefined, limit }, metaDeps(deps));
+  } catch (error: any) {
+    if (error instanceof MetaTemplateApiError) throw listError(error);
+    throw error;
+  }
+
+  const local = await WhatsAppTemplate.find({ wabaId: connection.wabaId, metaTemplateId: { $in: page.templates.map((t) => t.id) } })
+    .select('_id metaTemplateId localState')
+    .lean();
+  const byMetaId = new Map(local.map((l: any) => [String(l.metaTemplateId), l]));
+
+  return {
+    templates: page.templates.map((t) => {
+      const match: any = byMetaId.get(t.id);
+      return { ...t, localTemplateId: match ? String(match._id) : null, sendableFromHere: Boolean(match && match.localState === 'Approved' && t.status === 'APPROVED') };
+    }),
+    nextCursor: page.nextCursor,
+    skipped: page.skipped,
+    fetchedAt: nowOf(deps).toISOString(),
+  };
 };
 
 // ── manual status refresh ───────────────────────────────────────────────────
