@@ -23,11 +23,66 @@ const parseConfigured = (): string[] =>
     .map((value) => value.trim().replace(/\/$/, ''))
     .filter(Boolean);
 
-/** Origins accepted by CORS and the Socket.IO handshake. */
+/**
+ * Extra exact origins that may call the API, from CORS_EXTRA_ORIGINS
+ * (comma-separated) - for example one Vercel preview deployment, whose address
+ * is not FRONTEND_URL. They are added to FRONTEND_URL (or the defaults) for CORS
+ * and Socket.IO only, and are never used to build email links.
+ *
+ * Each entry must be a bare origin the project controls: https (http only for
+ * localhost), no wildcard, no credentials, and no path, query or fragment. An
+ * entry that is not is ignored, never guessed at, and reported by position and
+ * reason only - its text is not echoed, in case it held something that should
+ * not be logged. There is deliberately no pattern support: allowing
+ * "*.vercel.app" would trust every site anyone hosts there.
+ */
+export const EXTRA_ORIGINS_ENV = 'CORS_EXTRA_ORIGINS';
+
+export interface ExtraOriginsReport {
+  /** The accepted origins, in canonical form (scheme://host[:port]), without duplicates. */
+  origins: string[];
+  /** Entries that were refused: 1-based position and why, never the entry itself. */
+  ignored: { position: number; reason: string }[];
+}
+
+const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+export const parseExtraOrigins = (raw: string | undefined): ExtraOriginsReport => {
+  const origins: string[] = [];
+  const ignored: ExtraOriginsReport['ignored'] = [];
+  (raw || '').split(',').forEach((entry, index) => {
+    const value = entry.trim().replace(/\/+$/, '');
+    if (!value) return; // a trailing comma is not an entry
+    const position = index + 1;
+    const ignore = (reason: string) => { ignored.push({ position, reason }); };
+
+    if (value.includes('*')) return ignore('wildcards are not allowed');
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      return ignore('not a valid URL');
+    }
+    const local = LOCAL_HOSTNAMES.has(url.hostname);
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) return ignore('must be https (http is allowed only for localhost)');
+    if (url.username || url.password || url.search || url.hash || url.pathname !== '/') {
+      return ignore('must be a bare origin: no credentials, path, query or fragment');
+    }
+    if (!origins.includes(url.origin)) origins.push(url.origin);
+  });
+  return { origins, ignored };
+};
+
+export const getExtraOriginsReport = (): ExtraOriginsReport => parseExtraOrigins(process.env[EXTRA_ORIGINS_ENV]);
+
+/**
+ * Origins accepted by CORS and the Socket.IO handshake: FRONTEND_URL (or the
+ * built-in defaults), then any extra origins from CORS_EXTRA_ORIGINS.
+ */
 export const getAllowedOrigins = (): string[] => {
   const configured = parseConfigured();
-  if (configured.length > 0) return configured;
-  return [DEV_FRONTEND_ORIGIN, PRODUCTION_FRONTEND_ORIGIN];
+  const base = configured.length > 0 ? configured : [DEV_FRONTEND_ORIGIN, PRODUCTION_FRONTEND_ORIGIN];
+  return [...base, ...getExtraOriginsReport().origins.filter((origin) => !base.includes(origin))];
 };
 
 /**
