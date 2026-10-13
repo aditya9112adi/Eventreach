@@ -4,14 +4,40 @@ import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { Button } from '../components/ui/Button';
 
+/**
+ * The server's WhatsApp connection, as GET /settings reports it: whether each
+ * credential is present, never its value. Credentials live in the server
+ * environment and are not edited on this page.
+ */
+interface WhatsAppConnectionStatus {
+  mode: 'live' | 'simulated';
+  configured: { accessToken: boolean; phoneNumberId: boolean; wabaId: boolean; appSecret: boolean; verifyToken: boolean };
+  apiVersion: string;
+  phoneNumberIdHint: string | null;
+  wabaIdHint: string | null;
+  legacyStoredSettings: string[];
+}
+
+const CONNECTION_ROWS: { key: keyof WhatsAppConnectionStatus['configured']; label: string }[] = [
+  { key: 'accessToken', label: 'Access token' },
+  { key: 'phoneNumberId', label: 'Sender Phone Number ID' },
+  { key: 'wabaId', label: 'WhatsApp Business Account ID' },
+  { key: 'appSecret', label: 'App secret (webhook signatures)' },
+  { key: 'verifyToken', label: 'Webhook verify token' },
+];
+
+/** The webhook is served by the API, not by this site. */
+const webhookUrl = (): string => {
+  const base = String(api.defaults.baseURL || '');
+  return /^https?:\/\//.test(base) ? `${base.replace(/\/$/, '')}/webhooks/whatsapp` : `${window.location.origin}/api/webhooks/whatsapp`;
+};
+
 const Settings = () => {
   const [settings, setSettings] = useState<Record<string, string>>({
-    whatsapp_token: '',
-    whatsapp_phone_id: '',
     default_country_code: '',
     company_name: '',
-    webhook_verify_token: ''
   });
+  const [connection, setConnection] = useState<WhatsAppConnectionStatus | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -20,7 +46,9 @@ const Settings = () => {
     const fetchSettings = async () => {
       try {
         const response = await api.get('/settings');
-        setSettings(prev => ({ ...prev, ...response.data }));
+        const { whatsappConnection, ...editable } = response.data ?? {};
+        setSettings(prev => ({ ...prev, ...editable }));
+        setConnection(whatsappConnection ?? null);
       } catch (error) {
         console.error('Failed to fetch settings', error);
       } finally {
@@ -115,7 +143,7 @@ const Settings = () => {
         </div>
       </div>
 
-      {/* WhatsApp API Settings */}
+      {/* WhatsApp connection: read-only. Credentials are set in the server environment. */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <div className="flex items-center mb-4">
           <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center mr-3">
@@ -123,77 +151,57 @@ const Settings = () => {
           </div>
           <div>
             <h3 className="text-lg font-semibold text-slate-900">WhatsApp Business API</h3>
-            <p className="text-sm text-slate-500">Connect to the official WhatsApp Cloud API</p>
-          </div>
-        </div>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Access Token</label>
-            <input
-              type="password"
-              value={settings.whatsapp_token}
-              onChange={(e) => handleChange('whatsapp_token', e.target.value)}
-              placeholder="Enter your WhatsApp Cloud API access token"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none font-mono"
-            />
-            <p className="mt-1 text-xs text-slate-400">
-              Get this from{' '}
-              <a href="https://developers.facebook.com" target="_blank" rel="noopener noreferrer" className="text-indigo-500 underline">
-                Meta for Developers
-              </a>
-              {' '}→ Your App → WhatsApp → API Setup.
+            <p className="text-sm text-slate-500">
+              Connection status. Credentials are configured on the server and are never shown or edited here.
             </p>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Phone Number ID</label>
-            <input
-              type="text"
-              value={settings.whatsapp_phone_id}
-              onChange={(e) => handleChange('whatsapp_phone_id', e.target.value)}
-              placeholder="e.g. 123456789012345"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none font-mono"
-            />
-          </div>
         </div>
-      </div>
-
-      {/* Webhook Settings */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-        <div className="flex items-center mb-4">
-          <div className="w-10 h-10 rounded-full bg-amber-50 flex items-center justify-center mr-3">
-            <Key className="w-5 h-5 text-amber-600" />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-slate-900">Webhook (Optional)</h3>
-            <p className="text-sm text-slate-500">For receiving delivery status callbacks</p>
-          </div>
-        </div>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Verify Token</label>
-            <input
-              type="text"
-              value={settings.webhook_verify_token}
-              onChange={(e) => handleChange('webhook_verify_token', e.target.value)}
-              placeholder="A custom token for webhook verification"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none font-mono"
-            />
-          </div>
-          <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
-            <div className="flex items-start">
-              <Globe className="w-5 h-5 text-slate-400 mr-2 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="text-sm text-slate-600 font-medium">Webhook URL</p>
-                <p className="text-xs text-slate-400 mt-1 font-mono break-all">
-                  {window.location.origin}/api/webhooks/whatsapp
-                </p>
-                <p className="text-xs text-slate-400 mt-1">
-                  Configure this URL in your Meta App's WhatsApp webhook settings to receive delivery status updates.
-                </p>
+        {connection ? (
+          <div className="space-y-4">
+            <p className="text-sm">
+              <span className="font-medium text-slate-700">Mode: </span>
+              {connection.mode === 'live' ? (
+                <span className="text-green-700 font-medium">Live</span>
+              ) : (
+                <span className="text-amber-700 font-medium">Simulated: messages are not really sent</span>
+              )}
+              <span className="text-slate-400"> · Graph API {connection.apiVersion}</span>
+            </p>
+            <ul className="divide-y divide-slate-100 border border-slate-200 rounded-lg">
+              {CONNECTION_ROWS.map((row) => (
+                <li key={row.key} className="flex items-center justify-between px-3 py-2 text-sm">
+                  <span className="text-slate-700">{row.label}</span>
+                  <span className={connection.configured[row.key] ? 'text-green-700' : 'text-red-600'}>
+                    {connection.configured[row.key] ? 'Configured' : 'Not configured'}
+                    {row.key === 'phoneNumberId' && connection.phoneNumberIdHint ? ` (${connection.phoneNumberIdHint})` : ''}
+                    {row.key === 'wabaId' && connection.wabaIdHint ? ` (${connection.wabaIdHint})` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {connection.legacyStoredSettings.length > 0 && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                Credentials entered on this page in the past are still stored in the database. They were never
+                used to send messages. Ask the deployment administrator to remove them and rotate any token that
+                was entered.
+              </p>
+            )}
+            <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+              <div className="flex items-start">
+                <Globe className="w-5 h-5 text-slate-400 mr-2 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-sm text-slate-600 font-medium">Webhook URL</p>
+                  <p className="text-xs text-slate-400 mt-1 font-mono break-all">{webhookUrl()}</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Configure this URL in your Meta App's WhatsApp webhook settings to receive delivery status updates.
+                  </p>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <p className="text-sm text-slate-500">Connection status is unavailable.</p>
+        )}
       </div>
 
       {/* Security — account password management for the signed-in Super Admin. */}

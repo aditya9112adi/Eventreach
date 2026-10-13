@@ -6,6 +6,7 @@ import DashboardLayout from './layouts/DashboardLayout';
 import { useLoader } from './components/ui/FullScreenLoader';
 import { PageWrapper } from './components/ui/PageWrapper';
 import { RoleRoute } from './components/RoleRoute';
+import { TemplateAccessRoute } from './components/TemplateAccessRoute';
 
 // Lazy loaded pages to reduce initial bundle size
 const Login = lazy(() => import('./pages/Login'));
@@ -29,6 +30,9 @@ const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const UserApprovals = lazy(() => import('./pages/Admin/UserApprovals'));
 const JustAccess = lazy(() => import('./pages/Admin/JustAccess'));
 const AuditLogs = lazy(() => import('./pages/Admin/AuditLogs'));
+const WhatsAppTemplates = lazy(() => import('./pages/WhatsApp/Templates'));
+const WhatsAppTemplateEditor = lazy(() => import('./pages/WhatsApp/TemplateEditor'));
+const WhatsAppTemplateDetail = lazy(() => import('./pages/WhatsApp/TemplateDetail'));
 
 const PageLoader = () => (
   <div className="flex items-center justify-center h-[60vh]">
@@ -86,6 +90,11 @@ function AnimatedRoutes() {
           <Route path="/campaigns/send-preview" element={<PageWrapper><SendPreview /></PageWrapper>} />
           <Route path="/campaigns/:campaignId/report" element={<PageWrapper><CampaignReport /></PageWrapper>} />
           <Route path="/reports" element={<PageWrapper><Reports /></PageWrapper>} />
+          {/* WhatsApp templates: Super Admins, and Admins granted access. The API checks every request. */}
+          <Route path="/whatsapp/templates" element={<PageWrapper><TemplateAccessRoute><WhatsAppTemplates /></TemplateAccessRoute></PageWrapper>} />
+          <Route path="/whatsapp/templates/new" element={<PageWrapper><TemplateAccessRoute><WhatsAppTemplateEditor /></TemplateAccessRoute></PageWrapper>} />
+          <Route path="/whatsapp/templates/:id" element={<PageWrapper><TemplateAccessRoute><WhatsAppTemplateDetail /></TemplateAccessRoute></PageWrapper>} />
+          <Route path="/whatsapp/templates/:id/edit" element={<PageWrapper><TemplateAccessRoute><WhatsAppTemplateEditor /></TemplateAccessRoute></PageWrapper>} />
           <Route path="/change-password" element={<PageWrapper><ChangePassword /></PageWrapper>} />
           <Route
             path="/settings"

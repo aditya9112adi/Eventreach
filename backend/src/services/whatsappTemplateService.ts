@@ -27,9 +27,9 @@ const DEFAULT_API_VERSION = 'v22.0';
 const REQUEST_TIMEOUT_MS = 30_000;
 
 /** Meta template names: lowercase letters, digits and underscores. */
-const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
+export const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 /** Language codes as Meta uses them: "en", "en_US", "pt_BR", "fil". */
-const LANGUAGE_CODE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2,3})?$/;
+export const LANGUAGE_CODE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2,3})?$/;
 const MAX_VARIABLES = 100;
 const MAX_VARIABLE_LENGTH = 1024;
 
@@ -313,7 +313,7 @@ const scrub = (text: unknown, secret?: string): string | undefined => {
   return secret ? text.split(secret).join('[REDACTED]') : text;
 };
 
-const safeMetaError = (metaError: any, secret?: string): SafeMetaError => ({
+export const safeMetaError = (metaError: any, secret?: string): SafeMetaError => ({
   ...(typeof metaError?.code === 'number' ? { code: metaError.code } : {}),
   ...(typeof metaError?.error_subcode === 'number' ? { subcode: metaError.error_subcode } : {}),
   ...(typeof metaError?.type === 'string' ? { type: metaError.type } : {}),

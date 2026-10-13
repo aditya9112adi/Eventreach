@@ -8,11 +8,12 @@ import {
   assignUserEvent,
   getSystemHealth,
   adminResetUserPassword,
+  setWhatsAppTemplateAccess,
 } from '../controllers/adminController';
 import { getAccessReport } from '../controllers/accessReportController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { requireRole } from '../middleware/roleMiddleware';
-import { passwordResetLimiter } from '../middleware/rateLimitMiddleware';
+import { passwordResetLimiter, actionLimiter } from '../middleware/rateLimitMiddleware';
 
 const router = Router();
 
@@ -34,6 +35,10 @@ router.put(
   passwordResetLimiter,
   adminResetUserPassword
 );
+
+// Grant or revoke an Admin's permission to manage WhatsApp templates. Super
+// Admin only; audited in the controller.
+router.put('/admins/:id/whatsapp-template-access', requireRole('SuperAdmin'), actionLimiter, setWhatsAppTemplateAccess);
 
 // Deployment configuration diagnostic (booleans only, never secret values).
 router.get('/system-health', requireRole('SuperAdmin'), getSystemHealth);

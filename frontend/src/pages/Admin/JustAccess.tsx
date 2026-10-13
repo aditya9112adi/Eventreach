@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import type { User, Event } from '@eventreach/shared';
 import api from '../../services/api';
-import { ShieldAlert, Trash2, Clock, CalendarDays, Key, Download, Search, Filter, Edit3, Calendar, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
+import { ShieldAlert, Trash2, Clock, CalendarDays, Key, Download, Search, Filter, Edit3, Calendar, Eye, EyeOff, CheckCircle2, FileText } from 'lucide-react';
 import { useLoader } from '../../components/ui/FullScreenLoader';
 import { useAuth } from '../../store/authStore';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getAccessStatus } from '../../utils/accessStatus';
 import { formatEventType } from '../../utils/eventType';
+import { applyTemplateAccess, templateAccessControl, templateAccessUrl } from '../../utils/whatsappTemplates';
 import { getSerialNumber } from '../../utils/pagination';
 import { PASSWORD_REQUIREMENTS, validatePassword } from '@eventreach/shared';
 import { meetsRequirement } from '../../utils/passwordRequirements';
@@ -32,6 +33,10 @@ const JustAccess = () => {
 
   // The backend enforces this too; the flag only decides whether to draw it.
   const isSuperAdmin = currentAuthUser?.role === 'SuperAdmin';
+
+  // WhatsApp template management, granted per Admin by a Super Admin.
+  const [templateAccessToRevoke, setTemplateAccessToRevoke] = useState<any | null>(null);
+  const [templateAccessPending, setTemplateAccessPending] = useState<string | null>(null);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState('All');
@@ -122,6 +127,40 @@ const JustAccess = () => {
       console.error('Failed to revoke access', error);
       await showError('Failed to revoke access');
     }
+  };
+
+  /**
+   * Grants or revokes WhatsApp template management. The row changes only to
+   * what the API answers - nothing is reported until the request succeeds.
+   */
+  const changeTemplateAccess = async (record: any, enabled: boolean) => {
+    setTemplateAccessPending(record._id);
+    showLoader(enabled ? 'Granting WhatsApp template access...' : 'Revoking WhatsApp template access...');
+    try {
+      const response = await api.put(templateAccessUrl(record._id), { enabled });
+      setRecords((prev) => applyTemplateAccess(prev as any[], response.data) as any);
+      await showSuccess(
+        enabled ? `WhatsApp template access granted to ${record.email}` : `WhatsApp template access revoked for ${record.email}`
+      );
+    } catch (err: any) {
+      await showError(err.response?.data?.error || 'Failed to change WhatsApp template access');
+    } finally {
+      setTemplateAccessPending(null);
+    }
+  };
+
+  const onTemplateAccessClick = (record: any) => {
+    const control = templateAccessControl(currentAuthUser, record);
+    if (!control.visible) return;
+    // Revoking asks first; granting does not.
+    if (control.needsConfirm) setTemplateAccessToRevoke(record);
+    else changeTemplateAccess(record, true);
+  };
+
+  const confirmRevokeTemplateAccess = async () => {
+    const record = templateAccessToRevoke;
+    setTemplateAccessToRevoke(null);
+    if (record) await changeTemplateAccess(record, false);
   };
 
   const openAssignModal = (userItem: any) => {
@@ -442,6 +481,22 @@ const JustAccess = () => {
                               <Calendar className="w-3 h-3 mr-1" /> Assign Event
                             </button>
                           )}
+                          {/* WhatsApp template management: Super Admin, Admin rows only. */}
+                          {templateAccessControl(currentAuthUser, record as any).visible && (
+                            <button
+                              onClick={() => onTemplateAccessClick(record)}
+                              disabled={templateAccessPending === (record as any)._id}
+                              aria-pressed={(record as any).canManageWhatsAppTemplates === true}
+                              title={(record as any).canManageWhatsAppTemplates === true ? 'Can manage WhatsApp templates. Click to revoke.' : 'Cannot manage WhatsApp templates. Click to grant.'}
+                              className={`inline-flex items-center px-2.5 py-1.5 font-bold uppercase tracking-wide text-[10px] rounded transition-colors disabled:opacity-50 ${
+                                (record as any).canManageWhatsAppTemplates === true
+                                  ? 'bg-accent/15 text-accent hover:bg-accent/25'
+                                  : 'bg-foreground/5 text-foreground/60 hover:bg-foreground/10'
+                              }`}
+                            >
+                              <FileText className="w-3 h-3 mr-1" /> Templates: {(record as any).canManageWhatsAppTemplates === true ? 'On' : 'Off'}
+                            </button>
+                          )}
                           {/* Account recovery: only a Super Admin may reset
                               another account, and never another Super Admin. */}
                           {isSuperAdmin && (record as any).role !== 'SuperAdmin' && (
@@ -577,6 +632,36 @@ const JustAccess = () => {
                 className="px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold transition-colors flex items-center"
               >
                 <Key className="w-4 h-4 mr-2" /> Reset Password
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Revoke WhatsApp Template Access Confirmation (Super Admin only) */}
+      {templateAccessToRevoke && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center" role="dialog" aria-modal="true">
+          <div className="bg-surface border border-border p-6 rounded-xl shadow-2xl max-w-md w-full mx-4 animate-spring-up">
+            <h3 className="text-xl font-bold mb-3 text-foreground flex items-center">
+              <FileText className="w-5 h-5 mr-2 text-amber-500" /> Revoke template access?
+            </h3>
+            <p className="text-foreground/70 mb-8 leading-relaxed text-sm">
+              <span className="font-bold text-foreground">{templateAccessToRevoke.email}</span> will no longer be able to create,
+              edit or submit WhatsApp templates, from their next request. Their existing templates are kept, and a Super Admin can
+              still manage them.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setTemplateAccessToRevoke(null)}
+                className="px-5 py-2.5 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-foreground font-medium transition-colors"
+              >
+                No, Cancel
+              </button>
+              <button
+                onClick={confirmRevokeTemplateAccess}
+                className="px-5 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 shadow-lg shadow-red-500/20 transition-colors"
+              >
+                Yes, Revoke
               </button>
             </div>
           </div>

@@ -19,7 +19,8 @@ import {
   PieChart,
   Shield,
   ShieldCheck,
-  KeyRound
+  KeyRound,
+  FileText
 } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
 import { useToast } from '../components/ui/Toast';
@@ -32,6 +33,7 @@ import {
   LOGOUT_BROADCAST_KEY,
   storeLogoutReason,
 } from '../utils/inactivity';
+import { canSeeTemplatesPage } from '../utils/whatsappTemplates';
 
 const DashboardLayout = () => {
   const { user, logout, updateUser } = useAuth();
@@ -238,6 +240,12 @@ const DashboardLayout = () => {
     { name: 'Message', to: '/campaigns', icon: Megaphone },
     { name: 'Reports', to: '/reports', icon: PieChart },
   ];
+
+  // Shown to a Super Admin and to an Admin granted template management. Only
+  // a convenience: the API refuses every template request from anyone else.
+  if (canSeeTemplatesPage(user)) {
+    navItems.splice(navItems.findIndex((item) => item.to === '/campaigns') + 1, 0, { name: 'WhatsApp Templates', to: '/whatsapp/templates', icon: FileText });
+  }
 
   if (user?.role === 'SuperAdmin') {
     navItems.push({ name: 'User Approvals', to: '/admin/approvals', icon: Users });

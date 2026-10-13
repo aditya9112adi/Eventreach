@@ -41,15 +41,29 @@ const isPlainObject = (v: any): boolean => {
  *   nested at any depth (e.g. inside mediaAttachments, or a bulk snapshot
  *   array) is handled the same way as one at the top level.
  */
-function sanitizeObject(obj: any): any {
+export const isSensitiveName = (name: string): boolean => {
+  const lower = name.toLowerCase();
+  return SENSITIVE_FIELDS.some((s) => lower.includes(s.toLowerCase()));
+};
+
+/**
+ * A key/value record whose key names a secret: a Settings document is
+ * `{ key: 'whatsapp_token', value: '<the token>' }`, so redacting by field name
+ * alone never reaches the secret - it sits in a field called `value`.
+ */
+const isSecretKeyValueRecord = (obj: Record<string, any>): boolean =>
+  typeof obj.key === 'string' && 'value' in obj && isSensitiveName(obj.key);
+
+export function sanitizeObject(obj: any): any {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj === 'bigint' || isBsonLong(obj)) return obj.toString();
   if (Array.isArray(obj)) return obj.map(sanitizeObject);
   if (!isPlainObject(obj)) return obj; // Date, ObjectId, Buffer, etc. — left intact
 
+  const secretValue = isSecretKeyValueRecord(obj);
   const sanitized: Record<string, any> = {};
   for (const key of Object.keys(obj)) {
-    if (SENSITIVE_FIELDS.includes(key.toLowerCase()) || SENSITIVE_FIELDS.some(s => key.toLowerCase().includes(s))) {
+    if (isSensitiveName(key) || (secretValue && key === 'value')) {
       sanitized[key] = '***REDACTED***';
     } else {
       sanitized[key] = sanitizeObject(obj[key]);

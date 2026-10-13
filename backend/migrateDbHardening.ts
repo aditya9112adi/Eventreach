@@ -614,6 +614,7 @@ async function main() {
         accessGrantedOn: dateOrNull, accessStartDate: dateOrNull, accessExpiryDate: dateOrNull,
         pendingAccessStartDate: dateOrNull, pendingAccessEndDate: dateOrNull,
         approvedAt: dateOrNull, rejectedAt: dateOrNull, passwordChangedAt: dateOrNull,
+        canManageWhatsAppTemplates: { bsonType: ['bool', 'null'] },
         createdAt: dateOrNull, updatedAt: dateOrNull,
       },
     }, 'strict'],

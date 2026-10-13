@@ -13,6 +13,8 @@ export interface User {
   assignedEventId?: string;
   assignedEventName?: string;
   adminId?: string;
+  /** Whether to show WhatsApp template management. The server re-checks every request. */
+  canManageWhatsAppTemplates?: boolean;
   createdAt: string;
 }
 
@@ -445,3 +447,367 @@ export const reportDayStart = (date: string): Date =>
 /** The last instant of `date` (YYYY-MM-DD), in report time. */
 export const reportDayEnd = (date: string): Date =>
   new Date(`${date}T23:59:59.999${REPORT_DAY_OFFSET}`);
+
+// ── WhatsApp message templates ───────────────────────────────────────────────
+// Validation shared by the template editor and the API, so the page and the
+// server can never disagree. The server validates again on every request.
+
+/** Meta template names: lowercase letters, digits and underscores (max 512). */
+export const WHATSAPP_TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
+/** Language codes as Meta uses them: "en", "en_US", "pt_BR", "fil". */
+export const WHATSAPP_LANGUAGE_CODE_PATTERN = /^[a-z]{2,3}(_[A-Z]{2,3})?$/;
+
+/**
+ * Offered first in the editor. Any other code of the right form is accepted;
+ * Meta itself refuses a language it does not support.
+ */
+export const COMMON_TEMPLATE_LANGUAGES: { code: string; label: string }[] = [
+  { code: 'en', label: 'English' },
+  { code: 'en_US', label: 'English (US)' },
+  { code: 'en_GB', label: 'English (UK)' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'mr', label: 'Marathi' },
+];
+
+/**
+ * WhatsApp template definitions: validation, and the payload Meta's
+ * `POST /{WABA_ID}/message_templates` takes. Pure - no database, no network.
+ *
+ * Rules marked [Meta] are Meta's documented ones (developers.facebook.com,
+ * message templates: components and guidelines, checked 2026-10-12). Rules
+ * marked [local] are EventReach's own, there so that a template can always be
+ * filled by the existing send path and nothing unresolved is ever sent.
+ */
+
+/**
+ * [Meta] UTILITY, MARKETING or AUTHENTICATION. Authentication templates have a
+ * fixed structure (one-time-password buttons) that this editor does not build,
+ * so they are not offered rather than offered and rejected.
+ */
+export const WHATSAPP_TEMPLATE_CATEGORIES = ['MARKETING', 'UTILITY'] as const;
+export type WhatsAppTemplateCategory = (typeof WHATSAPP_TEMPLATE_CATEGORIES)[number];
+
+export const WHATSAPP_TEMPLATE_STATES = [
+  'Draft',
+  'Submitting',
+  'Pending',
+  'Approved',
+  'Rejected',
+  'SubmissionFailed',
+  'Paused',
+  'Disabled',
+  'Unknown',
+  'Archived',
+  'Deleted',
+] as const;
+export type WhatsAppTemplateState = (typeof WHATSAPP_TEMPLATE_STATES)[number];
+
+/** Local states in which the definition can still be edited. */
+export const WHATSAPP_TEMPLATE_EDITABLE_STATES: readonly WhatsAppTemplateState[] = ['Draft', 'SubmissionFailed'];
+
+/**
+ * Where a placeholder's value comes from at send time. Always the selected
+ * event and the guest being messaged - never request data.
+ */
+export const WHATSAPP_TEMPLATE_VARIABLE_SOURCES = [
+  'guest.name',
+  'event.name',
+  'event.date',
+  'event.time',
+  'event.venue',
+  'event.type',
+  'event.organizer',
+  'event.description',
+  'fixed',
+] as const;
+export type WhatsAppTemplateVariableSource = (typeof WHATSAPP_TEMPLATE_VARIABLE_SOURCES)[number];
+
+export const WHATSAPP_TEMPLATE_LIMITS = {
+  displayName: 100,
+  name: 512, // [Meta]
+  headerText: 60, // [Meta]
+  body: 1024, // [Meta]
+  footer: 60, // [Meta]
+  variableLabel: 60,
+  variableValue: 1024, // matches the send path (whatsappTemplateService)
+  variables: 100, // matches the send path
+} as const;
+
+export interface TemplateFieldError {
+  field: string;
+  message: string;
+}
+
+export interface TemplateVariableInput {
+  position?: unknown;
+  label?: unknown;
+  source?: unknown;
+  fixedValue?: unknown;
+  fallback?: unknown;
+  sample?: unknown;
+}
+
+export interface TemplateDraftInput {
+  displayName?: unknown;
+  name?: unknown;
+  language?: unknown;
+  category?: unknown;
+  allowCategoryChange?: unknown;
+  headerText?: unknown;
+  body?: unknown;
+  footer?: unknown;
+  variables?: unknown;
+}
+
+export interface ValidatedTemplateVariable {
+  position: number;
+  label: string;
+  source: WhatsAppTemplateVariableSource;
+  fixedValue?: string;
+  fallback?: string;
+  sample: string;
+}
+
+export interface ValidatedTemplate {
+  displayName: string;
+  name: string;
+  language: string;
+  category: WhatsAppTemplateCategory;
+  allowCategoryChange: boolean;
+  headerText: string | null;
+  body: string;
+  footer: string | null;
+  variables: ValidatedTemplateVariable[];
+}
+
+// ── placeholders ────────────────────────────────────────────────────────────
+
+const POSITIONAL = /\{\{(\d+)\}\}/g;
+const NAMED = /\{\{\s*[a-z_][a-z0-9_]*\s*\}\}/i;
+
+export interface TemplatePlaceholderScan {
+  /** Positions in order of first appearance. */
+  positions: number[];
+  error: string | null;
+}
+
+/**
+ * [Meta] positional parameters are numbered from 1, in the order they appear.
+ * [local] exactly `{{1}}` (no spaces), no gaps, each used once, and no stray
+ * braces - a placeholder the send path cannot fill must never reach Meta.
+ */
+export const scanTemplatePlaceholders = (text: string): TemplatePlaceholderScan => {
+  const positions: number[] = [];
+  for (const match of text.matchAll(POSITIONAL)) positions.push(Number(match[1]));
+
+  const leftover = text.replace(POSITIONAL, '');
+  if (NAMED.test(leftover)) {
+    return { positions, error: 'Use numbered placeholders such as {{1}} and {{2}}. Named placeholders are not supported yet.' };
+  }
+  if (leftover.includes('{{') || leftover.includes('}}')) {
+    return { positions, error: 'A placeholder is malformed. Write placeholders exactly as {{1}}, {{2}}, … with no spaces.' };
+  }
+  if (new Set(positions).size !== positions.length) {
+    return { positions, error: 'Each placeholder can be used only once. Add another placeholder for the same value instead.' };
+  }
+  const expected = positions.map((_, i) => i + 1);
+  if (positions.some((p, i) => p !== expected[i])) {
+    return {
+      positions,
+      error: 'Placeholders must be numbered from {{1}} in the order they appear, with no gaps (for example {{1}} … {{2}} … {{3}}).',
+    };
+  }
+  return { positions, error: null };
+};
+
+// ── validation ──────────────────────────────────────────────────────────────
+
+const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+const optionalText = (value: unknown): string | null => {
+  const t = text(value);
+  return t ? t : null;
+};
+
+/** [Meta] parameter values: no line breaks or tabs, at most four spaces in a row. */
+const badParameterText = (value: string): boolean => /[\n\r\t]/.test(value) || / {5,}/.test(value);
+
+/**
+ * Validates a template definition. Returns every problem at once, each tied to
+ * the field the editor shows it beside.
+ */
+/** Template structures not supported yet, and how a request for each is refused. */
+export const UNSUPPORTED_TEMPLATE_FIELDS: readonly (readonly [string, string])[] = [
+  ['buttons', 'Buttons are not supported yet. Remove them to create this template here.'],
+  ['components', 'Send the header, body and footer as separate fields; raw components are not accepted.'],
+  ['headerFormat', 'Only a text header is supported. Image, video and document headers are not supported yet.'],
+  ['headerType', 'Only a text header is supported. Image, video and document headers are not supported yet.'],
+  ['headerMedia', 'Image, video and document headers are not supported yet.'],
+  ['headerHandle', 'Image, video and document headers are not supported yet.'],
+  ['parameterFormat', 'Only numbered placeholders such as {{1}} are supported. Named placeholders are not supported yet.'],
+  ['parameter_format', 'Only numbered placeholders such as {{1}} are supported. Named placeholders are not supported yet.'],
+];
+
+export const validateTemplateDraft = (
+  input: TemplateDraftInput
+): { value: ValidatedTemplate | null; errors: TemplateFieldError[] } => {
+  const errors: TemplateFieldError[] = [];
+  const fail = (field: string, message: string) => errors.push({ field, message });
+
+  const displayName = text(input.displayName);
+  if (!displayName) fail('displayName', 'Display name is required.');
+  else if (displayName.length > WHATSAPP_TEMPLATE_LIMITS.displayName) fail('displayName', `Display name must be at most ${WHATSAPP_TEMPLATE_LIMITS.displayName} characters.`);
+
+  const name = text(input.name);
+  if (!name) fail('name', 'Template name is required.');
+  else if (name.length > WHATSAPP_TEMPLATE_LIMITS.name || !WHATSAPP_TEMPLATE_NAME_PATTERN.test(name)) {
+    fail('name', 'Template name may contain only lowercase letters, digits and underscores (at most 512).');
+  }
+
+  const language = text(input.language);
+  if (!language) fail('language', 'Language is required.');
+  else if (!WHATSAPP_LANGUAGE_CODE_PATTERN.test(language)) fail('language', 'Language must be a code such as "en" or "en_US".');
+
+  const category = text(input.category).toUpperCase();
+  if (!category) fail('category', 'Category is required.');
+  else if (category === 'AUTHENTICATION') {
+    fail('category', 'Authentication templates use a fixed one-time-password format and cannot be created here.');
+  } else if (!(WHATSAPP_TEMPLATE_CATEGORIES as readonly string[]).includes(category)) {
+    fail('category', 'Category must be Marketing or Utility.');
+  }
+
+  // Letting Meta recategorize a template is not offered in this release, for
+  // any role: a request for it is refused rather than silently ignored.
+  if (input.allowCategoryChange !== undefined && input.allowCategoryChange !== false) {
+    fail('allowCategoryChange', 'Letting WhatsApp change the category is not available. Choose the category that fits.');
+  }
+
+  // Structures this editor cannot build or the send path cannot fill are
+  // refused by name, never silently dropped: a template submitted without the
+  // buttons or media header its author sent would not be the one they meant.
+  const raw = input as Record<string, unknown>;
+  for (const [field, message] of UNSUPPORTED_TEMPLATE_FIELDS) {
+    if (raw[field] !== undefined && raw[field] !== null) fail(field, message);
+  }
+
+  const headerText = optionalText(input.headerText);
+  if (headerText) {
+    if (headerText.length > WHATSAPP_TEMPLATE_LIMITS.headerText) fail('headerText', `Header must be at most ${WHATSAPP_TEMPLATE_LIMITS.headerText} characters.`);
+    // [local] the send path fills body placeholders only.
+    if (headerText.includes('{{') || headerText.includes('}}')) fail('headerText', 'The header cannot contain placeholders.');
+  }
+
+  const footer = optionalText(input.footer);
+  if (footer) {
+    if (footer.length > WHATSAPP_TEMPLATE_LIMITS.footer) fail('footer', `Footer must be at most ${WHATSAPP_TEMPLATE_LIMITS.footer} characters.`);
+    // [Meta] the footer is text only.
+    if (footer.includes('{{') || footer.includes('}}')) fail('footer', 'The footer cannot contain placeholders.');
+  }
+
+  const body = typeof input.body === 'string' ? input.body.trim() : '';
+  let positions: number[] = [];
+  if (!body) fail('body', 'Message body is required.');
+  else {
+    if (body.length > WHATSAPP_TEMPLATE_LIMITS.body) fail('body', `Message body must be at most ${WHATSAPP_TEMPLATE_LIMITS.body} characters.`);
+    const scan = scanTemplatePlaceholders(body);
+    if (scan.error) fail('body', scan.error);
+    else positions = scan.positions;
+    if (positions.length > WHATSAPP_TEMPLATE_LIMITS.variables) fail('body', `A template can have at most ${WHATSAPP_TEMPLATE_LIMITS.variables} placeholders.`);
+  }
+
+  // One mapping per placeholder - [Meta] each needs an example value.
+  const rawVariables = input.variables === undefined ? [] : input.variables;
+  const variables: ValidatedTemplateVariable[] = [];
+  if (!Array.isArray(rawVariables)) {
+    fail('variables', 'Variables must be a list.');
+  } else {
+    const byPosition = new Map<number, TemplateVariableInput>();
+    rawVariables.forEach((raw: any, i) => {
+      const position = Number(raw?.position);
+      if (!Number.isInteger(position) || position < 1) {
+        fail(`variables[${i}].position`, 'Each variable needs the number of its placeholder.');
+      } else if (byPosition.has(position)) {
+        fail(`variables[${i}].position`, `Placeholder {{${position}}} is mapped twice.`);
+      } else {
+        byPosition.set(position, raw ?? {});
+      }
+    });
+
+    for (const position of byPosition.keys()) {
+      if (!positions.includes(position) && !errors.some((e) => e.field === 'body')) {
+        fail('variables', `{{${position}}} is mapped but does not appear in the message body.`);
+      }
+    }
+
+    for (const position of [...positions].sort((a, b) => a - b)) {
+      const field = `variables.${position}`;
+      const raw = byPosition.get(position);
+      if (!raw) {
+        fail(field, `Choose what fills {{${position}}}.`);
+        continue;
+      }
+      const label = text(raw.label);
+      const source = text(raw.source) as WhatsAppTemplateVariableSource;
+      const fixedValue = optionalText(raw.fixedValue) ?? undefined;
+      const fallback = optionalText(raw.fallback) ?? undefined;
+      const sample = text(raw.sample);
+
+      if (!label) fail(`${field}.label`, `Give {{${position}}} a name.`);
+      else if (label.length > WHATSAPP_TEMPLATE_LIMITS.variableLabel) fail(`${field}.label`, `The name of {{${position}}} must be at most ${WHATSAPP_TEMPLATE_LIMITS.variableLabel} characters.`);
+
+      if (!(WHATSAPP_TEMPLATE_VARIABLE_SOURCES as readonly string[]).includes(source)) {
+        fail(`${field}.source`, `Choose what fills {{${position}}}.`);
+      } else if (source === 'fixed' && !fixedValue) {
+        fail(`${field}.fixedValue`, `Enter the fixed text for {{${position}}}.`);
+      }
+
+      for (const [key, value] of [['fixedValue', fixedValue], ['fallback', fallback]] as const) {
+        if (value && (value.length > WHATSAPP_TEMPLATE_LIMITS.variableValue || badParameterText(value))) {
+          fail(`${field}.${key}`, `This value cannot contain line breaks, tabs or more than four spaces in a row (max ${WHATSAPP_TEMPLATE_LIMITS.variableValue}).`);
+        }
+      }
+
+      if (!sample) fail(`${field}.sample`, `Meta needs an example value for {{${position}}}.`);
+      else if (sample.length > WHATSAPP_TEMPLATE_LIMITS.variableValue || badParameterText(sample)) {
+        fail(`${field}.sample`, `The example for {{${position}}} cannot contain line breaks, tabs or more than four spaces in a row.`);
+      }
+
+      variables.push({
+        position,
+        label,
+        source,
+        ...(source === 'fixed' && fixedValue ? { fixedValue } : {}),
+        ...(fallback ? { fallback } : {}),
+        sample,
+      });
+    }
+  }
+
+  if (errors.length > 0) return { value: null, errors };
+  return {
+    value: {
+      displayName,
+      name,
+      language,
+      category: category as WhatsAppTemplateCategory,
+      allowCategoryChange: false,
+      headerText,
+      body,
+      footer,
+      variables,
+    },
+    errors: [],
+  };
+};
+
+/** How each variable source is named in the editor. */
+export const WHATSAPP_TEMPLATE_VARIABLE_SOURCE_LABELS: Record<WhatsAppTemplateVariableSource, string> = {
+  'guest.name': 'Guest name',
+  'event.name': 'Event name',
+  'event.date': 'Event date',
+  'event.time': 'Event start time',
+  'event.venue': 'Event venue',
+  'event.type': 'Event type',
+  'event.organizer': 'Organizer name',
+  'event.description': 'Event description',
+  fixed: 'Fixed text',
+};

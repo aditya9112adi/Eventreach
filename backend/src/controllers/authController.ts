@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { User } from '../models/User';
 import { Admin } from '../models/Admin';
 import { Event } from '../models/Event';
+import { accountCanManageTemplates } from '../services/templatePermission';
 import { PasswordResetToken, ResetAccountType } from '../models/PasswordResetToken';
 import { sendApprovalEmail, sendPasswordResetEmail } from '../utils/email';
 import { validatePassword, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from '../utils/passwordPolicy';
@@ -203,6 +204,9 @@ const buildAuthProfile = async (user: any, resolvedRole: string) => {
     assignedEventId: user.assignedEventId ? user.assignedEventId.toString() : undefined,
     assignedEventName,
     adminId: user.adminId ? user.adminId.toString() : undefined,
+    // For showing or hiding the Templates page only; every template request
+    // is authorized again on the server.
+    canManageWhatsAppTemplates: accountCanManageTemplates({ role: resolvedRole, canManageWhatsAppTemplates: user.canManageWhatsAppTemplates }),
     createdAt: user.createdAt,
   };
 };
