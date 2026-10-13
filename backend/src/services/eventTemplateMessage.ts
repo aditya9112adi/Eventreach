@@ -107,6 +107,17 @@ export const EVENT_TEMPLATES: Record<string, EventTemplateSpec> = {
     fields: [],
     headerFormat: 'VIDEO',
   },
+  /**
+   * Approved under the production WABA (Meta template id 1129562792755797) as
+   * a MARKETING template in "en", with no header and no buttons. Its body
+   * takes one value, the guest's name ({{1}}); the rest of its wording is set
+   * by the approved template and is read from Meta for the preview, never
+   * written here. Like the others, it can be sent for any event.
+   */
+  pranjali_ankit_wedding_invite: {
+    languageCode: 'en',
+    fields: ['recipientName'],
+  },
 };
 
 export const resolveEventTemplate = (templateName: unknown): { name: string; spec: EventTemplateSpec } => {
