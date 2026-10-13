@@ -27,11 +27,10 @@ const contactSchema = z.object({
   whatsappSenderId: z.string().regex(/^[a-f\d]{24}$/i).nullable().optional(),
 }).strict();
 
-const senderPublic = (sender: any) => ({
+const senderPublic = (sender: any, viewerRole?: string) => ({
   _id: String(sender._id),
   phoneNumberId: sender.phoneNumberId,
   isEnvironmentSender: Boolean(process.env.WHATSAPP_PHONE_ID?.trim() && process.env.WHATSAPP_PHONE_ID.trim() === sender.phoneNumberId),
-  wabaId: sender.wabaId,
   displayPhoneNumber: sender.displayPhoneNumber,
   verifiedName: sender.verifiedName,
   qualityRating: sender.qualityRating ?? null,
@@ -39,9 +38,12 @@ const senderPublic = (sender: any) => ({
   listedInMeta: sender.listedInMeta,
   enabled: sender.enabled,
   label: sender.label ?? '',
-  allowedAdminIds: (sender.allowedAdminIds || []).map(String),
   lastSyncedAt: sender.lastSyncedAt ?? null,
   statusCheckedAt: sender.statusCheckedAt ?? null,
+  // The Business Account id and the allowlist (other Admins' ids) are for
+  // Super Admins only. Any other viewer - or none given - gets neither, so a
+  // new caller of this function is private by default.
+  ...(viewerRole === 'SuperAdmin' ? { wabaId: sender.wabaId, allowedAdminIds: (sender.allowedAdminIds || []).map(String) } : {}),
 });
 
 export const listWhatsAppSenders = async (req: Request, res: Response) => {
@@ -54,7 +56,7 @@ export const listWhatsAppSenders = async (req: Request, res: Response) => {
       query.allowedAdminIds = user.id;
     }
     const senders = await WhatsAppSender.find(query).sort({ displayPhoneNumber: 1 }).lean();
-    return res.json({ senders: senders.map(senderPublic) });
+    return res.json({ senders: senders.map((s) => senderPublic(s, user.role)) });
   } catch (error) {
     console.error('List WhatsApp senders failed:', error);
     return res.status(500).json({ error: 'Failed to list WhatsApp senders' });
@@ -101,7 +103,7 @@ export const updateWhatsAppSender = async (req: Request, res: Response) => {
       actor: AuditService.getActorFromReq(req), request: AuditService.getRequestInfo(req),
       before, after: sender, description: `Updated WhatsApp sender ${sender.displayPhoneNumber}`,
     });
-    return res.json({ sender: senderPublic(sender) });
+    return res.json({ sender: senderPublic(sender, (req as any).user?.role) });
   } catch (error) {
     console.error('Update WhatsApp sender failed:', error);
     return res.status(500).json({ error: 'Failed to update WhatsApp sender' });
