@@ -156,10 +156,14 @@ export class WhatsAppService {
     );
   }
 
-  /** One POST to the messages endpoint. The token never leaves this method. */
-  private postMessage(payload: any) {
+  /**
+   * One POST to the messages endpoint. The token never leaves this method.
+   * phoneNumberId is the sender an event resolved to (senderResolution);
+   * without it, the configured WHATSAPP_PHONE_ID, as before.
+   */
+  private postMessage(payload: any, phoneNumberId: string | undefined = this.phoneId) {
     return axios.post(
-      `https://graph.facebook.com/${this.apiVersion}/${this.phoneId}/messages`,
+      `https://graph.facebook.com/${this.apiVersion}/${phoneNumberId}/messages`,
       payload,
       {
         headers: {
@@ -185,7 +189,7 @@ export class WhatsAppService {
    * Returns the ID only — the Authorization header and the file's bytes are
    * never logged.
    */
-  async uploadMediaToMeta(filePath: string, mimeType: string, filename: string): Promise<string> {
+  async uploadMediaToMeta(filePath: string, mimeType: string, filename: string, phoneNumberId: string | undefined = this.phoneId): Promise<string> {
     if (this.isMockMode) {
       return `mock-media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
@@ -198,7 +202,7 @@ export class WhatsAppService {
       form.append('file', new Blob([bytes], { type: mimeType }), filename);
 
       const response = await axios.post(
-        `https://graph.facebook.com/${this.apiVersion}/${this.phoneId}/media`,
+        `https://graph.facebook.com/${this.apiVersion}/${phoneNumberId}/media`,
         form,
         {
           headers: { 'Authorization': `Bearer ${this.token}` },
@@ -234,7 +238,7 @@ export class WhatsAppService {
    * handset outcome only shows up later on the webhook. Callers must not
    * treat a resolved promise as proof of delivery.
    */
-  async sendMessage(to: string, messageText: string, mediaAttachments: any[]): Promise<WhatsAppSendResult> {
+  async sendMessage(to: string, messageText: string, mediaAttachments: any[], phoneNumberId: string | undefined = this.phoneId): Promise<WhatsAppSendResult> {
     if (this.isMockMode) {
       return this.sendMockMessage(to, messageText, mediaAttachments);
     }
@@ -257,7 +261,7 @@ export class WhatsAppService {
        */
       const primary = buildPrimaryPayload(to, messageText, mediaAttachments);
 
-      const response = await this.postMessage(primary);
+      const response = await this.postMessage(primary, phoneNumberId);
 
       // Meta answers with { messages: [{ id: "wamid.…" }] }. That id is the
       // only handle the delivery webhook will refer to later.
@@ -273,7 +277,7 @@ export class WhatsAppService {
        */
       for (const followUp of buildFollowUpPayloads(to, messageText, mediaAttachments)) {
         try {
-          await this.postMessage(followUp);
+          await this.postMessage(followUp, phoneNumberId);
         } catch (err: any) {
           console.error('WhatsApp follow-up message failed:', err?.response?.data?.error || err?.message);
         }

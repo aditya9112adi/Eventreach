@@ -1,5 +1,19 @@
 import { Request, Response } from 'express';
 import { AuditLog } from '../models/AuditLog';
+import { sanitizeObject } from '../services/AuditService';
+
+/**
+ * Redacts secrets in an entry's snapshots on the way out, as well as when it is
+ * written. Entries stored before a redaction rule existed (a Settings token in
+ * a field named `value`) are never returned as they were stored.
+ */
+const redactEntry = (entry: any) => ({
+  ...entry,
+  changes: entry.changes
+    ? { ...entry.changes, before: sanitizeObject(entry.changes.before), after: sanitizeObject(entry.changes.after) }
+    : entry.changes,
+  metadata: sanitizeObject(entry.metadata),
+});
 
 export const getAuditLogs = async (req: Request, res: Response) => {
   try {
@@ -36,7 +50,7 @@ export const getAuditLogs = async (req: Request, res: Response) => {
     const totalLogs = await AuditLog.countDocuments(query);
 
     res.json({
-      logs,
+      logs: logs.map(redactEntry),
       pagination: {
         page,
         limit,
@@ -76,7 +90,7 @@ export const getAuditStatistics = async (req: Request, res: Response) => {
       bulkOperations,
       failedOperations,
       collectionStats: collectionStats.map(s => ({ collectionName: s._id, count: s.count })),
-      recentBulk
+      recentBulk: recentBulk.map(redactEntry)
     });
   } catch (error) {
     console.error('Get audit stats error:', error);

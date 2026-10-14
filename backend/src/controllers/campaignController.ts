@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import { sniffMimeFromFile } from '../utils/mediaSniff';
 import { validateWhatsAppMedia, WHATSAPP_MEDIA_RULES } from '@eventreach/shared';
+import { resolveSendingSender, SenderUnavailableError } from '../services/senderResolution';
 
 /** One media attachment, matching mediaAttachmentSchema in the Campaign model. */
 const mediaAttachmentBody = z.object({
@@ -198,6 +199,25 @@ export const sendCampaign = async (req: RequestWithId, res: Response) => {
       return res.status(404).json({ error: 'Campaign not found' });
     }
 
+    /**
+     * The legacy campaign guard: the event's WhatsApp sender is resolved and
+     * checked exactly as for any other send - its own, its Main Event's, or
+     * the environment sender when neither is assigned - before the campaign
+     * is changed in any way, so a refused campaign keeps its message. An
+     * assigned sender that is not usable fails the request; it is never
+     * replaced by the environment sender. The queue checks again before
+     * every batch. Nothing in the request can choose the sender.
+     */
+    let sender;
+    try {
+      sender = await resolveSendingSender(eventId);
+    } catch (senderError) {
+      if (senderError instanceof SenderUnavailableError) {
+        return res.status(senderError.httpStatus).json({ error: senderError.message, code: senderError.code });
+      }
+      throw senderError;
+    }
+
     const currentMessage = campaign.messageText;
     const currentAttachments = campaign.mediaAttachments;
 
@@ -230,7 +250,7 @@ export const sendCampaign = async (req: RequestWithId, res: Response) => {
       bulkOperationId
     };
 
-    await queueService.processCampaign(campaign._id.toString(), recipientIds, currentMessage, currentAttachments, auditInfo);
+    await queueService.processCampaign(campaign._id.toString(), recipientIds, currentMessage, currentAttachments, auditInfo, sender);
 
     res.json({ message: 'Campaign queued successfully', campaign, bulkOperationId });
   } catch (error) {

@@ -6,12 +6,14 @@ import DashboardLayout from './layouts/DashboardLayout';
 import { useLoader } from './components/ui/FullScreenLoader';
 import { PageWrapper } from './components/ui/PageWrapper';
 import { RoleRoute } from './components/RoleRoute';
+import { TemplateAccessRoute } from './components/TemplateAccessRoute';
 
 // Lazy loaded pages to reduce initial bundle size
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const EventList = lazy(() => import('./pages/Events/EventList'));
 const EventCreate = lazy(() => import('./pages/Events/EventCreate'));
+const BulkPocUpdate = lazy(() => import('./pages/Events/BulkPocUpdate'));
 const EventDetail = lazy(() => import('./pages/Events/EventDetail'));
 const EventEdit = lazy(() => import('./pages/Events/EventEdit'));
 const ContactList = lazy(() => import('./pages/Contacts/ContactList'));
@@ -29,6 +31,11 @@ const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const UserApprovals = lazy(() => import('./pages/Admin/UserApprovals'));
 const JustAccess = lazy(() => import('./pages/Admin/JustAccess'));
 const AuditLogs = lazy(() => import('./pages/Admin/AuditLogs'));
+const WhatsAppTemplates = lazy(() => import('./pages/WhatsApp/Templates'));
+const WhatsAppTestSend = lazy(() => import('./pages/WhatsApp/TestSend'));
+const WhatsAppTemplateEditor = lazy(() => import('./pages/WhatsApp/TemplateEditor'));
+const WhatsAppTemplateDetail = lazy(() => import('./pages/WhatsApp/TemplateDetail'));
+const WhatsAppSenders = lazy(() => import('./pages/Admin/WhatsAppSenders'));
 
 const PageLoader = () => (
   <div className="flex items-center justify-center h-[60vh]">
@@ -74,6 +81,7 @@ function AnimatedRoutes() {
           <Route path="/dashboard" element={<PageWrapper><Dashboard /></PageWrapper>} />
           <Route path="/events" element={<PageWrapper><EventList /></PageWrapper>} />
           <Route path="/events/create" element={<PageWrapper><EventCreate /></PageWrapper>} />
+          <Route path="/events/poc-bulk" element={<PageWrapper><RoleRoute allow={['SuperAdmin', 'Admin']}><BulkPocUpdate /></RoleRoute></PageWrapper>} />
           <Route path="/events/:id" element={<PageWrapper><EventDetail /></PageWrapper>} />
           <Route path="/events/:id/edit" element={<PageWrapper><EventEdit /></PageWrapper>} />
           <Route
@@ -86,6 +94,13 @@ function AnimatedRoutes() {
           <Route path="/campaigns/send-preview" element={<PageWrapper><SendPreview /></PageWrapper>} />
           <Route path="/campaigns/:campaignId/report" element={<PageWrapper><CampaignReport /></PageWrapper>} />
           <Route path="/reports" element={<PageWrapper><Reports /></PageWrapper>} />
+          {/* WhatsApp templates: Super Admins, and Admins granted access. The API checks every request. */}
+          <Route path="/whatsapp/templates" element={<PageWrapper><TemplateAccessRoute><WhatsAppTemplates /></TemplateAccessRoute></PageWrapper>} />
+          {/* Sending an approved template from the POC sender. The API checks sender, template, recipient and permission on every request. */}
+          <Route path="/whatsapp/test-send" element={<PageWrapper><TemplateAccessRoute><WhatsAppTestSend /></TemplateAccessRoute></PageWrapper>} />
+          <Route path="/whatsapp/templates/new" element={<PageWrapper><TemplateAccessRoute><WhatsAppTemplateEditor /></TemplateAccessRoute></PageWrapper>} />
+          <Route path="/whatsapp/templates/:id" element={<PageWrapper><TemplateAccessRoute><WhatsAppTemplateDetail /></TemplateAccessRoute></PageWrapper>} />
+          <Route path="/whatsapp/templates/:id/edit" element={<PageWrapper><TemplateAccessRoute><WhatsAppTemplateEditor /></TemplateAccessRoute></PageWrapper>} />
           <Route path="/change-password" element={<PageWrapper><ChangePassword /></PageWrapper>} />
           <Route
             path="/settings"
@@ -99,6 +114,7 @@ function AnimatedRoutes() {
             path="/admin/just-access"
             element={<PageWrapper><RoleRoute allow={['SuperAdmin', 'Admin']}><JustAccess /></RoleRoute></PageWrapper>}
           />
+          <Route path="/admin/whatsapp-senders" element={<PageWrapper><RoleRoute allow={["SuperAdmin"]}><WhatsAppSenders /></RoleRoute></PageWrapper>} />
           <Route
             path="/admin/audit-logs"
             element={<PageWrapper><RoleRoute allow={['SuperAdmin']}><AuditLogs /></RoleRoute></PageWrapper>}

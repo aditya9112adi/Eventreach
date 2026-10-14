@@ -3,6 +3,9 @@ import { createEvent, createSubEvent, getEvents, getEventById, updateEvent, dele
 import { listMembers, listMemberCandidates, addMembers, removeMember } from '../controllers/eventMemberController';
 import { requireAuth } from '../middleware/authMiddleware';
 import { requireRole } from '../middleware/roleMiddleware';
+import { getEventContact, updateEventContact } from '../controllers/whatsappSenderController';
+import { applyBulkPoc, previewBulkPoc } from '../controllers/bulkPocController';
+import { actionLimiter } from '../middleware/rateLimitMiddleware';
 
 const router = Router();
 
@@ -19,12 +22,19 @@ router.post('/', createEvent);
 // POST rather than DELETE /bulk: a DELETE path segment would be captured by
 // the `/:id` route below and treated as an event id.
 router.post('/bulk-delete', requireAdmin, bulkDeleteEvents);
+// One POC mobile number for every event in the caller's scope. Both are POST
+// so the number travels in the body, never the URL; the service scopes an
+// Admin to the events they own (decision B), a Super Admin to all events.
+router.post('/poc-bulk/preview', requireAdmin, previewBulkPoc);
+router.post('/poc-bulk', requireAdmin, actionLimiter, applyBulkPoc);
 router.get('/', getEvents);
 router.get('/:id', getEventById);
 router.put('/:id', updateEvent);
 router.delete('/:id', requireAdmin, deleteEvent);
 router.get('/:id/users', getEventUsers);
 router.get('/:id/statistics', getEventStatistics);
+router.get('/:id/contact', getEventContact);
+router.put('/:id/contact', updateEventContact);
 
 /**
  * Sub-Events. Creating one is administrative, as creating an event is in the

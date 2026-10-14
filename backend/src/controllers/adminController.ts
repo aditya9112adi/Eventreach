@@ -723,3 +723,72 @@ export const adminResetUserPassword = async (req: RequestWithId, res: Response) 
       .json({ error: 'Unable to reset the password right now. Please try again later.' });
   }
 };
+
+const templateAccessBody = z.object({ enabled: z.boolean() }).strict();
+
+/**
+ * PUT /api/admin/admins/:id/whatsapp-template-access  { enabled: boolean }
+ *
+ * Grants or revokes an Admin's permission to manage WhatsApp templates. Super
+ * Admin only (route). Takes effect on that Admin's next request - the template
+ * service reads the grant from the database every time. Their templates are
+ * kept either way. Every change is audited; a request that changes nothing
+ * is answered but not logged as a change.
+ */
+export const setWhatsAppTemplateAccess = async (req: RequestWithId, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ error: 'Invalid account id.' });
+    }
+    const parsed = templateAccessBody.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Send { "enabled": true } or { "enabled": false }.' });
+    }
+    const enabled = parsed.data.enabled;
+
+    const before = await Admin.findById(id).select('-passwordHash');
+    if (!before) {
+      return res.status(404).json({ error: 'Admin not found.' });
+    }
+    if (before.role !== 'Admin') {
+      return res.status(400).json({ error: 'Super Admins always manage WhatsApp templates; there is nothing to grant or revoke.' });
+    }
+    if ((before.canManageWhatsAppTemplates === true) === enabled) {
+      return res.json({ id, canManageWhatsAppTemplates: enabled, changed: false });
+    }
+
+    const after = await Admin.findByIdAndUpdate(id, { $set: { canManageWhatsAppTemplates: enabled } }, { new: true }).select('-passwordHash');
+    if (!after) {
+      return res.status(404).json({ error: 'Admin not found.' });
+    }
+
+    await AuditService.log({
+      action: enabled ? 'WHATSAPP_TEMPLATE_ACCESS_GRANTED' : 'WHATSAPP_TEMPLATE_ACCESS_REVOKED',
+      collectionName: 'admins',
+      documentId: String(after._id),
+      actor: AuditService.getActorFromReq(req),
+      request: AuditService.getRequestInfo(req),
+      before,
+      after,
+      description: `${enabled ? 'Granted' : 'Revoked'} WhatsApp template management for ${after.email}`,
+    });
+
+    res.json({ id, canManageWhatsAppTemplates: enabled, changed: true });
+  } catch (error) {
+    console.error('Error changing WhatsApp template access:', error);
+    res.status(500).json({ error: 'Failed to change WhatsApp template access' });
+  }
+};
+
+/** Minimal Admin directory for SuperAdmin sender permission assignment. */
+export const getAssignableAdmins = async (_req: Request, res: Response) => {
+  try {
+    const admins = await Admin.find({ role: 'Admin', status: 'Active', isAccessCancelled: { $ne: true } })
+      .select('_id name email role').sort({ name: 1 }).lean();
+    res.json(admins);
+  } catch (error) {
+    console.error('Get assignable Admins failed:', error);
+    res.status(500).json({ error: 'Failed to fetch Admin accounts' });
+  }
+};

@@ -22,9 +22,10 @@ import adminRoutes from './routes/adminRoutes';
 import auditRoutes from './routes/auditRoutes';
 import webhookRoutes from './routes/webhookRoutes';
 import whatsappRoutes from './routes/whatsappRoutes';
+import whatsappSenderRoutes from './routes/whatsappSenderRoutes';
 import { requestMiddleware } from './middleware/requestMiddleware';
 import { globalLimiter } from './middleware/rateLimitMiddleware';
-import { getAllowedOrigins, getFrontendBaseUrl, isFrontendUrlConfigured } from './config/appUrls';
+import { getAllowedOrigins, getExtraOriginsReport, getFrontendBaseUrl, isFrontendUrlConfigured } from './config/appUrls';
 import { verifyEmailTransport } from './utils/email';
 
 dotenv.config();
@@ -89,6 +90,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
+app.use('/api/whatsapp-senders', whatsappSenderRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -101,6 +103,21 @@ app.get('/health', (req, res) => {
  * deployment is obvious in the logs rather than discovered by a user.
  */
 const reportConfiguration = async () => {
+  // Extra CORS origins: what is allowed, and what was refused (by position and
+  // reason only - an ignored entry is never echoed).
+  const extraOrigins = getExtraOriginsReport();
+  if (extraOrigins.origins.length > 0) {
+    const n = extraOrigins.origins.length;
+    console.log(`CORS_EXTRA_ORIGINS: ${n} extra origin${n === 1 ? '' : 's'} allowed: ${extraOrigins.origins.join(', ')}`);
+  }
+  if (extraOrigins.ignored.length > 0) {
+    const n = extraOrigins.ignored.length;
+    console.warn(
+      `CORS_EXTRA_ORIGINS: ignored ${n} invalid ${n === 1 ? 'entry' : 'entries'} ` +
+        `(${extraOrigins.ignored.map((i) => `#${i.position}: ${i.reason}`).join('; ')}). Fix the value and restart.`
+    );
+  }
+
   if (isFrontendUrlConfigured()) {
     console.log(`Frontend URL: ${getFrontendBaseUrl()} (from FRONTEND_URL)`);
   } else {

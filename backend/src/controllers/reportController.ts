@@ -160,7 +160,8 @@ export const getCampaignLogs = async (req: Request, res: Response) => {
 
     const logs = await MessageLog.find(query)
       .populate('contactId', 'fullName phoneNumber')
-      .sort({ createdAt: -1 })
+      // _id breaks ties so consecutive pages never overlap or skip a row.
+      .sort({ createdAt: -1, _id: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
@@ -216,7 +217,8 @@ export const getEventTemplateLogs = async (req: Request, res: Response) => {
 
     const logs = await MessageLog.find(query)
       .populate('contactId', 'fullName phoneNumber')
-      .sort({ createdAt: -1 })
+      // _id breaks ties so consecutive pages never overlap or skip a row.
+      .sort({ createdAt: -1, _id: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
@@ -290,7 +292,8 @@ export const getEventDeliveryLog = async (req: Request, res: Response) => {
     const [logs, total] = await Promise.all([
       MessageLog.find(query)
         .populate('contactId', 'fullName phoneNumber')
-        .sort({ createdAt: -1 })
+        // _id breaks ties so consecutive pages never overlap or skip a row.
+        .sort({ createdAt: -1, _id: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),

@@ -18,6 +18,8 @@ export interface IEvent extends Document {
   assignedUserId?: Schema.Types.ObjectId | string;
   assignedUserIds?: (Schema.Types.ObjectId | string)[];
   parentEventId?: Schema.Types.ObjectId | string | null; // null/absent: a Main Event; set: a Sub-Event of that Main Event
+  poc?: { name: string; mobile: string; email?: string; responsibility?: string } | null;
+  whatsappSenderId?: Schema.Types.ObjectId | string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -85,6 +87,15 @@ const EventSchema: Schema = new Schema(
      * no ordinary edit can detach or reparent a sub-event.
      */
     parentEventId:    { type: Schema.Types.ObjectId, ref: 'Event', default: null, immutable: true },
+    // Optional point of contact is separate from the existing required organizer.
+    poc: {
+      name: { type: String, trim: true, minlength: 1, maxlength: 100 },
+      mobile: { type: String, trim: true, maxlength: 20 },
+      email: { type: String, trim: true, lowercase: true, maxlength: 254 },
+      responsibility: { type: String, trim: true, maxlength: 120 },
+    },
+    whatsappSenderId: { type: Schema.Types.ObjectId, ref: 'WhatsAppSender', default: null },
+
   },
   { timestamps: true }
 );

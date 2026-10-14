@@ -4,7 +4,9 @@ import mongoose from 'mongoose';
 import { z } from 'zod';
 import {
   sendTemplateMessage,
+  readTemplateConfig,
   WhatsAppTemplateError,
+  type SendTemplateDeps,
   type TemplateMessageInput,
   type TemplateMessageResult,
   type TemplateHeaderMedia,
@@ -32,6 +34,7 @@ import { Event } from '../models/Event';
 import { findEventGuest } from '../services/subEventService';
 import { MessageLog } from '../models/MessageLog';
 import { normalizeIndianPhone } from '../utils/indianPhone';
+import { assertSameSender, resolveSendingSender, sendingPhoneNumberId } from '../services/senderResolution';
 
 /**
  * Named request fields for each known template, in {{1}}, {{2}}, … order.
@@ -46,7 +49,7 @@ export const TEMPLATE_VARIABLE_FIELDS: Record<string, readonly string[]> = {
 
 const DEFAULT_LANGUAGE_CODE = 'en';
 
-type Sender = (input: TemplateMessageInput) => Promise<TemplateMessageResult>;
+type Sender = (input: TemplateMessageInput, deps?: SendTemplateDeps) => Promise<TemplateMessageResult>;
 
 /** Maps the request body onto the service input, naming any missing field. */
 export const toTemplateInput = (body: any): TemplateMessageInput => {
@@ -294,7 +297,7 @@ const uploadHeaderMedia = async (
   }
 
   try {
-    const mediaId = await whatsappService.uploadMediaToMeta(filePath, mimeType, attachment.filename);
+    const mediaId = await whatsappService.uploadMediaToMeta(filePath, mimeType, attachment.filename, context.senderPhoneNumberId);
     return {
       kind: expectedKind,
       mediaId,
@@ -327,6 +330,11 @@ export interface EventTemplateContext {
   languageCode: string;
   /** The approved header format, when the template declares one. */
   headerFormat?: DeclaredHeaderFormat;
+  /**
+   * The event's resolved WhatsApp sender (senderResolution). Header media is
+   * uploaded through it; undefined is the environment sender.
+   */
+  senderPhoneNumberId?: string;
 }
 
 export interface ResolvedEventTemplate extends EventTemplateContext {
@@ -601,6 +609,19 @@ export const buildEventTemplateHandler = (
       const context = await resolveEventContext(parsed.data, user);
 
       /**
+       * The event's WhatsApp sender, checked before anything is uploaded or
+       * sent: its own, its Main Event's, or the environment sender when
+       * neither is assigned. An assigned sender that is not usable refuses
+       * the whole request (senderResolution) - it is never swapped for the
+       * environment sender. Nothing in the request can choose it.
+       */
+      const sender = await resolveSendingSender(context.event);
+      context.senderPhoneNumberId = sendingPhoneNumberId(sender);
+      const sendDeps: SendTemplateDeps | undefined = sender.kind === 'assigned'
+        ? { config: { ...readTemplateConfig(), phoneNumberId: sender.phoneNumberId } }
+        : undefined;
+
+      /**
        * Uploaded once for the whole request, before any recipient is
        * messaged: the media id is reusable, and re-uploading the same file per
        * recipient would be slow and pointless. A failure here refuses the
@@ -643,6 +664,10 @@ export const buildEventTemplateHandler = (
           recentSends.set(dedupeKey, now());
           reservedKey = dedupeKey;
 
+          // The sender may have been disabled, disconnected or reassigned
+          // since the request began: checked again before each recipient.
+          await assertSameSender(context.event._id, sender);
+
           /**
            * The reporting row is created BEFORE the request, not after it.
            * Meta can deliver a status callback the moment it accepts a
@@ -674,7 +699,7 @@ export const buildEventTemplateHandler = (
             languageCode: context.languageCode,
             variables: guest.variables.map((variable) => variable.value),
             ...(headerMedia ? { headerMedia } : {}),
-          });
+          }, sendDeps);
 
           /**
            * Accepted by Meta. Recording that must never turn a delivered

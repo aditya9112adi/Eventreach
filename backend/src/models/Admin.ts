@@ -22,6 +22,11 @@ export interface IAdmin extends Document {
   rejectedBy?: Schema.Types.ObjectId | string;
   /** Set on every password change so tokens issued earlier stop being accepted. */
   passwordChangedAt?: Date;
+  /**
+   * Explicit grant to manage WhatsApp templates. Absent means false: no Admin
+   * has it unless a Super Admin grants it. Super Admins never need it.
+   */
+  canManageWhatsAppTemplates?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -69,6 +74,8 @@ const AdminSchema: Schema = new Schema(
     rejectedAt: { type: Date },
     rejectedBy: { type: Schema.Types.ObjectId, ref: 'Admin' },
     passwordChangedAt: { type: Date },
+    // No default: an existing Admin without the field has no grant.
+    canManageWhatsAppTemplates: { type: Boolean },
   },
   {
     timestamps: true,

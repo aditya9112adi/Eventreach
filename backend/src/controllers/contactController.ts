@@ -81,19 +81,25 @@ const readPageParams = (req: Request) => {
   return { page, limit };
 };
 
+/**
+ * Newest first. A bulk import gives a whole batch the same createdAt, so _id
+ * breaks ties: without it consecutive pages can overlap or skip a guest.
+ */
+const CONTACT_LIST_SORT = { createdAt: -1, _id: -1 } as const;
+
 /** Runs a contact listing, paginated or not, and sends the response. */
 const sendContactList = async (req: Request, res: Response, baseQuery: any) => {
   const query = applyContactSearch(baseQuery, req.query.search);
 
   if (!wantsPagination(req)) {
-    const contacts = await Contact.find(query).sort({ createdAt: -1 }).lean();
+    const contacts = await Contact.find(query).sort(CONTACT_LIST_SORT).lean();
     return res.json(contacts);
   }
 
   const { page, limit } = readPageParams(req);
   const [contacts, total] = await Promise.all([
     Contact.find(query)
-      .sort({ createdAt: -1 })
+      .sort(CONTACT_LIST_SORT)
       .skip((page - 1) * limit)
       .limit(limit)
       .lean(),

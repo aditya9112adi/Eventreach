@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
 import { MessageLog } from '../models/MessageLog';
+import { applyPocDeliveryStatus } from '../services/pocTestSendService';
 import { getIO } from '../services/socketService';
 
 /**
@@ -201,9 +202,11 @@ const applyOneStatus = async (status: any): Promise<boolean> => {
 
   const log = await MessageLog.findOne({ wamid });
   if (!log) {
-    // Normal for messages this instance did not send (e.g. a reply, or a
-    // send from another environment sharing the same number).
-    return false;
+    // A POC test send keeps its own record rather than a MessageLog row: its
+    // delivery status goes there. Anything else is a message this instance did
+    // not send (a reply, or a send from another environment sharing the number).
+    const at = status.timestamp ? new Date(Number(status.timestamp) * 1000) : new Date();
+    return applyPocDeliveryStatus(wamid, metaStatus, Number.isNaN(at.getTime()) ? new Date() : at, status.errors);
   }
 
   // Meta sends seconds since epoch, as a string.

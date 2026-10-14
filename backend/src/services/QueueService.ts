@@ -11,6 +11,7 @@ import { UPLOAD_DIR } from '../middleware/mediaUpload';
 import { WHATSAPP_MEDIA_RULES } from '@eventreach/shared';
 
 import { AuditService } from './AuditService';
+import { assertSameSender, resolveSendingSender, sendingPhoneNumberId, type ResolvedSender } from './senderResolution';
 
 /**
  * Turn stored attachments into ones WhatsApp can send, by uploading each file
@@ -25,7 +26,7 @@ import { AuditService } from './AuditService';
  * Failed with the reason rather than silently sending a message missing its
  * media.
  */
-const prepareMediaForSending = async (attachments: any[]): Promise<any[]> => {
+const prepareMediaForSending = async (attachments: any[], phoneNumberId?: string): Promise<any[]> => {
   const out: any[] = [];
 
   for (const stored of attachments) {
@@ -64,7 +65,8 @@ const prepareMediaForSending = async (attachments: any[]): Promise<any[]> => {
       throw new Error(`The attached file "${att?.filename || fileName}" is not a type WhatsApp accepts.`);
     }
 
-    const metaMediaId = await whatsappService.uploadMediaToMeta(filePath, mimeType, att?.filename || fileName);
+    // Uploaded through the number that will send it (undefined: the environment sender).
+    const metaMediaId = await whatsappService.uploadMediaToMeta(filePath, mimeType, att?.filename || fileName, phoneNumberId);
 
     out.push({
       ...att,
@@ -79,7 +81,7 @@ const prepareMediaForSending = async (attachments: any[]): Promise<any[]> => {
 
 export class QueueService {
 
-  async processCampaign(campaignId: string, recipientIds?: string[], messageText?: string, mediaAttachments?: any[], auditInfo?: any) {
+  async processCampaign(campaignId: string, recipientIds?: string[], messageText?: string, mediaAttachments?: any[], auditInfo?: any, sender?: ResolvedSender) {
     try {
       const campaign = await Campaign.findById(campaignId).populate('eventId');
       if (!campaign) throw new Error('Campaign not found');
@@ -87,6 +89,12 @@ export class QueueService {
       const event = campaign.eventId as any; // populated event doc
       const eventName = event.eventName;
       const venue = event.eventVenue;
+
+      // The sender this campaign goes out from: the one the controller checked
+      // before the campaign was changed, or - for any other caller - resolved
+      // here, failing closed exactly the same way. Checked again before every
+      // batch (processBatch).
+      const resolvedSender: ResolvedSender = sender ?? await resolveSendingSender(event._id);
 
       // The event's guests (a Sub-Event's are its members - never its Main
       // Event's or a sibling's), Valid only, narrowed to the chosen recipients.
@@ -146,7 +154,7 @@ export class QueueService {
       let preparedAttachments: any[] = [];
       if (activeAttachments?.length) {
         try {
-          preparedAttachments = await prepareMediaForSending(activeAttachments);
+          preparedAttachments = await prepareMediaForSending(activeAttachments, sendingPhoneNumberId(resolvedSender));
         } catch (err: any) {
           const failedAt = new Date();
           await MessageLog.updateMany(
@@ -169,7 +177,7 @@ export class QueueService {
         }
       }
 
-      this.processBatch(campaignId, contactsWithLogs, activeMsgText, preparedAttachments, eventName, venue, auditInfo).catch(err => {
+      this.processBatch(campaignId, contactsWithLogs, activeMsgText, preparedAttachments, eventName, venue, auditInfo, event._id, resolvedSender).catch(err => {
         console.error('Async batch processing failed:', err);
       });
 
@@ -180,7 +188,7 @@ export class QueueService {
     }
   }
 
-  private async processBatch(campaignId: string, contactsWithLogs: any[], messageText: string, mediaAttachments: any[], eventName: string, venue: string, auditInfo?: any) {
+  private async processBatch(campaignId: string, contactsWithLogs: any[], messageText: string, mediaAttachments: any[], eventName: string, venue: string, auditInfo: any, eventId: any, sender: ResolvedSender) {
     const BATCH_SIZE = 10;
     const DELAY_BETWEEN_BATCHES_MS = 2000;
     let successfulRecords = 0;
@@ -188,7 +196,29 @@ export class QueueService {
 
     for (let i = 0; i < contactsWithLogs.length; i += BATCH_SIZE) {
       const batch = contactsWithLogs.slice(i, i + BATCH_SIZE);
-      
+
+      /**
+       * The send boundary: the event's sender is checked again before each
+       * batch - it may have been disabled, disconnected or reassigned since
+       * the campaign was queued. If so, this batch and every remaining
+       * message are recorded as Failed with the reason, and none are sent.
+       */
+      try {
+        await assertSameSender(eventId, sender);
+      } catch (senderError: any) {
+        const remaining = contactsWithLogs.slice(i);
+        await MessageLog.updateMany(
+          { _id: { $in: remaining.map((item) => item.logId) } },
+          { $set: { status: 'Failed', errorReason: senderError?.message || 'The WhatsApp sender is no longer usable.', failedAt: new Date() } }
+        );
+        failedRecords += remaining.length;
+        try {
+          getIO().emit('message-log-updated', { campaignId });
+          getIO().emit('dashboard-updated');
+        } catch (e) {}
+        break;
+      }
+
       const promises = batch.map(async (item) => {
         const { contact, logId } = item;
         // Interpolate variables
@@ -198,7 +228,7 @@ export class QueueService {
         personalizedMsg = personalizedMsg.replace(/{{venue}}/g, venue);
 
         try {
-          const result = await whatsappService.sendMessage(contact.phoneNumber, personalizedMsg, mediaAttachments);
+          const result = await whatsappService.sendMessage(contact.phoneNumber, personalizedMsg, mediaAttachments, sendingPhoneNumberId(sender));
           // 'Sent' here means ACCEPTED BY WHATSAPP, not received by the
           // handset. The wamid is what lets the delivery webhook find this
           // row again when the real outcome arrives.

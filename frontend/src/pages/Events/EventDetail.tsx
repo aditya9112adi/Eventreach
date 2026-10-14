@@ -9,6 +9,7 @@ import { formatEventType } from '../../utils/eventType';
 import { useAuth } from '../../store/authStore';
 import { SubEventsSection } from '../../components/ui/SubEventsSection';
 import { SubEventMembers } from '../../components/ui/SubEventMembers';
+import { EventContactSettings } from '../../components/ui/EventContactSettings';
 
 const EventDetail = () => {
   const { id } = useParams();
@@ -180,6 +181,8 @@ const EventDetail = () => {
           )}
         </div>
       </div>
+
+      <EventContactSettings eventId={String(event._id)} parentEventId={event.parentEventId ? String(event.parentEventId) : null} />
 
       {isSubEvent ? (
         <SubEventMembers subEvent={event} />

@@ -41,15 +41,29 @@ const isPlainObject = (v: any): boolean => {
  *   nested at any depth (e.g. inside mediaAttachments, or a bulk snapshot
  *   array) is handled the same way as one at the top level.
  */
-function sanitizeObject(obj: any): any {
+export const isSensitiveName = (name: string): boolean => {
+  const lower = name.toLowerCase();
+  return SENSITIVE_FIELDS.some((s) => lower.includes(s.toLowerCase()));
+};
+
+/**
+ * A key/value record whose key names a secret: a Settings document is
+ * `{ key: 'whatsapp_token', value: '<the token>' }`, so redacting by field name
+ * alone never reaches the secret - it sits in a field called `value`.
+ */
+const isSecretKeyValueRecord = (obj: Record<string, any>): boolean =>
+  typeof obj.key === 'string' && 'value' in obj && isSensitiveName(obj.key);
+
+export function sanitizeObject(obj: any): any {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj === 'bigint' || isBsonLong(obj)) return obj.toString();
   if (Array.isArray(obj)) return obj.map(sanitizeObject);
   if (!isPlainObject(obj)) return obj; // Date, ObjectId, Buffer, etc. — left intact
 
+  const secretValue = isSecretKeyValueRecord(obj);
   const sanitized: Record<string, any> = {};
   for (const key of Object.keys(obj)) {
-    if (SENSITIVE_FIELDS.includes(key.toLowerCase()) || SENSITIVE_FIELDS.some(s => key.toLowerCase().includes(s))) {
+    if (isSensitiveName(key) || (secretValue && key === 'value')) {
       sanitized[key] = '***REDACTED***';
     } else {
       sanitized[key] = sanitizeObject(obj[key]);
@@ -107,8 +121,13 @@ export interface AuditParams {
 }
 
 export class AuditService {
-  static async log(params: AuditParams) {
-    if (params.collectionName === 'audit_logs') return; // Prevent infinite loops
+  /**
+   * Writes one audit entry. It never throws - an audit failure must not crash
+   * the business action - but it returns whether the entry was actually saved,
+   * for the few callers that must stop (or say so) when it was not.
+   */
+  static async log(params: AuditParams): Promise<boolean> {
+    if (params.collectionName === 'audit_logs') return true; // Prevent infinite loops
 
     try {
       let changedFields: string[] = [];
@@ -145,9 +164,11 @@ export class AuditService {
       });
 
       await logEntry.save();
+      return true;
     } catch (err) {
       console.error('Audit Logging failed:', err);
       // We do NOT throw here. Audit failures should not crash business logic unless critical.
+      return false;
     }
   }
 
