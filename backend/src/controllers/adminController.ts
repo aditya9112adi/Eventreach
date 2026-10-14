@@ -10,7 +10,7 @@ import { isSubEventId, MAIN_EVENT_FILTER } from '../services/subEventService';
 import { eventSearchFilter, readReportSearch, ReportSearchError, textMatcher } from '../utils/reportSearch';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
-import { getIO, emitPendingApprovalsChanged } from '../services/socketService';
+import { getIO, emitAccessChanged, emitPendingApprovalsChanged } from '../services/socketService';
 import {
   isEventAuthorized,
   getEventAccessHolders,
@@ -148,6 +148,8 @@ export const approveUser = async (req: RequestWithId, res: Response) => {
 
     // One fewer request is pending — update every Super Admin's badge live.
     void emitPendingApprovalsChanged();
+    // After the approval and its audit entry are saved.
+    emitAccessChanged(user._id, 'approved');
 
     // Let the applicant know they can now sign in. Fire-and-forget: a mail
     // failure must not fail the approval.
@@ -211,6 +213,7 @@ export const rejectUser = async (req: RequestWithId, res: Response) => {
     });
 
     void emitPendingApprovalsChanged();
+    emitAccessChanged(user._id, 'rejected');
 
     void sendRegistrationDecisionEmail(user.name, user.email, 'rejected', rejectionReason);
 
@@ -711,7 +714,10 @@ export const adminResetUserPassword = async (req: RequestWithId, res: Response) 
     });
 
     // passwordChangedAt is in the past relative to any token already issued to
-    // this account, so every existing session for them is revoked.
+    // this account, so every existing session for them is revoked. Their open
+    // tabs are told so they re-check and sign out now rather than at the next
+    // request.
+    emitAccessChanged(account._id, 'credentials');
     return res.json({
       message: 'Password has been reset. The account must sign in with the new password.',
       email: account.email,
@@ -773,6 +779,9 @@ export const setWhatsAppTemplateAccess = async (req: RequestWithId, res: Respons
       after,
       description: `${enabled ? 'Granted' : 'Revoked'} WhatsApp template management for ${after.email}`,
     });
+
+    // Saved and audited: the Admin's open tabs re-read their permissions.
+    emitAccessChanged(after._id, 'templates');
 
     res.json({ id, canManageWhatsAppTemplates: enabled, changed: true });
   } catch (error) {

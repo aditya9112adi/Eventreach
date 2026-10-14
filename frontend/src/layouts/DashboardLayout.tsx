@@ -3,6 +3,7 @@ import { useLocation, useNavigate, NavLink, Link, Outlet } from 'react-router-do
 import { motion } from 'framer-motion';
 import { useAuth } from '../store/authStore';
 import { useSocket } from '../contexts/SocketContext';
+import { useAccessSync } from '../components/useAccessSync';
 import api from '../services/api';
 import { 
   LayoutDashboard, 
@@ -45,6 +46,8 @@ const DashboardLayout = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { socket, isConnected } = useSocket();
+  // Permission and access changes made by a Super Admin arrive without a refresh.
+  useAccessSync();
 
   /**
    * End an unattended session.
