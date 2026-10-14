@@ -77,9 +77,22 @@ describe('editor', () => {
 
   test('protects unsaved changes and tells the user a blank name becomes "Guest"', () => {
     assert.ok(editor.includes('useUnsavedChangesGuard(dirty && !saving);'));
+    assert.ok(editor.includes('<UnsavedChangesDialog open={leaveGuard.pendingPath !== null} onYes={leaveGuard.confirmLeave} onNo={leaveGuard.stay} />'));
     assert.ok(editor.includes('"Guest" is used instead'));
     assert.ok(guard.includes("window.addEventListener('beforeunload'"));
     assert.ok(guard.includes("document.addEventListener('click', onClick, true)"), 'capture phase, before the router');
+  });
+
+  test('leaving asks in the page, centered with Yes and No - not with the browser alert', () => {
+    const dialog = read('frontend/src/components/ui/UnsavedChangesDialog.tsx');
+    assert.equal(/window\.confirm|\balert\(/.test(guard), false, 'no browser confirm in the guard');
+    assert.equal(/window\.confirm|\balert\(/.test(dialog), false);
+    assert.ok(guard.includes('event.preventDefault();\n      event.stopPropagation();\n      setPendingPath(destination);'), 'the click is held until answered');
+    assert.ok(guard.includes('if (destination) navigate(destination);'), 'Yes goes where the click was heading');
+    assert.ok(dialog.includes('flex items-center justify-center'), 'centered');
+    assert.ok(dialog.includes('Yes, leave') && dialog.includes('No, stay'));
+    assert.ok(dialog.includes("event.key === 'Escape'") && dialog.includes('onClick={onNo}'), 'Escape and a click outside stay');
+    assert.ok(dialog.includes('stayRef.current?.focus()'), 'No is focused first, so Enter by habit keeps the work');
   });
 
   test('a template the API would not let you edit is not editable here', () => {

@@ -497,6 +497,21 @@ export const shouldConfirmLeaving = (click: {
   return url.origin === click.origin && url.pathname !== click.currentPath;
 };
 
+/**
+ * Where a clicked in-app link was heading, as a router path (path, query and
+ * hash), or null if it is not an in-app link. Used to continue the navigation
+ * once the person confirms leaving.
+ */
+export const leaveDestination = (href: string | null, origin: string): string | null => {
+  if (!href) return null;
+  try {
+    const url = new URL(href, origin);
+    return url.origin === origin ? `${url.pathname}${url.search}${url.hash}` : null;
+  } catch {
+    return null;
+  }
+};
+
 // ── Just Access: the permission toggle ──────────────────────────────────────
 
 export interface AccessRecordLike {
