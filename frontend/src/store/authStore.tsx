@@ -37,6 +37,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // The profile as of the latest answer, readable between renders.
   const userRef = useRef<User | null>(null);
   userRef.current = user;
+  // The token a sign-in has just been given. That answer came from the server a
+  // moment ago, so the session restore the new token triggers must not ask /auth/me
+  // for the same profile again.
+  const freshSignIn = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +48,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const restoreSession = async () => {
       if (!token) {
         setUser(null);
+        setIsLoading(false);
+        return;
+      }
+
+      if (freshSignIn.current === token) {
+        freshSignIn.current = null;
         setIsLoading(false);
         return;
       }
@@ -134,6 +144,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const login = (newToken: string, newUser: User) => {
     localStorage.setItem('token', newToken);
     localStorage.setItem('user', JSON.stringify(newUser));
+    freshSignIn.current = newToken;
     setToken(newToken);
     setUser(newUser);
   };

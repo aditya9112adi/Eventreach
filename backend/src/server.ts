@@ -24,6 +24,7 @@ import webhookRoutes from './routes/webhookRoutes';
 import whatsappRoutes from './routes/whatsappRoutes';
 import whatsappSenderRoutes from './routes/whatsappSenderRoutes';
 import { requestMiddleware } from './middleware/requestMiddleware';
+import { waitForDatabase } from './middleware/databaseReady';
 import { globalLimiter } from './middleware/rateLimitMiddleware';
 import { getAllowedOrigins, getExtraOriginsReport, getFrontendBaseUrl, isFrontendUrlConfigured } from './config/appUrls';
 import { verifyEmailTransport } from './utils/email';
@@ -54,6 +55,12 @@ app.use(cors({
   origin: allowedOrigins,
   credentials: true
 }));
+
+// Everything except /health waits (bounded) while the database is not connected -
+// for example while the driver reconnects after a drop - and otherwise answers a
+// clear 503, instead of the driver's 10 s buffering ending in a generic 500.
+// See middleware/databaseReady.ts.
+app.use(waitForDatabase());
 
 // WhatsApp delivery callbacks are mounted FIRST, deliberately, ahead of both
 // the global rate limiter and express.json():

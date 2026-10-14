@@ -14,6 +14,7 @@ import { getFrontendBaseUrl } from '../config/appUrls';
 import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { emitPendingApprovalsChanged } from '../services/socketService';
+import { createStageTimer, logTiming } from '../utils/stageTimer';
 
 /** Matches the cost factor used everywhere else passwords are hashed. */
 const BCRYPT_ROUNDS = 10;
@@ -246,9 +247,14 @@ export const me = async (req: RequestWithId, res: Response) => {
 };
 
 export const login = async (req: RequestWithId, res: Response) => {
+  // Stage timing for finding where a slow sign-in spends its time. Stage names and
+  // numbers only: no email, password, token or profile data reach the log.
+  const timer = createStageTimer();
+  let outcome = 'error';
   try {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
+      outcome = 'invalid_input';
       return res.status(400).json({ error: parsed.error.errors[0].message });
     }
 
@@ -264,12 +270,17 @@ export const login = async (req: RequestWithId, res: Response) => {
       collection = 'users';
     }
 
+    timer.mark('account_lookup');
+
     if (!user) {
+      outcome = 'invalid_credentials';
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const isValidPassword = await bcrypt.compare(password, user.passwordHash);
+    timer.mark('password_check');
     if (!isValidPassword) {
+      outcome = 'invalid_credentials';
       await AuditService.log({
         action: 'LOGIN_FAILED',
         collectionName: collection,
@@ -281,6 +292,9 @@ export const login = async (req: RequestWithId, res: Response) => {
       });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
+
+    // Correct password from here on: any early return below is a refusal, not a failure.
+    outcome = 'denied';
 
     if (user.status === 'Pending') {
       return res.status(403).json({ error: 'Your registration is pending approval from the Super Admin.' });
@@ -316,22 +330,32 @@ export const login = async (req: RequestWithId, res: Response) => {
     // Temp set req.user to pass to audit logger
     (req as any).user = { id: user._id.toString(), email: user.email, role: resolvedRole, name: user.name };
 
-    await AuditService.log({
-      action: 'LOGIN_SUCCESS',
-      collectionName: collection,
-      documentId: user._id.toString(),
-      actor: AuditService.getActorFromReq(req),
-      request: AuditService.getRequestInfo(req),
-      description: `User logged in successfully`
-    });
+    timer.mark('token');
 
-    res.json({
-      user: await buildAuthProfile(user, resolvedRole as string),
-      token,
-    });
+    // The audit entry and the profile are independent, so they run together; the
+    // answer still waits for both, so a login is never reported without its audit
+    // entry having been attempted.
+    const [, profile] = await Promise.all([
+      AuditService.log({
+        action: 'LOGIN_SUCCESS',
+        collectionName: collection,
+        documentId: user._id.toString(),
+        actor: AuditService.getActorFromReq(req),
+        request: AuditService.getRequestInfo(req),
+        description: `User logged in successfully`
+      }),
+      buildAuthProfile(user, resolvedRole as string),
+    ]);
+    timer.mark('audit_and_profile');
+
+    outcome = 'success';
+    res.json({ user: profile, token });
   } catch (error) {
+    outcome = 'error';
     console.error('Login error:', error);
     res.status(500).json({ error: 'Something went wrong' });
+  } finally {
+    logTiming('login_timing', req.requestId, outcome, timer);
   }
 };
 
