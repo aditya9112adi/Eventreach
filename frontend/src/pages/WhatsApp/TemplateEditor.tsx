@@ -6,6 +6,7 @@ import { useAuth } from '../../store/authStore';
 import { useToast } from '../../components/ui/Toast';
 import { Button } from '../../components/ui/Button';
 import { useUnsavedChangesGuard } from '../../components/useUnsavedChangesGuard';
+import { UnsavedChangesDialog } from '../../components/ui/UnsavedChangesDialog';
 import {
   BUTTON_TYPE_LABELS,
   COMMON_TEMPLATE_LANGUAGES,
@@ -85,7 +86,7 @@ const TemplateEditor = () => {
   const [admins, setAdmins] = useState<AdminOption[]>([]);
 
   const dirty = isFormDirty(form, saved);
-  useUnsavedChangesGuard(dirty && !saving);
+  const leaveGuard = useUnsavedChangesGuard(dirty && !saving);
 
   useEffect(() => {
     api
@@ -563,6 +564,8 @@ const TemplateEditor = () => {
           <p className="text-[11px] text-foreground/40">Shown with the example values. Each guest receives their own details.</p>
         </aside>
       </div>
+
+      <UnsavedChangesDialog open={leaveGuard.pendingPath !== null} onYes={leaveGuard.confirmLeave} onNo={leaveGuard.stay} />
     </div>
   );
 };

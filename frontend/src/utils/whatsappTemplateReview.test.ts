@@ -17,6 +17,7 @@ import {
   canConfirmSubmission,
   emptyButtonRow,
   formFromTemplate,
+  leaveDestination,
   metaStatusDisplay,
   parseAccountPage,
   parseReview,
@@ -167,5 +168,23 @@ describe('the Meta account list', () => {
     assert.match(accountUsabilityNote(t({ localTemplateId: null, sendableFromHere: false })), /only at Meta/);
     assert.match(accountUsabilityNote(t({ status: 'PAUSED', sendableFromHere: false })), /paused by meta/);
     assert.match(accountUsabilityNote(t({ sendableFromHere: false })), /not recorded it as approved/);
+  });
+});
+
+describe('leaving with unsaved changes', () => {
+  const origin = 'https://app.example.com';
+
+  test('the destination is the in-app path, with its query and hash', () => {
+    assert.equal(leaveDestination('/campaigns', origin), '/campaigns');
+    assert.equal(leaveDestination('/reports?event=1#top', origin), '/reports?event=1#top');
+    assert.equal(leaveDestination('https://app.example.com/whatsapp/templates', origin), '/whatsapp/templates');
+  });
+
+  test('another site, or nothing usable, has no destination', () => {
+    assert.equal(leaveDestination('https://evil.example.com/x', origin), null);
+    assert.equal(leaveDestination('//evil.example.com/x', origin), null);
+    assert.equal(leaveDestination('', origin), null);
+    assert.equal(leaveDestination(null, origin), null);
+    assert.equal(leaveDestination('http://[bad', origin), null);
   });
 });
