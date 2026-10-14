@@ -1,7 +1,8 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { User } from '@eventreach/shared';
 import api from '../services/api';
+import { profileFromStorageEvent, sameProfile } from '../utils/accessSync';
 
 interface AuthContextType {
   user: User | null;
@@ -9,6 +10,12 @@ interface AuthContextType {
   login: (token: string, user: User) => void;
   logout: () => void;
   updateUser: (fields: Partial<User>) => void;
+  /**
+   * Re-reads this account from the server (GET /auth/me) and adopts the answer.
+   * Returns what the profile was and is now, or null if the read failed or
+   * there is no session. A 401 means the session is over: it is cleared.
+   */
+  refreshUser: () => Promise<{ before: User | null; after: User } | null>;
   isLoading: boolean;
 }
 
@@ -27,6 +34,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [isLoading, setIsLoading] = useState(true);
+  // The profile as of the latest answer, readable between renders.
+  const userRef = useRef<User | null>(null);
+  userRef.current = user;
 
   useEffect(() => {
     let cancelled = false;
@@ -83,6 +93,44 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [token]);
 
+  const refreshUser = useCallback(async () => {
+    if (!localStorage.getItem('token')) return null;
+    try {
+      const response = await api.get('/auth/me');
+      const fresh: User = response.data.user;
+      const before = userRef.current;
+      userRef.current = fresh;
+      // An unchanged answer keeps the same object, so nothing re-renders.
+      setUser((prev) => (sameProfile(prev, fresh) ? prev : fresh));
+      localStorage.setItem('user', JSON.stringify(fresh));
+      return { before, after: fresh };
+    } catch (error: any) {
+      if (error?.response?.status === 401) {
+        // Revoked, expired, deleted, or the password was reset: the session is over.
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        setToken(null);
+        setUser(null);
+      }
+      // Any other failure keeps what is shown; the next trigger retries.
+      return null;
+    }
+  }, []);
+
+  // Another tab of this account re-read its permissions: follow it, so a tab
+  // whose own push was missed still agrees. Another account's profile is ignored.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      const adopted = profileFromStorageEvent(event, userRef.current);
+      if (adopted) {
+        userRef.current = adopted;
+        setUser(adopted);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   const login = (newToken: string, newUser: User) => {
     localStorage.setItem('token', newToken);
     localStorage.setItem('user', JSON.stringify(newUser));
@@ -107,7 +155,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, updateUser, isLoading }}>
+    <AuthContext.Provider value={{ user, token, login, logout, updateUser, refreshUser, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

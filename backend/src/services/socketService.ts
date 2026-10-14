@@ -39,6 +39,39 @@ export const emitPendingApprovalsChanged = async () => {
   }
 };
 
+/**
+ * Tells ONE account that something about its access changed, so its open
+ * browser tabs re-read their permissions.
+ *
+ * The event deliberately carries no permission values and no personal data -
+ * only a reason and a time. The client answers it by asking the API (GET
+ * /auth/me), which is the single source of truth, so a forged, duplicated,
+ * late or out-of-order event can at worst cause one harmless re-read. The room
+ * is the account's own id, so only that account's sockets receive it (the
+ * handshake puts a socket in its own room only; a client cannot choose rooms).
+ *
+ * Call it only AFTER the change has been saved. It never throws: a failed
+ * notification must not undo or fail the change that triggered it, and the
+ * client's focus/reconnect/interval re-read covers a missed one.
+ *
+ * Multi-instance note: Socket.IO rooms are per process. With more than one
+ * backend instance this reaches only sockets connected to the instance that
+ * handled the change, until a shared adapter (e.g. @socket.io/redis-adapter)
+ * is configured. Until then the client's periodic re-read bounds the delay.
+ */
+export const ACCESS_CHANGED_EVENT = 'ACCESS_CHANGED';
+export type AccessChangeReason = 'templates' | 'approved' | 'rejected' | 'credentials';
+
+export const emitAccessChanged = (accountId: unknown, reason: AccessChangeReason) => {
+  try {
+    const room = String(accountId ?? '');
+    if (!room) return;
+    getIO().to(room).emit(ACCESS_CHANGED_EVENT, { reason, at: new Date().toISOString() });
+  } catch (error) {
+    console.error('Failed to emit ACCESS_CHANGED:', (error as any)?.message || error);
+  }
+};
+
 interface SocketUser {
   id: string;
   email?: string;
