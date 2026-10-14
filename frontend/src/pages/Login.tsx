@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -6,6 +6,7 @@ import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
 import { takeLogoutReason } from '../utils/inactivity';
 import api from '../services/api';
+import { LOGIN_TIMEOUT_MS, WAKE_NOTICE_AFTER_MS, loginErrorMessage, loginWaitNotice, warmUpApi } from '../utils/loginWait';
 import { MessageSquare, Lock, Mail, EyeOff, Eye, Loader2, Sun, Moon } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
 
@@ -31,6 +32,17 @@ const Login = () => {
   const { theme, toggleTheme } = useTheme();
   const [showPassword, setShowPassword] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  // Shown when sign-in has been waiting long enough that the server is probably waking.
+  const [waitNotice, setWaitNotice] = useState<string | null>(null);
+  const waitTimer = useRef<number | null>(null);
+
+  // A sleeping server starts waking now, while the person types, not when they press Sign In.
+  useEffect(() => {
+    warmUpApi(api.defaults.baseURL);
+  }, []);
+  useEffect(() => () => {
+    if (waitTimer.current !== null) window.clearTimeout(waitTimer.current);
+  }, []);
 
   const {
     register,
@@ -41,15 +53,18 @@ const Login = () => {
   });
 
   const onSubmit = async (data: LoginFormValues) => {
+    setApiError(null);
+    waitTimer.current = window.setTimeout(() => setWaitNotice(loginWaitNotice(WAKE_NOTICE_AFTER_MS)), WAKE_NOTICE_AFTER_MS);
     try {
-      setApiError(null);
-      const response = await api.post('/auth/login', data);
+      const response = await api.post('/auth/login', data, { timeout: LOGIN_TIMEOUT_MS });
       login(response.data.token, response.data.user);
       navigate('/dashboard');
     } catch (error: any) {
-      setApiError(
-        error.response?.data?.error || 'Something went wrong. Please try again.'
-      );
+      setApiError(loginErrorMessage(error));
+    } finally {
+      if (waitTimer.current !== null) window.clearTimeout(waitTimer.current);
+      waitTimer.current = null;
+      setWaitNotice(null);
     }
   };
 
@@ -111,6 +126,12 @@ const Login = () => {
             {apiError && (
               <div className="bg-destructive/10 border border-destructive/20 text-destructive p-3 rounded-lg mb-6 text-sm text-center font-medium">
                 {apiError}
+              </div>
+            )}
+
+            {waitNotice && (
+              <div className="bg-accent/10 border border-accent/20 text-foreground/80 p-3 rounded-lg mb-6 text-sm text-center" role="status" aria-live="polite">
+                {waitNotice}
               </div>
             )}
 
