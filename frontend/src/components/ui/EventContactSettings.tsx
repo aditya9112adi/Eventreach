@@ -6,7 +6,7 @@ import { useToast } from './Toast';
 import { formatDateTime } from '../../utils/datetime';
 import { pocSourceLabel, senderChoices, senderSourceLabel, senderStatusNote, type EffectiveSender } from '../../utils/eventContactDisplay';
 
-type Sender = { _id: string; displayPhoneNumber: string; verifiedName: string; enabled: boolean; listedInMeta: boolean; metaStatus: string | null };
+type Sender = { _id: string; displayPhoneNumber: string; verifiedName: string; enabled: boolean; listedInMeta: boolean; metaStatus: string | null; source?: string; unavailableReasons?: string[] };
 type ContactData = { effectiveSender?: EffectiveSender | null; localPoc: { name: string; mobile: string; email?: string; responsibility?: string } | null; localWhatsAppSenderId: string | null; poc: any; whatsappSenderId: string | null; assignmentSource: string; pocSource: string; environmentSenderConfigured?: boolean };
 
 export function EventContactSettings({ eventId, parentEventId }: { eventId: string; parentEventId?: string | null }) {
@@ -63,7 +63,7 @@ export function EventContactSettings({ eventId, parentEventId }: { eventId: stri
       <label className="text-sm">POC mobile (international allowed)<input className="mt-1 block w-full rounded-lg border border-border bg-background p-2" value={mobile} onChange={e => setMobile(e.target.value)} maxLength={40} placeholder="+919876543210" /></label>
       <label className="text-sm">POC email (optional)<input className="mt-1 block w-full rounded-lg border border-border bg-background p-2" value={email} onChange={e => setEmail(e.target.value)} maxLength={254} placeholder="contact@example.com" /></label>
       <label className="text-sm">Responsibility (optional)<input className="mt-1 block w-full rounded-lg border border-border bg-background p-2" value={responsibility} onChange={e => setResponsibility(e.target.value)} maxLength={120} placeholder="Venue coordination" /></label>
-      <label className="text-sm md:col-span-2">WhatsApp sender<select className="mt-1 block w-full rounded-lg border border-border bg-background p-2" value={senderId} onChange={e => setSenderId(e.target.value)}><option value="">{parentEventId ? 'Inherit Main Event / environment sender' : 'Use environment sender'}</option>{senderChoices(senders, contact.localWhatsAppSenderId).map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</select><span className="text-xs text-foreground/50">Only enabled, listed, CONNECTED senders available to your account can be newly assigned. The status is verified with Meta when you save.</span></label>
+      <label className="text-sm md:col-span-2">WhatsApp sender<select className="mt-1 block w-full rounded-lg border border-border bg-background p-2" value={senderId} onChange={e => setSenderId(e.target.value)}><option value="">{parentEventId ? 'Inherit Main Event / environment sender' : 'Use environment sender'}</option>{senderChoices(senders, contact.localWhatsAppSenderId).map(c => <option key={c.value} value={c.value} disabled={!c.available && c.value !== contact.localWhatsAppSenderId}>{c.label}</option>)}</select><span className="text-xs text-foreground/50">Only enabled, listed, CONNECTED senders available to your account can be newly assigned. The status is verified with Meta when you save.</span></label>
       <div className="md:col-span-2"><Button onClick={save} disabled={loading}>{loading ? 'Saving…' : 'Save contact settings'}</Button></div>
     </div>}
   </section>;

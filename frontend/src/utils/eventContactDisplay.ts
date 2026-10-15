@@ -25,6 +25,10 @@ export interface SenderOption {
   enabled: boolean;
   listedInMeta: boolean;
   metaStatus: string | null;
+  /** 'embedded_signup' for a number an account connected itself. */
+  source?: string;
+  /** Why a connected number cannot be assigned yet, from the server. */
+  unavailableReasons?: string[];
 }
 
 /** Same rule as the server (whatsappSenderPolicy): fresh for under 15 minutes. */
@@ -81,8 +85,17 @@ export const senderStatusNote = (
  * form never silently shows a different choice than the one stored.
  */
 export const senderChoices = (senders: SenderOption[], localSenderId: string | null) => {
-  const assignable = senders.filter((s) => s.enabled && s.listedInMeta && s.metaStatus === 'CONNECTED');
+  const usable = (s: SenderOption) => s.enabled && s.listedInMeta && s.metaStatus === 'CONNECTED' && !(s.unavailableReasons && s.unavailableReasons.length > 0);
+  const assignable = senders.filter(usable);
   const choices = assignable.map((s) => ({ value: s._id, label: `${s.displayPhoneNumber} — ${s.verifiedName}`, available: true }));
+  // A number the person connected that cannot be assigned yet is listed - disabled -
+  // with the reason, rather than silently missing.
+  for (const s of senders) {
+    if (s.source === 'embedded_signup' && !usable(s) && s._id !== localSenderId) {
+      const reason = s.unavailableReasons?.[0] ?? 'not connected and enabled yet';
+      choices.push({ value: s._id, label: `${s.displayPhoneNumber} — ${s.verifiedName} (unavailable: ${reason})`, available: false });
+    }
+  }
   if (localSenderId && !assignable.some((s) => s._id === localSenderId)) {
     const current = senders.find((s) => s._id === localSenderId);
     choices.unshift({

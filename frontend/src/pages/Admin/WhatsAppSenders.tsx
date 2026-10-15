@@ -12,6 +12,8 @@ type Sender = {
   listedInMeta: boolean; enabled: boolean; pocTestEnabled?: boolean; label?: string; allowedAdminIds: string[];
   lastSyncedAt?: string | null;
   statusCheckedAt?: string | null;
+  source?: string; ownerAccountId?: string | null; onboardingStatus?: string | null; nextActionMessage?: string | null;
+  lastError?: { message: string; at: string | null } | null; lastVerifiedAt?: string | null;
 };
 type AdminOption = { _id: string; name: string; email: string };
 
@@ -48,6 +50,13 @@ export default function WhatsAppSenders() {
     catch (e: any) { await load(); const m = senderRefreshMessage(e.response?.status ?? 0, e.response?.data); showToast(m.type, m.text); }
   };
 
+  // Connected (Embedded Signup) numbers: re-check with Meta, or disconnect (erases the stored authorization).
+  const onboardingAction = async (sender: Sender, action: 'verify' | 'disconnect') => {
+    if (action === 'disconnect' && !window.confirm(`Disconnect ${sender.displayPhoneNumber}? Events assigned to it stop sending until it is reconnected.`)) return;
+    try { await api.post(`/whatsapp-onboarding/senders/${sender._id}/${action}`); await load(); showToast('success', action === 'verify' ? 'Status checked with WhatsApp.' : 'Number disconnected.'); }
+    catch (e: any) { await load(); showToast('error', e.response?.data?.error?.message || 'The action failed.'); }
+  };
+
   return <div className="max-w-6xl mx-auto space-y-6">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div><h1 className="text-3xl font-bold">WhatsApp Senders</h1><p className="text-sm text-foreground/60 mt-1">Only phone numbers returned by Meta can be managed here. Newly synced senders start disabled.</p></div>
@@ -56,6 +65,13 @@ export default function WhatsAppSenders() {
     {senders.length === 0 ? <div className="rounded-xl border border-border bg-surface p-8 text-center text-foreground/60">No senders synced yet. Use “Sync from Meta” to discover phone numbers in the configured WhatsApp Business Account.</div> :
       <div className="space-y-4">{senders.map(sender => <section key={sender._id} className="rounded-xl border border-border bg-surface p-5 space-y-4">
         <div className="flex flex-wrap justify-between gap-3"><div className="flex gap-3"><div className="rounded-lg bg-accent/10 p-3 h-fit"><Smartphone className="w-5 h-5 text-accent" /></div><div><h2 className="font-semibold">{sender.displayPhoneNumber} · {sender.verifiedName} {sender.isEnvironmentSender && <span className="text-xs font-normal rounded bg-accent/10 text-accent px-2 py-1 ml-1">Environment sender</span>}</h2><p className="text-xs text-foreground/50 break-all">Phone Number ID: {sender.phoneNumberId}</p><p className="text-sm mt-1">Meta status: <strong>{sender.metaStatus || 'Unknown'}</strong>{sender.metaStatus ? (isStatusFresh(sender.statusCheckedAt) ? ` (checked ${formatDateTime(sender.statusCheckedAt)})` : ' (not verified in the last 15 minutes)') : ''} · Quality: {sender.qualityRating || 'Unknown'} · {sender.listedInMeta ? 'Listed in Meta' : 'Not listed in latest sync'}</p></div></div><Button variant="secondary" onClick={() => refresh(sender)}><RefreshCw className="w-4 h-4 mr-2" />Refresh status</Button></div>
+        {sender.source === 'embedded_signup' && <div className="rounded-lg border border-border/60 p-3 text-sm space-y-1">
+          <p><strong>Connected by an account</strong> (Embedded Signup) · onboarding: <strong>{sender.onboardingStatus ?? 'unknown'}</strong>{sender.ownerAccountId ? <> · owner: {admins.find(a => a._id === sender.ownerAccountId)?.name || 'an account'}</> : null}</p>
+          {sender.nextActionMessage && <p className="text-amber-700">{sender.nextActionMessage}</p>}
+          {sender.lastError && <p className="text-xs text-destructive">Last problem: {sender.lastError.message}</p>}
+          <p className="text-xs text-foreground/50">Usable by its owner's events, and by Admins you allow below - once you enable it. It sends with its own stored WhatsApp authorization, never the server's.</p>
+          {sender.onboardingStatus !== 'disconnected' && <div className="flex gap-2 pt-1"><Button variant="secondary" onClick={() => onboardingAction(sender, 'verify')}>Check onboarding status</Button><Button variant="ghost" onClick={() => onboardingAction(sender, 'disconnect')}>Disconnect</Button></div>}
+        </div>}
         <div className="grid gap-4 md:grid-cols-2">
           <label className="text-sm">Internal label<input className="mt-1 block w-full rounded-lg border border-border bg-background p-2" defaultValue={sender.label || ''} onBlur={e => { if (e.target.value !== (sender.label || '')) void save(sender, { label: e.target.value }); }} placeholder="e.g. Wedding Team" /></label>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sender.enabled} onChange={e => void save(sender, { enabled: e.target.checked })} /> Enabled for assignment <span className="text-xs text-foreground/50">(an enabled sender can be assigned and used only while Meta reports it CONNECTED)</span></label>

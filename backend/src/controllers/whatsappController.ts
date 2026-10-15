@@ -34,7 +34,9 @@ import { Event } from '../models/Event';
 import { findEventGuest } from '../services/subEventService';
 import { MessageLog } from '../models/MessageLog';
 import { normalizeIndianPhone } from '../utils/indianPhone';
-import { assertSameSender, resolveSendingSender, sendingPhoneNumberId } from '../services/senderResolution';
+import { assertSameSender, resolveSendingSender, sendTargetFor } from '../services/senderResolution';
+import type { SendTarget } from '../services/WhatsAppService';
+import { assertTemplateUsableFromSender } from '../services/senderTemplateCheck';
 
 /**
  * Named request fields for each known template, in {{1}}, {{2}}, … order.
@@ -297,7 +299,7 @@ const uploadHeaderMedia = async (
   }
 
   try {
-    const mediaId = await whatsappService.uploadMediaToMeta(filePath, mimeType, attachment.filename, context.senderPhoneNumberId);
+    const mediaId = await whatsappService.uploadMediaToMeta(filePath, mimeType, attachment.filename, context.sendTarget);
     return {
       kind: expectedKind,
       mediaId,
@@ -334,7 +336,8 @@ export interface EventTemplateContext {
    * The event's resolved WhatsApp sender (senderResolution). Header media is
    * uploaded through it; undefined is the environment sender.
    */
-  senderPhoneNumberId?: string;
+  /** The resolved sender's phone number id and, for a connected number, its own token. */
+  sendTarget?: SendTarget;
 }
 
 export interface ResolvedEventTemplate extends EventTemplateContext {
@@ -616,10 +619,28 @@ export const buildEventTemplateHandler = (
        * environment sender. Nothing in the request can choose it.
        */
       const sender = await resolveSendingSender(context.event);
-      context.senderPhoneNumberId = sendingPhoneNumberId(sender);
+      const target = await sendTargetFor(sender);
+      context.sendTarget = target;
+      // An assigned sender sends from its own phone number id - with its own
+      // token when it is a connected number - never the environment sender's.
       const sendDeps: SendTemplateDeps | undefined = sender.kind === 'assigned'
-        ? { config: { ...readTemplateConfig(), phoneNumberId: sender.phoneNumberId } }
+        ? { config: { ...readTemplateConfig(), phoneNumberId: target.phoneNumberId, ...(target.accessToken ? { accessToken: target.accessToken } : {}) } }
         : undefined;
+
+      // A connected number sends from its business's own WhatsApp Business
+      // Account, which has its own templates: the template must be there,
+      // approved, and shaped as EventReach fills it - checked once, before any
+      // upload or message (services/senderTemplateCheck).
+      if (sender.kind === 'assigned' && sender.credential === 'sender' && target.accessToken) {
+        await assertTemplateUsableFromSender({
+          senderId: sender.senderId,
+          accessToken: target.accessToken,
+          templateName: context.templateName,
+          languageCode: context.languageCode,
+          expectedPlaceholders: resolveEventTemplate(context.templateName).spec.fields.length,
+          headerFormat: context.headerFormat,
+        });
+      }
 
       /**
        * Uploaded once for the whole request, before any recipient is

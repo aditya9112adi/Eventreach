@@ -351,11 +351,14 @@ describe('Composer: the event decides the sender', () => {
     const s = await mkSender();
     await assign(fx.mainA, s);
     meta.messageDelayMs = 50;
-    let fired = false;
+    // The first message disables the sender, and every message already in flight
+    // waits until that write has committed. Without the wait, the other in-flight
+    // messages could finish and start the next recipients before the write landed,
+    // so the outcome depended on database timing (it failed under load).
+    let disabling: Promise<unknown> | null = null;
     meta.onMessage = async () => {
-      if (fired) return;
-      fired = true;
-      await WhatsAppSender.updateOne({ _id: s._id }, { $set: { enabled: false } });
+      if (!disabling) disabling = WhatsAppSender.updateOne({ _id: s._id }, { $set: { enabled: false } }).exec();
+      await disabling;
     };
     const res = await compose(fx.mainA, await guests(fx.mainA, 8));
     const failed = res.body.failed ?? [];

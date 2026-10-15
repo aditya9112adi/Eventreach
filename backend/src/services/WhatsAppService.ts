@@ -137,6 +137,18 @@ export const buildFollowUpPayloads = (to: string, messageText: string, attachmen
   return payloads;
 };
 
+/**
+ * Where a message is sent from and with which credential. Both empty: the
+ * environment sender (WHATSAPP_PHONE_ID, WHATSAPP_TOKEN). A bare string is a
+ * phone number id with the environment token (the original signature).
+ */
+export interface SendTarget {
+  phoneNumberId?: string;
+  accessToken?: string;
+}
+
+const targetOf = (target: string | SendTarget | undefined): SendTarget => (typeof target === 'string' ? { phoneNumberId: target } : target ?? {});
+
 export class WhatsAppService {
   private isMockMode: boolean;
   private token: string | undefined;
@@ -161,13 +173,14 @@ export class WhatsAppService {
    * phoneNumberId is the sender an event resolved to (senderResolution);
    * without it, the configured WHATSAPP_PHONE_ID, as before.
    */
-  private postMessage(payload: any, phoneNumberId: string | undefined = this.phoneId) {
+  private postMessage(payload: any, target?: string | SendTarget) {
+    const { phoneNumberId = this.phoneId, accessToken = this.token } = targetOf(target);
     return axios.post(
       `https://graph.facebook.com/${this.apiVersion}/${phoneNumberId}/messages`,
       payload,
       {
         headers: {
-          'Authorization': `Bearer ${this.token}`,
+          'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
         // Without a cap, one wedged socket stalls the whole campaign batch
@@ -189,8 +202,11 @@ export class WhatsAppService {
    * Returns the ID only — the Authorization header and the file's bytes are
    * never logged.
    */
-  async uploadMediaToMeta(filePath: string, mimeType: string, filename: string, phoneNumberId: string | undefined = this.phoneId): Promise<string> {
-    if (this.isMockMode) {
+  async uploadMediaToMeta(filePath: string, mimeType: string, filename: string, target?: string | SendTarget): Promise<string> {
+    const { phoneNumberId = this.phoneId, accessToken = this.token } = targetOf(target);
+    // Mock mode stands in for a missing DEFAULT sender only. A connected number
+    // with its own credential is always real - its sends are never faked.
+    if (this.isMockMode && !targetOf(target).accessToken) {
       return `mock-media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
 
@@ -205,7 +221,7 @@ export class WhatsAppService {
         `https://graph.facebook.com/${this.apiVersion}/${phoneNumberId}/media`,
         form,
         {
-          headers: { 'Authorization': `Bearer ${this.token}` },
+          headers: { 'Authorization': `Bearer ${accessToken}` },
           // A 100 MB PDF needs longer than a message post.
           timeout: 120_000,
           maxBodyLength: Infinity,
@@ -238,8 +254,8 @@ export class WhatsAppService {
    * handset outcome only shows up later on the webhook. Callers must not
    * treat a resolved promise as proof of delivery.
    */
-  async sendMessage(to: string, messageText: string, mediaAttachments: any[], phoneNumberId: string | undefined = this.phoneId): Promise<WhatsAppSendResult> {
-    if (this.isMockMode) {
+  async sendMessage(to: string, messageText: string, mediaAttachments: any[], target?: string | SendTarget): Promise<WhatsAppSendResult> {
+    if (this.isMockMode && !targetOf(target).accessToken) {
       return this.sendMockMessage(to, messageText, mediaAttachments);
     }
 
@@ -261,7 +277,7 @@ export class WhatsAppService {
        */
       const primary = buildPrimaryPayload(to, messageText, mediaAttachments);
 
-      const response = await this.postMessage(primary, phoneNumberId);
+      const response = await this.postMessage(primary, target);
 
       // Meta answers with { messages: [{ id: "wamid.…" }] }. That id is the
       // only handle the delivery webhook will refer to later.
@@ -277,7 +293,7 @@ export class WhatsAppService {
        */
       for (const followUp of buildFollowUpPayloads(to, messageText, mediaAttachments)) {
         try {
-          await this.postMessage(followUp, phoneNumberId);
+          await this.postMessage(followUp, target);
         } catch (err: any) {
           console.error('WhatsApp follow-up message failed:', err?.response?.data?.error || err?.message);
         }

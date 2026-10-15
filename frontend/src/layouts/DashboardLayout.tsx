@@ -251,6 +251,11 @@ const DashboardLayout = () => {
     navItems.splice(navItems.findIndex((item) => item.to === '/campaigns') + 1, 0, { name: 'WhatsApp Templates', to: '/whatsapp/templates', icon: FileText });
   }
 
+  // Admins and Super Admins connect their own WhatsApp number here.
+  if (user?.role === 'SuperAdmin' || user?.role === 'Admin') {
+    navItems.push({ name: 'My WhatsApp Number', to: '/whatsapp/connect', icon: Smartphone });
+  }
+
   if (user?.role === 'SuperAdmin') {
     navItems.push({ name: 'User Approvals', to: '/admin/approvals', icon: Users });
     navItems.push({ name: 'Just Access', to: '/admin/just-access', icon: MessageSquare });

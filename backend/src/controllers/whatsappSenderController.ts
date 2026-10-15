@@ -10,6 +10,10 @@ import { isEventAuthorized } from '../services/eventAuthService';
 import { forceRefreshSenderStatus, refreshSenderStatusIfStale, syncWhatsAppSenders } from '../services/whatsappSenderSyncService';
 import { canEditEventContact } from '../services/eventOwnership';
 import { isSenderStatusFresh } from '../services/whatsappSenderPolicy';
+import { createTokenStatusClient } from '../services/whatsappSenderSyncService';
+import { embeddedSenderProblems, isEmbeddedSender, ownerMayUseSender, ownerRefusal } from '../services/senderEligibility';
+import { resolveEventOwner } from '../services/eventOwnership';
+import { readSenderAccessToken } from '../services/whatsappOnboardingService';
 
 const senderSettingsSchema = z.object({
   enabled: z.boolean().optional(),
@@ -41,10 +45,22 @@ const senderPublic = (sender: any, viewerRole?: string) => ({
   label: sender.label ?? '',
   lastSyncedAt: sender.lastSyncedAt ?? null,
   statusCheckedAt: sender.statusCheckedAt ?? null,
+  source: sender.source ?? 'inventory',
+  onboardingStatus: sender.onboardingStatus ?? null,
+  nextActionMessage: sender.nextActionMessage ?? null,
   // The Business Account id, the allowlist (other Admins' ids) and the POC designation are for
   // Super Admins only. Any other viewer - or none given - gets none of them, so a
   // new caller of this function is private by default.
-  ...(viewerRole === 'SuperAdmin' ? { wabaId: sender.wabaId, allowedAdminIds: (sender.allowedAdminIds || []).map(String), pocTestEnabled: Boolean(sender.pocTestEnabled) } : {}),
+  ...(viewerRole === 'SuperAdmin'
+    ? {
+        wabaId: sender.wabaId,
+        allowedAdminIds: (sender.allowedAdminIds || []).map(String),
+        pocTestEnabled: Boolean(sender.pocTestEnabled),
+        ownerAccountId: sender.ownerAccountId ? String(sender.ownerAccountId) : null,
+        lastError: sender.lastError?.message ? { message: sender.lastError.message, at: sender.lastError.at ?? null } : null,
+        lastVerifiedAt: sender.lastVerifiedAt ?? null,
+      }
+    : {}),
 });
 
 export const listWhatsAppSenders = async (req: Request, res: Response) => {
@@ -52,12 +68,21 @@ export const listWhatsAppSenders = async (req: Request, res: Response) => {
     const user = (req as any).user;
     const query: Record<string, unknown> = {};
     if (user.role !== 'SuperAdmin') {
-      query.enabled = true;
-      query.listedInMeta = true;
-      query.allowedAdminIds = user.id;
+      // Their allowed senders, as before - plus every number they connected
+      // themselves, usable or not, so the reason it is unavailable can be shown.
+      query.$or = [
+        { enabled: true, listedInMeta: true, allowedAdminIds: user.id },
+        { source: 'embedded_signup', ownerAccountId: user.id },
+      ];
     }
-    const senders = await WhatsAppSender.find(query).sort({ displayPhoneNumber: 1 }).lean();
-    return res.json({ senders: senders.map((s) => senderPublic(s, user.role)) });
+    const senders = await WhatsAppSender.find(query).select('+credential').sort({ displayPhoneNumber: 1 }).lean();
+    return res.json({
+      senders: senders.map((s: any) => ({
+        ...senderPublic(s, user.role),
+        // Why a connected number cannot be assigned yet, from what is stored.
+        ...(isEmbeddedSender(s) ? { unavailableReasons: embeddedSenderProblems(s, Boolean(s.credential?.ciphertext)) } : {}),
+      })),
+    });
   } catch (error) {
     console.error('List WhatsApp senders failed:', error);
     return res.status(500).json({ error: 'Failed to list WhatsApp senders' });
@@ -259,8 +284,26 @@ export const updateEventContact = async (req: Request, res: Response) => {
     // can still be edited after the event's sender has become unavailable.
     // Sending re-checks the sender separately (a later stage).
     if (parsed.data.whatsappSenderId && parsed.data.whatsappSenderId !== currentSenderId) {
-      const sender: any = await WhatsAppSender.findById(parsed.data.whatsappSenderId).lean();
+      const sender: any = await WhatsAppSender.findById(parsed.data.whatsappSenderId).select('+credential').lean();
       if (!sender) return res.status(400).json({ error: 'Selected WhatsApp sender was not synced from Meta.' });
+      if (isEmbeddedSender(sender)) {
+        // A connected number: usable only for its owner's events or an allowed
+        // Admin's, only once connected and enabled, and checked with its own token.
+        const problems = embeddedSenderProblems(sender, Boolean(sender.credential?.ciphertext));
+        if (problems.length > 0) return res.status(409).json({ error: problems[0], reasons: problems });
+        const owner = await resolveEventOwner(event);
+        if (!ownerMayUseSender(sender, owner)) return res.status(403).json({ error: ownerRefusal(sender, owner) });
+        if (user.role === 'Admin' && String(sender.ownerAccountId) !== String(user.id) && !(sender.allowedAdminIds || []).some((id: any) => String(id) === String(user.id))) {
+          return res.status(403).json({ error: 'You are not allowed to assign this WhatsApp sender.' });
+        }
+        let connectedStatus: string | null;
+        try {
+          connectedStatus = await refreshSenderStatusIfStale(sender, createTokenStatusClient(await readSenderAccessToken(String(sender._id))));
+        } catch {
+          return res.status(502).json({ error: 'Could not verify the number with WhatsApp; assignment was not saved.' });
+        }
+        if (connectedStatus !== 'CONNECTED') return res.status(409).json({ error: `WhatsApp reports this number as ${connectedStatus ?? 'unknown'}.` });
+      } else {
       // Local checks first: an Admin who may not use this sender, or a sender
       // that is disabled, unlisted or in another account, never causes a call
       // to Meta.
@@ -278,6 +321,7 @@ export const updateEventContact = async (req: Request, res: Response) => {
         return res.status(502).json({ error: 'Could not verify sender status freshness; assignment was not saved.' });
       }
       if (freshStatus !== 'CONNECTED') return res.status(409).json({ error: 'Selected WhatsApp sender is not enabled and connected.' });
+      }
     }
 
     const before = { poc: pocOf(event.poc), whatsappSenderId: currentSenderId };
