@@ -27,6 +27,7 @@ import {
   ConfirmDeleteDialog,
 } from '../../components/ui/DeleteControls';
 import { getSerialNumber } from '../../utils/pagination';
+import { contactErrorMessage } from '../../utils/contactErrors';
 import { getPageSelectionState, toggleSelectAllOnPage, toggleSelection } from '../../utils/selection';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -54,12 +55,16 @@ type ContactForm = z.infer<typeof contactSchema>;
 
 /** `value` may be the raw text, or a pre-computed count where the visible
  *  characters and the countable ones differ (a phone number's country code). */
-const CharCount = ({ value, max }: { value: string | number | undefined; max: number }) => {
+const CharCount = ({ value, max, warnAtMax = true }: { value: string | number | undefined; max: number; warnAtMax?: boolean }) => {
   const len = typeof value === 'number' ? value : value?.length ?? 0;
   const atLimit = len >= max;
+  // `warnAtMax` is off where a full field is the goal, not a problem: a phone
+  // number with all ten digits typed used to read "10/10 - limit reached" in red,
+  // which looked like an error (or a cap on how many guests can be added).
+  const warn = atLimit && warnAtMax;
   return (
-    <p className={`mt-1 text-xs text-right ${atLimit ? 'text-destructive font-semibold' : 'text-foreground/40'}`}>
-      {len}/{max}{atLimit ? ' — limit reached' : ''}
+    <p className={`mt-1 text-xs text-right ${warn ? 'text-destructive font-semibold' : 'text-foreground/40'}`}>
+      {len}/{max}{warn ? ' — limit reached' : ''}
     </p>
   );
 };
@@ -178,34 +183,47 @@ const ContactList = () => {
     };
   }, [activeEventId, currentPage, rowsPerPage, debouncedSearch, refreshToken]);
 
+  // Set synchronously while a save is in flight, so pressing Enter again (or a
+  // double click) cannot send the same guest twice before the first answer arrives.
+  const saveInFlight = useRef(false);
+
   const onAddContact = async (data: ContactForm) => {
-    if (!activeEvent) return;
+    if (!activeEvent || saveInFlight.current) return;
+    saveInFlight.current = true;
     try {
       setAddError('');
-      const response = await api.post('/contacts', {
+      await api.post('/contacts', {
         ...data,
         eventId: activeEvent._id
       });
+      // Only now, with the server's confirmation: refresh, close, clear, announce.
       setRefreshToken((t) => t + 1);
       setIsAddModalOpen(false);
       reset();
       showToast('success', 'Guest added successfully');
     } catch (err: any) {
-      setAddError(err.response?.data?.error || 'Failed to add contact');
+      // The modal stays open with everything typed so far; the reason is the
+      // server's own wording, or a plain "try again" when it never answered.
+      setAddError(contactErrorMessage(err, 'add'));
+    } finally {
+      saveInFlight.current = false;
     }
   };
 
   const onEditContact = async (data: ContactForm) => {
-    if (!editingContact) return;
+    if (!editingContact || saveInFlight.current) return;
+    saveInFlight.current = true;
     try {
       setAddError('');
-      const response = await api.put(`/contacts/${editingContact._id}`, data);
+      await api.put(`/contacts/${editingContact._id}`, data);
       setRefreshToken((t) => t + 1);
       setEditingContact(null);
       reset();
       showToast('success', 'Contact updated');
     } catch (err: any) {
-      setAddError(err.response?.data?.error || 'Failed to update contact');
+      setAddError(contactErrorMessage(err, 'update'));
+    } finally {
+      saveInFlight.current = false;
     }
   };
 
@@ -601,7 +619,7 @@ const ContactList = () => {
                     {/* Counts the subscriber digits, not the raw string: with
                         the country code included the old counter read
                         "13/10 — limit reached" for a perfectly valid number. */}
-                    <CharCount value={indianSubscriberLength(wPhone)} max={INDIA_MOBILE_DIGITS} />
+                    <CharCount value={indianSubscriberLength(wPhone)} max={INDIA_MOBILE_DIGITS} warnAtMax={false} />
                   </div>
                 </div>
 
