@@ -13,6 +13,7 @@ import {
 import type { ExtractedContact } from '@eventreach/shared';
 import { DEFAULT_COUNTRY_CODE } from '@eventreach/shared';
 import { AuditService } from '../services/AuditService';
+import { CONTACT_ERROR, contactErrorBody, isDuplicateKeyError } from '../utils/contactErrors';
 // Guest deletion (and its CONTACT_DELETED audit record) is shared with event
 // deletion, which removes an event's guests along with it.
 import { performContactDeletion } from '../services/contactDeletionService';
@@ -177,17 +178,21 @@ export const addContact = async (req: RequestWithId, res: Response) => {
      */
     const phone = normalizeIndianPhone(phoneNumber);
     if (!phone.ok) {
-      return res.status(400).json({ error: phone.reason });
+      return res
+        .status(CONTACT_ERROR.invalidPhone.status)
+        .json(contactErrorBody(CONTACT_ERROR.invalidPhone, { field: 'phoneNumber', detail: phone.reason }));
     }
 
-    let status = 'Valid';
-    let validationReason = undefined;
     const normalizedPhone = phone.e164;
 
-    const existing = await Contact.findOne({ eventId, phoneNumber: normalizedPhone });
-    if (existing) {
-      status = 'Duplicate';
-      validationReason = 'Number already exists in this event';
+    // A guest is unique per event on the normalised number (unique index on
+    // eventId + phoneNumber). This check only gives the common case a cheap, early
+    // answer; it is NOT what keeps the list clean - two requests can both pass it,
+    // and the index is what refuses the second (handled below).
+    if (await Contact.exists({ eventId, phoneNumber: normalizedPhone })) {
+      return res
+        .status(CONTACT_ERROR.duplicate.status)
+        .json(contactErrorBody(CONTACT_ERROR.duplicate, { field: 'phoneNumber' }));
     }
 
     const contact = await Contact.create({
@@ -198,8 +203,7 @@ export const addContact = async (req: RequestWithId, res: Response) => {
       countryCode: DEFAULT_COUNTRY_CODE,
       email: email || undefined,
       eventId,
-      status,
-      validationReason,
+      status: 'Valid',
       source: 'Manual',
     });
 
@@ -215,8 +219,16 @@ export const addContact = async (req: RequestWithId, res: Response) => {
 
     res.status(201).json(contact);
   } catch (error) {
+    // Two requests for the same new number: the unique index let one in and
+    // refused the other. That is a duplicate, not a server failure.
+    if (isDuplicateKeyError(error)) {
+      return res
+        .status(CONTACT_ERROR.duplicate.status)
+        .json(contactErrorBody(CONTACT_ERROR.duplicate, { field: 'phoneNumber' }));
+    }
+    // The exception itself stays in the server log; the client gets a fixed message.
     console.error('Add contact error:', error);
-    res.status(500).json({ error: 'Failed to add contact' });
+    res.status(CONTACT_ERROR.addFailed.status).json(contactErrorBody(CONTACT_ERROR.addFailed));
   }
 };
 
@@ -600,12 +612,22 @@ export const updateContact = async (req: RequestWithId, res: Response) => {
     // an unusable one.
     const phone = normalizeIndianPhone(phoneNumber);
     if (!phone.ok) {
-      return res.status(400).json({ error: phone.reason });
+      return res
+        .status(CONTACT_ERROR.invalidPhone.status)
+        .json(contactErrorBody(CONTACT_ERROR.invalidPhone, { field: 'phoneNumber', detail: phone.reason }));
     }
 
     const status = 'Valid';
     const validationReason = undefined;
     const normalizedPhone = phone.e164;
+
+    // Moving a guest onto a number another guest of the same event already has is
+    // a duplicate too (the unique index would refuse it; this answers early).
+    if (await Contact.exists({ eventId: beforeContact.eventId, phoneNumber: normalizedPhone, _id: { $ne: beforeContact._id } })) {
+      return res
+        .status(CONTACT_ERROR.duplicate.status)
+        .json(contactErrorBody(CONTACT_ERROR.duplicate, { field: 'phoneNumber' }));
+    }
 
     const afterContact = await Contact.findByIdAndUpdate(
       id,
@@ -634,8 +656,13 @@ export const updateContact = async (req: RequestWithId, res: Response) => {
 
     res.json(afterContact);
   } catch (error) {
+    if (isDuplicateKeyError(error)) {
+      return res
+        .status(CONTACT_ERROR.duplicate.status)
+        .json(contactErrorBody(CONTACT_ERROR.duplicate, { field: 'phoneNumber' }));
+    }
     console.error('Update contact error:', error);
-    res.status(500).json({ error: 'Failed to update contact' });
+    res.status(CONTACT_ERROR.updateFailed.status).json(contactErrorBody(CONTACT_ERROR.updateFailed));
   }
 };
 
