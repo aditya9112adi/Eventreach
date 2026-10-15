@@ -112,6 +112,24 @@ export const metaSenderClient: MetaSenderClient = {
 };
 
 /** Sync only IDs returned by Meta; never creates a sender from user-entered phone data. */
+/**
+ * A status client that asks Meta with a given token - a connected number's own
+ * business token, which is the only credential that can see a number in that
+ * business's WhatsApp Business Account. It can only read a number's status.
+ */
+export const createTokenStatusClient = (token: string): MetaSenderClient => ({
+  async listPhoneNumbers() {
+    throw new Error('Listing is not available with a business token.');
+  },
+  async getPhoneNumberStatus(phoneNumberId) {
+    const response = await axios.get(
+      `https://graph.facebook.com/${apiVersion()}/${encodeURIComponent(phoneNumberId)}?fields=status`,
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+    );
+    return typeof response.data?.status === 'string' ? response.data.status : null;
+  },
+});
+
 export const syncWhatsAppSenders = async (
   client: MetaSenderClient = metaSenderClient,
   configuredWabaId = process.env.WHATSAPP_WABA_ID?.trim()

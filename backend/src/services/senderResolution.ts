@@ -3,7 +3,10 @@ import { Event } from '../models/Event';
 import { WhatsAppSender } from '../models/WhatsAppSender';
 import { EventTemplateError } from './eventTemplateMessage';
 import { resolveEventOwner } from './eventOwnership';
-import { refreshSenderStatusIfStale, type MetaSenderClient } from './whatsappSenderSyncService';
+import { refreshSenderStatusIfStale, createTokenStatusClient, type MetaSenderClient } from './whatsappSenderSyncService';
+import { embeddedSenderProblems, isEmbeddedSender, ownerMayUseSender, ownerRefusal } from './senderEligibility';
+import { readSenderAccessToken } from './whatsappOnboardingService';
+import type { SendTarget } from './WhatsAppService';
 
 /**
  * Which WhatsApp number a send for an event goes out from - checked at the
@@ -40,6 +43,13 @@ export type ResolvedSender =
       senderId: string;
       phoneNumberId: string;
       displayPhoneNumber: string;
+      /**
+       * Whose credential sends for it: 'environment' (WHATSAPP_TOKEN) for an
+       * inventory sender, 'sender' (its own stored business token) for a number
+       * connected through Embedded Signup. The token itself is never carried
+       * here - it is read at the moment of sending (sendTargetFor).
+       */
+      credential: 'environment' | 'sender';
     };
 
 export interface SenderResolutionDeps {
@@ -77,10 +87,13 @@ export const resolveSendingSender = async (eventOrId: any, deps: SenderResolutio
   if (!assignedId) return { kind: 'environment' };
 
   const whose = source === 'event' ? "This event's" : "The Main Event's";
-  const sender: any = await WhatsAppSender.findById(assignedId).lean();
+  const sender: any = await WhatsAppSender.findById(assignedId).select('+credential').lean();
   if (!sender) {
     throw new SenderUnavailableError('SENDER_UNAVAILABLE', `${whose} WhatsApp sender is no longer in the sender inventory. ${NOTHING_SENT}`, 409);
   }
+  // A number a business connected itself (Embedded Signup): its own account,
+  // its own credential, and the owner rule in senderEligibility.
+  if (isEmbeddedSender(sender)) return resolveEmbeddedSender(event, sender, source, whose, deps);
   const configuredWaba = process.env.WHATSAPP_WABA_ID?.trim();
   if (!configuredWaba || String(sender.wabaId) !== configuredWaba) {
     throw new SenderUnavailableError('SENDER_UNAVAILABLE', `${whose} WhatsApp sender belongs to a different WhatsApp Business Account. ${NOTHING_SENT}`, 409);
@@ -114,7 +127,40 @@ export const resolveSendingSender = async (eventOrId: any, deps: SenderResolutio
     throw new SenderUnavailableError('SENDER_UNAVAILABLE', `${whose} WhatsApp sender is not connected (WhatsApp reports ${status ?? 'no status'}). ${NOTHING_SENT}`, 409);
   }
 
-  return { kind: 'assigned', source, senderId: String(sender._id), phoneNumberId: String(sender.phoneNumberId), displayPhoneNumber: String(sender.displayPhoneNumber) };
+  return { kind: 'assigned', source, senderId: String(sender._id), phoneNumberId: String(sender.phoneNumberId), displayPhoneNumber: String(sender.displayPhoneNumber), credential: 'environment' };
+};
+
+/**
+ * The same guarantees for a connected (Embedded Signup) number: connected and
+ * enabled here, its stored credential present, the event's owner allowed to use
+ * it (its owner's own events, or an allowed Admin's), and CONNECTED at Meta by a
+ * fresh status - checked with ITS OWN credential. Any failure refuses the send;
+ * it never falls back to the environment sender.
+ */
+const resolveEmbeddedSender = async (event: any, sender: any, source: 'event' | 'main-event', whose: string, deps: SenderResolutionDeps): Promise<ResolvedSender> => {
+  const problems = embeddedSenderProblems(sender, Boolean(sender.credential?.ciphertext));
+  if (problems.length > 0) {
+    throw new SenderUnavailableError('SENDER_UNAVAILABLE', `${whose} WhatsApp sender cannot be used: ${problems[0]} ${NOTHING_SENT}`, 409);
+  }
+  const owner = await resolveEventOwner(event);
+  if (owner.kind === 'unverified') {
+    throw new SenderUnavailableError('EVENT_OWNER_UNVERIFIED', `${owner.reason} An assigned WhatsApp sender is used only for an event with a verified owning Admin. ${NOTHING_SENT}`, 409);
+  }
+  if (!ownerMayUseSender(sender, owner)) {
+    throw new SenderUnavailableError('SENDER_NOT_ALLOWED', `${ownerRefusal(sender, owner)} ${NOTHING_SENT}`, 409);
+  }
+
+  let status: string | null;
+  try {
+    const client = deps.client ?? createTokenStatusClient(await readSenderAccessToken(String(sender._id)));
+    status = await refreshSenderStatusIfStale(sender, client);
+  } catch {
+    throw new SenderUnavailableError('SENDER_STATUS_UNVERIFIED', `The assigned WhatsApp sender's status could not be verified with WhatsApp. ${NOTHING_SENT} Try again shortly.`, 502);
+  }
+  if (status !== 'CONNECTED') {
+    throw new SenderUnavailableError('SENDER_UNAVAILABLE', `${whose} WhatsApp sender is not connected (WhatsApp reports ${status ?? 'no status'}). ${NOTHING_SENT}`, 409);
+  }
+  return { kind: 'assigned', source, senderId: String(sender._id), phoneNumberId: String(sender.phoneNumberId), displayPhoneNumber: String(sender.displayPhoneNumber), credential: 'sender' };
 };
 
 /**
@@ -135,3 +181,21 @@ export const assertSameSender = async (eventOrId: any, expected: ResolvedSender,
 /** The phone number id to send from, or undefined for the environment sender (unchanged default). */
 export const sendingPhoneNumberId = (sender: ResolvedSender): string | undefined =>
   sender.kind === 'assigned' ? sender.phoneNumberId : undefined;
+
+/**
+ * Where and with what a message goes out: the resolved sender's phone number id
+ * and, for a connected number, its own decrypted business token - read now, at
+ * the moment of sending, and never stored on a job or logged. {} is the
+ * environment sender (WHATSAPP_PHONE_ID with WHATSAPP_TOKEN), unchanged. A
+ * connected number whose token cannot be read refuses the send; it is never
+ * sent with the environment token instead.
+ */
+export const sendTargetFor = async (sender: ResolvedSender): Promise<SendTarget> => {
+  if (sender.kind === 'environment') return {};
+  if (sender.credential !== 'sender') return { phoneNumberId: sender.phoneNumberId };
+  try {
+    return { phoneNumberId: sender.phoneNumberId, accessToken: await readSenderAccessToken(sender.senderId) };
+  } catch {
+    throw new SenderUnavailableError('SENDER_UNAVAILABLE', `The assigned WhatsApp sender's stored authorization could not be used. Its owner must connect it again. ${NOTHING_SENT}`, 409);
+  }
+};

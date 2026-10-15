@@ -11,7 +11,8 @@ import { UPLOAD_DIR } from '../middleware/mediaUpload';
 import { WHATSAPP_MEDIA_RULES } from '@eventreach/shared';
 
 import { AuditService } from './AuditService';
-import { assertSameSender, resolveSendingSender, sendingPhoneNumberId, type ResolvedSender } from './senderResolution';
+import { assertSameSender, resolveSendingSender, sendTargetFor, type ResolvedSender } from './senderResolution';
+import type { SendTarget } from './WhatsAppService';
 
 /**
  * Turn stored attachments into ones WhatsApp can send, by uploading each file
@@ -26,7 +27,7 @@ import { assertSameSender, resolveSendingSender, sendingPhoneNumberId, type Reso
  * Failed with the reason rather than silently sending a message missing its
  * media.
  */
-const prepareMediaForSending = async (attachments: any[], phoneNumberId?: string): Promise<any[]> => {
+const prepareMediaForSending = async (attachments: any[], target?: SendTarget): Promise<any[]> => {
   const out: any[] = [];
 
   for (const stored of attachments) {
@@ -66,7 +67,7 @@ const prepareMediaForSending = async (attachments: any[], phoneNumberId?: string
     }
 
     // Uploaded through the number that will send it (undefined: the environment sender).
-    const metaMediaId = await whatsappService.uploadMediaToMeta(filePath, mimeType, att?.filename || fileName, phoneNumberId);
+    const metaMediaId = await whatsappService.uploadMediaToMeta(filePath, mimeType, att?.filename || fileName, target);
 
     out.push({
       ...att,
@@ -154,7 +155,8 @@ export class QueueService {
       let preparedAttachments: any[] = [];
       if (activeAttachments?.length) {
         try {
-          preparedAttachments = await prepareMediaForSending(activeAttachments, sendingPhoneNumberId(resolvedSender));
+          // Media is uploaded with the sender's own credential: a media id belongs to the account that uploaded it.
+          preparedAttachments = await prepareMediaForSending(activeAttachments, await sendTargetFor(resolvedSender));
         } catch (err: any) {
           const failedAt = new Date();
           await MessageLog.updateMany(
@@ -203,8 +205,11 @@ export class QueueService {
        * the campaign was queued. If so, this batch and every remaining
        * message are recorded as Failed with the reason, and none are sent.
        */
+      // Read per batch, after the re-check: the sender's current credential, never one cached on the job.
+      let target: SendTarget;
       try {
         await assertSameSender(eventId, sender);
+        target = await sendTargetFor(sender);
       } catch (senderError: any) {
         const remaining = contactsWithLogs.slice(i);
         await MessageLog.updateMany(
@@ -228,7 +233,7 @@ export class QueueService {
         personalizedMsg = personalizedMsg.replace(/{{venue}}/g, venue);
 
         try {
-          const result = await whatsappService.sendMessage(contact.phoneNumber, personalizedMsg, mediaAttachments, sendingPhoneNumberId(sender));
+          const result = await whatsappService.sendMessage(contact.phoneNumber, personalizedMsg, mediaAttachments, target);
           // 'Sent' here means ACCEPTED BY WHATSAPP, not received by the
           // handset. The wamid is what lets the delivery webhook find this
           // row again when the real outcome arrives.

@@ -44,8 +44,9 @@ const { Event } = require('../backend/dist/models/Event');
 const { WhatsAppSender } = require('../backend/dist/models/WhatsAppSender');
 
 /** Everything an Admin needs from a sender, and nothing more. */
-const ADMIN_FIELDS = ['_id', 'isEnvironmentSender', 'displayPhoneNumber', 'label', 'lastSyncedAt', 'listedInMeta', 'enabled', 'metaStatus', 'phoneNumberId', 'qualityRating', 'statusCheckedAt', 'verifiedName'].sort();
-const SUPER_ONLY = ['allowedAdminIds', 'pocTestEnabled', 'wabaId'];
+// source / onboardingStatus / nextActionMessage: where a number came from and, for a connected one, why it is not usable yet.
+const ADMIN_FIELDS = ['_id', 'isEnvironmentSender', 'displayPhoneNumber', 'label', 'lastSyncedAt', 'listedInMeta', 'enabled', 'metaStatus', 'phoneNumberId', 'qualityRating', 'statusCheckedAt', 'verifiedName', 'source', 'onboardingStatus', 'nextActionMessage'].sort();
+const SUPER_ONLY = ['allowedAdminIds', 'pocTestEnabled', 'wabaId', 'ownerAccountId', 'lastError', 'lastVerifiedAt'];
 
 let server: any;
 let baseUrl = '';

@@ -23,8 +23,11 @@ import auditRoutes from './routes/auditRoutes';
 import webhookRoutes from './routes/webhookRoutes';
 import whatsappRoutes from './routes/whatsappRoutes';
 import whatsappSenderRoutes from './routes/whatsappSenderRoutes';
+import whatsappOnboardingRoutes from './routes/whatsappOnboardingRoutes';
 import { requestMiddleware } from './middleware/requestMiddleware';
 import { waitForDatabase } from './middleware/databaseReady';
+import { readOnboardingConfig } from './services/whatsappOnboardingService';
+import { WhatsAppSender } from './models/WhatsAppSender';
 import { globalLimiter } from './middleware/rateLimitMiddleware';
 import { getAllowedOrigins, getExtraOriginsReport, getFrontendBaseUrl, isFrontendUrlConfigured } from './config/appUrls';
 import { verifyEmailTransport } from './utils/email';
@@ -98,6 +101,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/whatsapp-senders', whatsappSenderRoutes);
+app.use('/api/whatsapp-onboarding', whatsappOnboardingRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -123,6 +127,18 @@ const reportConfiguration = async () => {
       `CORS_EXTRA_ORIGINS: ignored ${n} invalid ${n === 1 ? 'entry' : 'entries'} ` +
         `(${extraOrigins.ignored.map((i) => `#${i.position}: ${i.reason}`).join('; ')}). Fix the value and restart.`
     );
+  }
+
+  // WhatsApp onboarding (Embedded Signup): names only. Connected numbers cannot
+  // send without a valid WHATSAPP_CREDENTIAL_KEY, so that is an error, not a note.
+  const onboarding = readOnboardingConfig();
+  if (onboarding.configured) {
+    console.log('WhatsApp onboarding: configured');
+  } else {
+    const connected = await WhatsAppSender.countDocuments({ source: 'embedded_signup', onboardingStatus: { $ne: 'disconnected' } }).catch(() => 0);
+    const line = `WhatsApp onboarding: NOT CONFIGURED (${onboarding.missing.join('; ')}).`;
+    if (connected > 0) console.error(`${line} ${connected} connected number(s) cannot send until this is fixed.`);
+    else console.log(`${line} Connecting numbers is unavailable.`);
   }
 
   if (isFrontendUrlConfigured()) {
