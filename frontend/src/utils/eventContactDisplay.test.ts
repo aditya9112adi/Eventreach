@@ -134,14 +134,6 @@ describe('"Refresh status" on the Senders page says what really happened', () =>
     assert.equal(senderRefreshMessage(0, undefined).text, 'Status refresh failed. The stored status was not changed.');
   });
 
-  test('the Senders page uses it, and states the CONNECTED rule as the backend enforces it', () => {
-    const page = read('frontend/src/pages/Admin/WhatsAppSenders.tsx');
-    assert.ok(page.includes('const m = senderRefreshMessage(res.status, res.data); showToast(m.type, m.text);'));
-    assert.ok(page.includes('const m = senderRefreshMessage(e.response?.status ?? 0, e.response?.data); showToast(m.type, m.text);'));
-    assert.equal(page.includes("'Sender status refreshed.'"), false, 'no unconditional success message');
-    assert.equal(page.includes('(requires CONNECTED status)'), false, 'enabling does not itself require CONNECTED');
-    assert.ok(page.includes('an enabled sender can be assigned and used only while Meta reports it CONNECTED'));
-  });
 
   test("the legacy campaign page shows the server's reason when a send is refused", () => {
     const page = read('frontend/src/pages/Campaigns/SendPreview.tsx');

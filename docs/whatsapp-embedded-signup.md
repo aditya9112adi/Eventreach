@@ -5,6 +5,8 @@ EventReach from **My WhatsApp Number** (`/whatsapp/connect`), through Meta's
 official Embedded Signup popup. The number joins the existing WhatsApp sender
 inventory and can then be assigned to events.
 
+> **Update:** the "My WhatsApp Number" and "WhatsApp Senders" pages were removed from the sidebar and app. The `/api/whatsapp-onboarding` and `/api/whatsapp-senders` endpoints remain, so there is currently **no UI to enable senders or to connect a number**.
+
 **Status: not verified against a live Meta app.** See "What is confirmed" below.
 Do not enable this in production until the Meta configuration is done and the
 test procedure at the end has passed with a dedicated test number.

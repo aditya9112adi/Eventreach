@@ -172,7 +172,6 @@ describe('Just Access: the template permission toggle', () => {
 describe('Meta account list, buttons and test send', () => {
   const account = read('frontend/src/pages/WhatsApp/AccountTemplates.tsx');
   const testSend = read('frontend/src/pages/WhatsApp/TestSend.tsx');
-  const senders = read('frontend/src/pages/Admin/WhatsAppSenders.tsx');
 
   test('the account list is read only on request, for a Super Admin, with an explicit Load more', () => {
     assert.ok(list.includes('canBrowseAccount(user)'));
@@ -220,8 +219,4 @@ describe('Meta account list, buttons and test send', () => {
     assert.ok(testSend.includes('canReconcile(result.send)'));
   });
 
-  test('the sender page lets a Super Admin designate the POC sender', () => {
-    assert.ok(senders.includes('pocTestEnabled: e.target.checked'));
-    assert.ok(senders.includes('POC test sender'));
-  });
 });
