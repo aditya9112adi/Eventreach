@@ -1,6 +1,6 @@
 /**
  * The event contact panel: what it says about the POC and the WhatsApp sender.
- * Pure helpers, plus how EventContactSettings and EventDetail use them.
+ * Pure helpers, plus a check that the event page no longer shows the contact card.
  *
  * Run: npx tsx --test frontend/src/utils/eventContactDisplay.test.ts
  */
@@ -90,30 +90,12 @@ describe('the sender dropdown', () => {
   });
 });
 
-describe('how the panel is wired', () => {
-  const panel = read('frontend/src/components/ui/EventContactSettings.tsx');
+describe('the event page no longer shows the Point of Contact & WhatsApp Sender card', () => {
   const detail = read('frontend/src/pages/Events/EventDetail.tsx');
 
-  test("EventDetail passes the event's own id and its Main Event's id", () => {
-    assert.ok(detail.includes('<EventContactSettings eventId={String(event._id)} parentEventId={event.parentEventId ? String(event.parentEventId) : null} />'));
-  });
-
-  test('every viewer sees the effective values; only Admins and Super Admins see editing controls', () => {
-    assert.ok(panel.includes("const canEdit = user?.role === 'SuperAdmin' || user?.role === 'Admin';"));
-    assert.ok(panel.includes('{canEdit && <div'));
-    assert.ok(panel.includes("api.get(`/events/${eventId}/contact`)"));
-  });
-
-  test('the status note and source labels come from the tested helpers', () => {
-    assert.ok(panel.includes('senderStatusNote(contact.effectiveSender, contact.assignmentSource, Boolean(contact.environmentSenderConfigured))'));
-    assert.ok(panel.includes('senderSourceLabel(contact.assignmentSource)'));
-    assert.ok(panel.includes('senderChoices(senders, contact.localWhatsAppSenderId)'));
-    assert.equal(panel.includes("'Environment sender'"), false, 'no generic placeholder in place of the real sender');
-  });
-
-  test('clearing the POC or the sender sends null, restoring inheritance', () => {
-    assert.ok(panel.includes('whatsappSenderId: senderId || null,'));
-    assert.ok(/poc: name\.trim\(\) \? \{[\s\S]*?\} : null,/.test(panel));
+  test('EventDetail neither imports nor renders it, and the component file is gone', () => {
+    assert.equal(detail.includes('EventContactSettings'), false);
+    assert.equal(fs.existsSync('frontend/src/components/ui/EventContactSettings.tsx'), false);
   });
 });
 
