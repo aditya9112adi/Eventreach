@@ -9,6 +9,16 @@ import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { isEventAuthorized } from '../services/eventAuthService';
 import { countMembersOf, isSubEvent, memberSourceEvents } from '../services/subEventService';
+import { extractFromExcel, extractFromPDF, ImportFormatError, type RawContact } from '../utils/fileExtractors';
+import {
+  MEMBER_UPLOAD_MAX_ROWS,
+  classifyMemberRows,
+  countUploadRows,
+  isPdfUpload,
+  normalizeUploadRows,
+  validateUploadFile,
+  type MemberMatch,
+} from '../services/memberUploadService';
 
 /**
  * A Sub-Event's member list: existing contacts chosen for it, independently of
@@ -17,6 +27,7 @@ import { countMembersOf, isSubEvent, memberSourceEvents } from '../services/subE
  *   GET    /api/events/:id/members                 the members
  *   GET    /api/events/:id/member-candidates       contacts that may be added
  *   POST   /api/events/:id/members                 add one or many
+ *   POST   /api/events/:id/members/upload          preview a file of guests (saves nothing)
  *   DELETE /api/events/:id/members/:contactId      remove one
  *
  * Every request is authorized against the Sub-Event (which is reached through
@@ -337,6 +348,77 @@ export const addMembers = async (req: RequestWithId, res: Response) => {
     });
   } catch (error) {
     fail(res, error, 'Add members');
+  }
+};
+
+/**
+ * POST /api/events/:id/members/upload   multipart, field "file" (.xlsx, .xls, .pdf)
+ *
+ * The preview step of uploading guests onto this Sub-Event: reads the file with
+ * the Contact Bulk upload's own parsers and number rules, and matches each row
+ * to an existing contact the caller may use for this Sub-Event (the same set as
+ * member-candidates). It SAVES NOTHING and creates no contact. Confirming sends
+ * the matched contact ids to POST /members above, which authorizes and
+ * de-duplicates each one again, so this response is never trusted as input.
+ *
+ * Each row comes back as Valid, Duplicate (already a member, or repeated in the
+ * file), NotFound (not one of the caller's contacts) or Invalid (bad number or
+ * missing name).
+ */
+export const uploadMembersPreview = async (req: Request, res: Response) => {
+  try {
+    const event = await loadSubEvent(req);
+
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'No file provided' });
+    const fileProblem = validateUploadFile(file);
+    if (fileProblem) return res.status(400).json({ error: fileProblem });
+
+    let raw: RawContact[];
+    try {
+      raw = isPdfUpload(file) ? await extractFromPDF(file.buffer) : extractFromExcel(file.buffer);
+    } catch (err: any) {
+      if (err instanceof ImportFormatError) return res.status(400).json({ error: err.message });
+      console.error('Member upload read error:', err?.message);
+      return res.status(400).json({ error: 'The file could not be read. Check that it is a valid, unprotected file.' });
+    }
+    if (raw.length === 0) return res.status(400).json({ error: 'No guests were found in the file.' });
+    if (raw.length > MEMBER_UPLOAD_MAX_ROWS) {
+      return res.status(400).json({ error: `The file has more than ${MEMBER_UPLOAD_MAX_ROWS} rows. Split it and upload again.` });
+    }
+
+    const parent: any = await Event.findById(event.parentEventId).select('_id adminId').lean();
+    if (!parent) throw new MemberRequestError(404, 'The main event no longer exists.');
+    const sources = await memberSourceEvents((req as any).user, parent);
+    const sourceOrder = new Map(sources.map((s, i) => [String(s._id), i]));
+
+    const rows = normalizeUploadRows(raw);
+    const phones = Array.from(new Set(rows.filter((r) => !r.problem).map((r) => r.phoneNumber)));
+    const found: any[] = phones.length
+      ? await Contact.find({ eventId: { $in: sources.map((s) => s._id) }, phoneNumber: { $in: phones } })
+          .select('_id fullName phoneNumber eventId')
+          .lean()
+      : [];
+
+    // The same number can be a contact of two Main Events. This Sub-Event's own
+    // Main Event wins; otherwise the first of the caller's events, in the order
+    // the Add Members picker lists them, so the answer never varies.
+    const rank = (c: any) => (String(c.eventId) === String(parent._id) ? -1 : sourceOrder.get(String(c.eventId)) ?? Number.MAX_SAFE_INTEGER);
+    const matches = new Map<string, MemberMatch>();
+    for (const contact of found.sort((a, b) => rank(a) - rank(b))) {
+      if (!matches.has(contact.phoneNumber)) matches.set(contact.phoneNumber, { contactId: String(contact._id), fullName: contact.fullName });
+    }
+
+    const memberIds = new Set(
+      (await EventMember.find({ eventId: event._id, contactId: { $in: Array.from(matches.values()).map((m) => m.contactId) } })
+        .select('contactId')
+        .lean()).map((m: any) => String(m.contactId))
+    );
+
+    const result = classifyMemberRows(rows, matches, memberIds);
+    res.json({ rows: result, counts: countUploadRows(result) });
+  } catch (error) {
+    fail(res, error, 'Process file');
   }
 };
 
