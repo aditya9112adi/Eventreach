@@ -22,7 +22,6 @@ import {
   ShieldCheck,
   KeyRound,
   FileText,
-  Smartphone
 } from 'lucide-react';
 import { useTheme } from '../store/themeStore';
 import { useToast } from '../components/ui/Toast';
@@ -251,16 +250,10 @@ const DashboardLayout = () => {
     navItems.splice(navItems.findIndex((item) => item.to === '/campaigns') + 1, 0, { name: 'WhatsApp Templates', to: '/whatsapp/templates', icon: FileText });
   }
 
-  // Admins and Super Admins connect their own WhatsApp number here.
-  if (user?.role === 'SuperAdmin' || user?.role === 'Admin') {
-    navItems.push({ name: 'My WhatsApp Number', to: '/whatsapp/connect', icon: Smartphone });
-  }
-
   if (user?.role === 'SuperAdmin') {
     navItems.push({ name: 'User Approvals', to: '/admin/approvals', icon: Users });
     navItems.push({ name: 'Just Access', to: '/admin/just-access', icon: MessageSquare });
     navItems.push({ name: 'Audit Logs', to: '/admin/audit-logs', icon: Shield });
-    navItems.push({ name: 'WhatsApp Senders', to: '/admin/whatsapp-senders', icon: Smartphone });
     navItems.push({ name: 'Settings', to: '/settings', icon: Settings });
 
     // Super Admins choose a report type here rather than on the Reports page.
