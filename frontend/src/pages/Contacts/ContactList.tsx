@@ -8,10 +8,8 @@ import type { Contact, Event } from '@eventreach/shared';
 import {
   COUNTRY_OPTIONS,
   DEFAULT_COUNTRY_CODE,
-  INDIA_E164_LENGTH,
   INDIA_MOBILE_DIGITS,
   indianSubscriberLength,
-  normalizeIndianMobile,
 } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -28,6 +26,7 @@ import {
 } from '../../components/ui/DeleteControls';
 import { getSerialNumber } from '../../utils/pagination';
 import { contactErrorMessage } from '../../utils/contactErrors';
+import { limitMobileTyping, mobileForEdit, mobileFromPaste, validateMobileForSave } from '../../utils/mobileDigits';
 import { getPageSelectionState, toggleSelectAllOnPage, toggleSelection } from '../../utils/selection';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -36,11 +35,10 @@ import { EventSearch } from '../../components/ui/EventSearch';
 
 const contactSchema = z.object({
   fullName: z.string().min(1, 'Name is required').max(50, 'Full name must be at most 50 characters'),
-  // Accepts 9876543210, +919876543210 or 919876543210 and rejects a doubled
-  // country code or a non-Indian number — the same rule the server applies.
+  // Exactly the 10 digits shown beside IN (+91), then the shared Indian mobile rule.
   phoneNumber: z.string().superRefine((value, ctx) => {
-    const result = normalizeIndianMobile(value);
-    if (!result.ok) ctx.addIssue({ code: z.ZodIssueCode.custom, message: result.reason });
+    const problem = validateMobileForSave(value);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
   }),
   countryCode: z.string().min(1, 'Code required'),
   email: z.string()
@@ -122,6 +120,10 @@ const ContactList = () => {
   });
 
   const [wFullName, wPhone, wEmail] = watch(['fullName', 'phoneNumber', 'email']);
+  const phoneField = register('phoneNumber');
+  // A refused keystroke or paste, shown under the field until the next valid change.
+  const [phoneHint, setPhoneHint] = useState<string | null>(null);
+  useEffect(() => setPhoneHint(null), [isAddModalOpen, editingContact]);
 
   useEffect(() => {
     const fetchEvents = async () => {
@@ -287,7 +289,7 @@ const ContactList = () => {
   const openEditModal = (contact: Contact) => {
     setEditingContact(contact);
     setValue('fullName', contact.fullName);
-    setValue('phoneNumber', contact.phoneNumber);
+    setValue('phoneNumber', mobileForEdit(contact.phoneNumber));
     setValue('countryCode', contact.countryCode);
     setValue('email', contact.email || '');
     setAddError('');
@@ -579,7 +581,17 @@ const ContactList = () => {
                   {addError}
                 </div>
               )}
-              <form onSubmit={handleSubmit(editingContact ? onEditContact : onAddContact)} className="space-y-4">
+              <form
+                onSubmit={(e) => {
+                  // A refused keystroke or paste blocks saving until the field is corrected.
+                  if (phoneHint) {
+                    e.preventDefault();
+                    return;
+                  }
+                  return handleSubmit(editingContact ? onEditContact : onAddContact)(e);
+                }}
+                className="space-y-4"
+              >
                 <div>
                   <Input
                     label="Full Name"
@@ -610,11 +622,27 @@ const ContactList = () => {
                     <Input
                       label="WhatsApp Number"
                       placeholder="9876543210"
-                      /* 13 so "+919876543210" can actually be typed. It used to
-                         be 10, which silently truncated a pasted +91 number. */
-                      maxLength={INDIA_E164_LENGTH}
-                      {...register('phoneNumber')}
-                      error={errors.phoneNumber?.message}
+                      inputMode="numeric"
+                      {...phoneField}
+                      /* Digits only, at most 10. A typed extra digit is dropped, and a
+                         pasted +91 prefix is taken off - nothing is cut off silently. */
+                      onChange={(e) => {
+                        const typed = limitMobileTyping(e.target.value);
+                        e.target.value = typed.value;
+                        phoneField.onChange(e);
+                        setPhoneHint(typed.problem);
+                      }}
+                      onPaste={(e) => {
+                        e.preventDefault();
+                        const pasted = mobileFromPaste(e.clipboardData.getData('text'));
+                        if (pasted.value !== null) {
+                          setValue('phoneNumber', pasted.value, { shouldValidate: true, shouldDirty: true });
+                          setPhoneHint(null);
+                        } else {
+                          setPhoneHint(pasted.problem);
+                        }
+                      }}
+                      error={phoneHint ?? errors.phoneNumber?.message}
                     />
                     {/* Counts the subscriber digits, not the raw string: with
                         the country code included the old counter read
