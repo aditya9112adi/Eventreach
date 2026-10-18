@@ -26,7 +26,7 @@ import {
 } from '../../components/ui/DeleteControls';
 import { getSerialNumber } from '../../utils/pagination';
 import { contactErrorMessage } from '../../utils/contactErrors';
-import { limitMobileTyping, mobileForEdit, mobileFromPaste, validateMobileForSave } from '../../utils/mobileDigits';
+import { insertMobileText, limitMobileTyping, mobileForEdit, validateMobileForSave } from '../../utils/mobileDigits';
 import { getPageSelectionState, toggleSelectAllOnPage, toggleSelection } from '../../utils/selection';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -114,7 +114,7 @@ const ContactList = () => {
   // Derive whether the currently selected event is completed
   const isEventCompleted = activeEvent?.eventStatus === 'Completed';
 
-  const { register, handleSubmit, reset, watch, setValue, formState: { errors, isSubmitting } } = useForm<ContactForm>({
+  const { register, handleSubmit, reset, watch, setValue, getValues, formState: { errors, isSubmitting } } = useForm<ContactForm>({
     resolver: zodResolver(contactSchema),
     defaultValues: { countryCode: DEFAULT_COUNTRY_CODE }
   });
@@ -624,23 +624,41 @@ const ContactList = () => {
                       placeholder="9876543210"
                       inputMode="numeric"
                       {...phoneField}
-                      /* Digits only, at most 10. A typed extra digit is dropped, and a
-                         pasted +91 prefix is taken off - nothing is cut off silently. */
-                      onChange={(e) => {
-                        const typed = limitMobileTyping(e.target.value);
-                        e.target.value = typed.value;
-                        phoneField.onChange(e);
-                        setPhoneHint(typed.problem);
+                      /* Digits only, at most 10. A keystroke or paste that would break
+                         that is stopped before it reaches the field, so the digits
+                         already there - and the cursor - stay exactly as they were. */
+                      onKeyDown={(e) => {
+                        if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
+                        const input = e.currentTarget;
+                        const edit = insertMobileText(input.value, input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, e.key);
+                        if (!edit.accepted) {
+                          e.preventDefault();
+                          setPhoneHint(edit.problem);
+                        }
                       }}
                       onPaste={(e) => {
                         e.preventDefault();
-                        const pasted = mobileFromPaste(e.clipboardData.getData('text'));
-                        if (pasted.value !== null) {
-                          setValue('phoneNumber', pasted.value, { shouldValidate: true, shouldDirty: true });
-                          setPhoneHint(null);
-                        } else {
-                          setPhoneHint(pasted.problem);
+                        const input = e.currentTarget;
+                        const edit = insertMobileText(input.value, input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, e.clipboardData.getData('text'), true);
+                        if (!edit.accepted) {
+                          setPhoneHint(edit.problem);
+                          return;
                         }
+                        setValue('phoneNumber', edit.value, { shouldValidate: true, shouldDirty: true });
+                        input.setSelectionRange(edit.caret, edit.caret);
+                        setPhoneHint(null);
+                      }}
+                      // Input the key handler cannot see (a phone's on-screen keyboard):
+                      // put the previous digits and the cursor back instead of clearing.
+                      onChange={(e) => {
+                        const input = e.currentTarget;
+                        const typed = limitMobileTyping(input.value, getValues('phoneNumber') ?? '', input.selectionStart ?? input.value.length);
+                        if (typed.value !== input.value) {
+                          input.value = typed.value;
+                          input.setSelectionRange(typed.caret, typed.caret);
+                        }
+                        phoneField.onChange(e);
+                        setPhoneHint(typed.problem);
                       }}
                       error={phoneHint ?? errors.phoneNumber?.message}
                     />

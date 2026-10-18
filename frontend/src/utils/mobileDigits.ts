@@ -8,20 +8,64 @@ import { INDIA_MOBILE_DIGITS, normalizeIndianMobile } from '@eventreach/shared';
  * them while typing and pasting; the form's submit rule uses validateMobileForSave.
  */
 
-export const MOBILE_TOO_LONG = 'Mobile number cannot exceed 10 digits.';
+export const MOBILE_TOO_LONG = 'Maximum limit reached. Only 10 digits are allowed.';
 export const MOBILE_DIGITS_ONLY = 'Enter digits only (0–9).';
 export const MOBILE_INCOMPLETE = 'Enter a 10-digit WhatsApp number.';
 
 /**
- * Text as typed: digits only, at most 10. A keystroke that would make 11 digits
- * is refused - the field keeps `previous` - rather than trimmed, because a
- * trimmed value can be a valid-looking wrong number (typing "+91" by hand
- * would otherwise leave "9198765432"). `problem` says what was refused.
+ * What a keystroke or paste would do to the field. `current` is the field's text,
+ * `start`/`end` the selection (equal for a plain caret), `text` what is inserted.
+ *
+ * Accepted: the text goes in at the selection (replacing it), so editing in the
+ * middle works, and `caret` is where the cursor belongs afterwards. Refused:
+ * `value` is `current`, unchanged - never cleared or trimmed - and `problem` says
+ * why. A paste that is a whole number with +91, 91 or 0 in front replaces an
+ * empty or fully selected field with its 10 digits (the IN (+91) label already
+ * shows the country); anywhere else a prefix is just digits and may be too many.
  */
-export const limitMobileTyping = (text: string, previous = ''): { value: string; problem: string | null } => {
-  const digits = text.replace(/\D/g, '');
-  if (digits.length > INDIA_MOBILE_DIGITS) return { value: previous, problem: MOBILE_TOO_LONG };
-  return { value: digits, problem: digits.length !== text.length ? MOBILE_DIGITS_ONLY : null };
+export interface MobileEdit {
+  accepted: boolean;
+  value: string;
+  caret: number;
+  problem: string | null;
+}
+
+export const insertMobileText = (current: string, start: number, end: number, text: string, isPaste = false): MobileEdit => {
+  const from = Math.max(0, Math.min(start, end, current.length));
+  const to = Math.min(current.length, Math.max(start, end));
+  const refuse = (problem: string): MobileEdit => ({ accepted: false, value: current, caret: from, problem });
+
+  if (isPaste && from === 0 && to === current.length) {
+    const whole = mobileFromPaste(text);
+    if (whole.value !== null) return { accepted: true, value: whole.value, caret: whole.value.length, problem: null };
+  }
+
+  const inserted = isPaste ? text.trim().replace(/[\s-]/g, '') : text;
+  if (/\D/.test(inserted)) return refuse(MOBILE_DIGITS_ONLY);
+  const value = current.slice(0, from) + inserted + current.slice(to);
+  if (value.length > INDIA_MOBILE_DIGITS) return refuse(MOBILE_TOO_LONG);
+  return { accepted: true, value, caret: from + inserted.length, problem: null };
+};
+
+/**
+ * The fallback for input the keyboard handler never saw (a phone's on-screen
+ * keyboard, drag and drop). `next` is the field after the browser changed it and
+ * `caret` its cursor. Too many digits puts `previous` back, with the cursor where
+ * it was; other characters are removed from where they landed.
+ */
+export const limitMobileTyping = (
+  next: string,
+  previous = '',
+  caret = next.length
+): { value: string; caret: number; problem: string | null } => {
+  const digits = next.replace(/\D/g, '');
+  if (digits.length > INDIA_MOBILE_DIGITS) {
+    const back = Math.max(0, Math.min(previous.length, caret - (next.length - previous.length)));
+    return { value: previous, caret: back, problem: MOBILE_TOO_LONG };
+  }
+  if (digits.length === next.length) return { value: next, caret: Math.min(caret, next.length), problem: null };
+  const removedBeforeCaret = next.slice(0, caret).replace(/\d/g, '').length;
+  return { value: digits, caret: Math.max(0, caret - removedBeforeCaret), problem: MOBILE_DIGITS_ONLY };
 };
 
 /**
