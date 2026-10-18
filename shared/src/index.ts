@@ -125,6 +125,24 @@ export interface ExtractedContact {
   validationReason?: string;
 }
 
+/**
+ * One row of a file uploaded onto a Sub-Event's member list. Members are
+ * existing contacts, so a row is matched to one: `contactId` is set when it was.
+ * NotFound means no such contact is available to this Sub-Event (skipped).
+ */
+export interface MemberUploadRow {
+  id: string; // Temporary ID for frontend list rendering
+  fullName: string;
+  phoneNumber: string;
+  countryCode: string;
+  email?: string;
+  status: 'Valid' | 'Invalid' | 'Duplicate' | 'NotFound';
+  validationReason?: string;
+  contactId?: string;
+  /** The matched contact's own name, which may differ from the file's. */
+  matchedName?: string;
+}
+
 export interface MediaAttachment {
   url: string;
   type: 'image' | 'video' | 'audio' | 'document';

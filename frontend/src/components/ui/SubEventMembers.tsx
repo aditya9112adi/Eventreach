@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FileSpreadsheet, FileText, Search, UserMinus, UserPlus, Users, X } from 'lucide-react';
+import { FileSpreadsheet, FileText, Search, Upload, UserMinus, UserPlus, Users, X } from 'lucide-react';
 import type { Event } from '@eventreach/shared';
 import api from '../../services/api';
 import { Button } from './Button';
 import { PaginationControls } from './PaginationControls';
 import { ConfirmDeleteDialog } from './DeleteControls';
 import { AddMembersDialog } from './AddMembersDialog';
+import { MemberUploadDialog } from './MemberUploadDialog';
 import { useToast } from './Toast';
 import { getSerialNumber } from '../../utils/pagination';
 import { formatDateTime } from '../../utils/datetime';
@@ -41,6 +42,7 @@ export const SubEventMembers = ({ subEvent, onCountChange }: SubEventMembersProp
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [refreshToken, setRefreshToken] = useState(0);
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<Member | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
   const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null);
@@ -137,6 +139,15 @@ export const SubEventMembers = ({ subEvent, onCountChange }: SubEventMembersProp
           </Button>
           <Button variant="secondary" onClick={() => runExport('pdf')} isLoading={exporting === 'pdf'} disabled={memberCount === 0 || Boolean(exporting)} className="text-xs px-3 py-2">
             <FileText className="w-4 h-4 mr-1.5" /> PDF
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => setIsUploadOpen(true)}
+            disabled={!canAdd}
+            title={canAdd ? 'Upload an Excel or PDF file of guests' : 'Members cannot be added to a completed event'}
+            className="text-xs px-3 py-2"
+          >
+            <Upload className="w-4 h-4 mr-1.5" /> Upload
           </Button>
           <Button
             onClick={() => setIsAddOpen(true)}
@@ -241,6 +252,7 @@ export const SubEventMembers = ({ subEvent, onCountChange }: SubEventMembersProp
       )}
 
       <AddMembersDialog subEvent={subEvent} open={isAddOpen} onClose={() => setIsAddOpen(false)} onAdded={refresh} />
+      <MemberUploadDialog subEvent={subEvent} open={isUploadOpen} onClose={() => setIsUploadOpen(false)} onAdded={refresh} />
 
       {/* Portalled, as the app's other dialogs are (see AddMembersDialog). */}
       {createPortal(

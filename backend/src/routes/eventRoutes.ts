@@ -1,6 +1,8 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import multer from 'multer';
 import { createEvent, createSubEvent, getEvents, getEventById, updateEvent, deleteEvent, bulkDeleteEvents, getEventUsers, getEventStatistics } from '../controllers/eventController';
-import { listMembers, listMemberCandidates, addMembers, removeMember } from '../controllers/eventMemberController';
+import { listMembers, listMemberCandidates, addMembers, removeMember, uploadMembersPreview } from '../controllers/eventMemberController';
+import { upload } from '../middleware/uploadMiddleware';
 import { requireAuth } from '../middleware/authMiddleware';
 import { requireRole } from '../middleware/roleMiddleware';
 import { getEventContact, updateEventContact } from '../controllers/whatsappSenderController';
@@ -10,6 +12,24 @@ import { actionLimiter } from '../middleware/rateLimitMiddleware';
 const router = Router();
 
 router.use(requireAuth);
+
+/**
+ * multer reports a refused or oversized file by passing an Error to next(),
+ * which would reach Express's default handler as a 500 with a stack trace.
+ * Answer with the reason instead. The file is read from memory, 10 MB at most.
+ */
+const singleFile = (req: Request, res: Response, next: NextFunction) =>
+  upload.single('file')(req, res, (err: any) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError) {
+      const message =
+        err.code === 'LIMIT_FILE_SIZE' ? 'That file is larger than 10 MB.'
+        : err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE' ? 'Please upload a single file.'
+        : 'That file could not be accepted.';
+      return res.status(400).json({ error: message });
+    }
+    return res.status(400).json({ error: err?.message || 'That file could not be accepted.' });
+  });
 
 // Deleting an event is administrative. The role gate runs before the
 // controller, so a User is refused with 403 without the event being looked up;
@@ -47,6 +67,8 @@ router.post('/:id/sub-events', requireAdmin, createSubEvent);
 router.get('/:id/members', listMembers);
 router.get('/:id/member-candidates', listMemberCandidates);
 router.post('/:id/members', addMembers);
+// Preview only: nothing is saved until the page confirms through POST /:id/members.
+router.post('/:id/members/upload', singleFile, uploadMembersPreview);
 router.delete('/:id/members/:contactId', removeMember);
 
 export default router;
