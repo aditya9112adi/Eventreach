@@ -5,8 +5,7 @@ import { z } from 'zod';
 import { EVENT_TYPE_MAX_LENGTH } from '@eventreach/shared';
 import { Event } from '../models/Event';
 import { Contact } from '../models/Contact';
-import { Campaign } from '../models/Campaign';
-import { MessageLog } from '../models/MessageLog';
+import { computeDashboardStats } from '../services/dashboardStats';
 import { User } from '../models/User';
 import { EventMember } from '../models/EventMember';
 import { getIO } from '../services/socketService';
@@ -16,7 +15,6 @@ import {
   countMembers,
   countSubEvents,
   countMembersOf,
-  eventGuestFilter,
 } from '../services/subEventService';
 import { AuditService } from '../services/AuditService';
 import { auditContactDeletions } from '../services/contactDeletionService';
@@ -890,36 +888,17 @@ export const getEventStatistics = async (req: Request, res: Response) => {
     }
 
     const eventId = req.params.id;
-    const event = await Event.findById(eventId).select('_id parentEventId').lean();
-    // A Sub-Event's guests are its members.
-    const contactCount = event
-      ? await Contact.countDocuments(await eventGuestFilter(event as any))
-      : 0;
-    const campaigns = await Campaign.find({ eventId }).select('_id');
-    const campaignIds = campaigns.map((c) => c._id);
-
-    const messageMatchQuery = campaignIds.length > 0 ? { campaignId: { $in: campaignIds } } : { campaignId: null };
-
-    const messageStats = await MessageLog.aggregate([
-      { $match: messageMatchQuery },
-      { $group: { _id: '$status', count: { $sum: 1 } } }
-    ]);
-
-    const msgBreakdown: Record<string, number> = {
-      Sent: 0, Delivered: 0, Failed: 0, Pending: 0
-    };
-    messageStats.forEach((s: any) => {
-      if (msgBreakdown[s._id] !== undefined) msgBreakdown[s._id] = s.count;
-    });
+    // The same numbers, with the same definitions, as the Dashboard's single-event view.
+    const { stats } = await computeDashboardStats(currentUser, { eventId, status: null });
 
     res.json({
       eventId,
-      totalContacts: contactCount,
-      totalCampaigns: campaigns.length,
-      messagesSent: msgBreakdown.Sent,
-      messagesDelivered: msgBreakdown.Delivered,
-      messagesFailed: msgBreakdown.Failed,
-      messagesPending: msgBreakdown.Pending,
+      totalContacts: stats.totalContacts,
+      totalCampaigns: stats.totalCampaigns,
+      messagesSent: stats.messagesSent,
+      messagesDelivered: stats.messagesDelivered,
+      messagesFailed: stats.messagesFailed,
+      messagesPending: stats.messagesPending,
     });
   } catch (error) {
     console.error('Get event statistics error:', error);

@@ -65,7 +65,10 @@ describe('Role-Based Event Access Control - Backend Verification', () => {
   it('dashboardController restricts stats and activity to authorized events', () => {
     const content = fs.readFileSync('backend/src/controllers/dashboardController.ts', 'utf-8');
     assert.ok(content.includes('isEventAuthorized'), 'dashboardController must check isEventAuthorized');
-    assert.ok(content.includes('getAuthorizedEventIds'), 'dashboardController must check getAuthorizedEventIds');
+    // Which events count is decided in the stats service the controller delegates to.
+    assert.ok(content.includes('computeDashboardStats') && content.includes('resolveScope'), 'dashboardController must take its numbers from the scoped stats service');
+    const service = fs.readFileSync('backend/src/services/dashboardStats.ts', 'utf-8');
+    assert.ok(service.includes('getAuthorizedEventIds'), 'the dashboard stats service must scope to getAuthorizedEventIds');
   });
 
   it('contactController enforces event authorization on add, get, import, update, and delete', () => {
