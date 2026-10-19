@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
@@ -16,16 +16,14 @@ import api from '../services/api';
 import type { Event, Campaign, EventStatus } from '@eventreach/shared';
 import { EventSearch } from '../components/ui/EventSearch';
 import { Button } from '../components/ui/Button';
-
-interface DashboardStats {
-  totalEvents: number;
-  totalContacts: number;
-  totalCampaigns: number;
-  messagesSent: number;
-  messagesDelivered: number;
-  messagesFailed: number;
-  messagesPending: number;
-}
+import {
+  EMPTY_DASHBOARD_STATS,
+  buildDashboardQuery,
+  createLatestGate,
+  dashboardErrorMessage,
+  readDashboardStats,
+  type DashboardStats,
+} from '../utils/dashboardQuery';
 
 const STATUS_OPTIONS: { label: string; value: '' | EventStatus }[] = [
   { label: 'All', value: '' },
@@ -35,10 +33,14 @@ const STATUS_OPTIONS: { label: string; value: '' | EventStatus }[] = [
 ];
 
 const Dashboard = () => {
-  const [stats, setStats] = useState<DashboardStats>({
-    totalEvents: 0, totalContacts: 0, totalCampaigns: 0,
-    messagesSent: 0, messagesDelivered: 0, messagesFailed: 0, messagesPending: 0,
-  });
+  const [stats, setStats] = useState<DashboardStats>(EMPTY_DASHBOARD_STATS);
+  const [loadError, setLoadError] = useState('');
+  // Which request is the latest: an answer to an earlier filter that arrives late must not replace it.
+  // A ref, not useMemo: React may throw a memoized value away, which would hand in-flight
+  // requests a gate nobody else holds. A ref lives exactly as long as the component.
+  const gateRef = useRef<ReturnType<typeof createLatestGate> | null>(null);
+  if (gateRef.current === null) gateRef.current = createLatestGate();
+  const requestGate = gateRef.current;
   const [chartData, setChartData] = useState<any[]>([]);
   const [recentCampaigns, setRecentCampaigns] = useState<Campaign[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
@@ -58,33 +60,48 @@ const Dashboard = () => {
 
   // Fetch when status filter OR selected event changes
   const fetchAll = useCallback(async () => {
+    const requestId = requestGate.next();
+    const isLatest = () => requestGate.isLatest(requestId);
     setIsLoading(true);
+    setLoadError('');
+
+    // The event list only feeds the dropdown; failing to load it does not stop the numbers.
+    api.get('/events')
+      .then((res) => { if (isLatest()) setEvents(res.data); })
+      .catch((error) => console.error('Failed to fetch events', error));
+
     try {
-      let query = '';
-      if (selectedEventId) {
-        query = '?eventId=' + selectedEventId;
-      } else if (statusFilter) {
-        query = '?status=' + statusFilter;
-      }
-      const [statsRes, activityRes, eventsRes] = await Promise.all([
+      const query = buildDashboardQuery({ eventId: selectedEventId, status: statusFilter });
+      const [statsRes, activityRes] = await Promise.all([
         api.get('/dashboard/stats' + query),
         api.get('/dashboard/activity' + query),
-        api.get('/events'),
       ]);
-      setStats(statsRes.data);
+      if (!isLatest()) return;
+      const next = readDashboardStats(statsRes.data);
+      if (!next) throw new Error('The dashboard statistics were incomplete.');
+      setStats(next);
       setChartData(activityRes.data.chartData || []);
       setRecentCampaigns(activityRes.data.recentCampaigns || []);
-      setEvents(eventsRes.data);
-    } catch (error) {
+    } catch (error: any) {
+      if (!isLatest()) return;
       console.error('Failed to fetch dashboard data', error);
+      // Never leave the previous filter's numbers on screen under this one.
+      setStats(EMPTY_DASHBOARD_STATS);
+      setChartData([]);
+      setRecentCampaigns([]);
+      setLoadError(dashboardErrorMessage(error));
     } finally {
-      setIsLoading(false);
+      if (isLatest()) setIsLoading(false);
     }
-  }, [statusFilter, selectedEventId]);
+  }, [statusFilter, selectedEventId, requestGate]);
 
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
+
+  // Leaving the page drops every request still in flight - the stats, the chart and the
+  // event list alike - so none of them can answer a component that is gone.
+  useEffect(() => () => { requestGate.next(); }, [requestGate]);
 
   // Real-time socket listener to re-fetch on assignment or status changes
   useEffect(() => {
@@ -200,6 +217,16 @@ const Dashboard = () => {
         )}
       </div>
 
+      {loadError ? (
+        <div role='alert' className='glass-panel rounded-2xl p-6 border border-destructive/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4'>
+          <div>
+            <p className='font-semibold text-destructive'>The statistics could not be loaded</p>
+            <p className='text-sm text-foreground/60 mt-1'>{loadError}</p>
+          </div>
+          <Button variant='secondary' onClick={fetchAll}>Try again</Button>
+        </div>
+      ) : (
+      <>
       {/* Stat Cards */}
       <motion.div
         className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6'
@@ -306,6 +333,8 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
+      </>
+      )}
 
     </div>
   );
