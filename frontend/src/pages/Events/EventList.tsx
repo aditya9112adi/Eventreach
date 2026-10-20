@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useSocket } from '../../contexts/SocketContext';
 import { useAuth } from '../../store/authStore';
 import { Link } from 'react-router-dom';
-import { Plus, Search, Calendar, MapPin, ChevronUp, ChevronDown, ChevronsUpDown, X, ShieldAlert, PhoneCall } from 'lucide-react';
+import { Plus, Search, Calendar, MapPin, ChevronUp, ChevronDown, ChevronsUpDown, X, ShieldAlert } from 'lucide-react';
 import api from '../../services/api';
 import type { Event } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
@@ -283,9 +283,6 @@ const EventList = () => {
         </div>
         {user?.role !== 'User' && (
           <div className="flex gap-2">
-            <Link to="/events/poc-bulk">
-              <Button variant="secondary"><PhoneCall className="w-4 h-4 mr-2" />Update POC number</Button>
-            </Link>
             <Link to="/events/create">
               <Button><Plus className="w-4 h-4 mr-2" />Create Event</Button>
             </Link>
