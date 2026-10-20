@@ -13,6 +13,16 @@ import { useToast } from '../../components/ui/Toast';
 import { EventTypeField } from '../../components/ui/EventTypeField';
 import { refineEventType, resolveEventType } from '../../utils/eventType';
 import { applyOrganizerMobileInput, counterLabel, reconcileOrganizerMobileChange } from '../../utils/organizerMobile';
+import {
+  PAST_TIME_ADJUSTED_TOAST,
+  PAST_TIME_MESSAGE,
+  eventDateField,
+  isCompleteDate,
+  isPastTime,
+  localDateString,
+  localTimeString,
+  pastTimeAdjustment,
+} from '../../utils/eventDate';
 
 const LIMITS = {
   organizerName: 50,
@@ -29,24 +39,15 @@ const eventSchema = z.object({
   // checked by refineEventType below, the same rules in Create and Edit.
   eventType:        z.string(),
   customEventType:  z.string().optional(),
-  eventDate:        z.string().min(1, 'Event Date is required').regex(/^\d{4}-\d{2}-\d{2}$/, 'Event Date must be YYYY-MM-DD'),
+  eventDate:        eventDateField,
   eventTime:        z.string().min(1, 'Event Time is required').regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Event Time must be a valid HH:MM'),
   eventVenue:       z.string().min(1, 'Event Venue is required').max(LIMITS.venue, `Event Venue max ${LIMITS.venue} characters`),
   eventDescription: z.string().max(LIMITS.description, `Event Description max ${LIMITS.description} characters`).optional(),
 }).superRefine((data, ctx) => {
   refineEventType(data, ctx);
-  if (data.eventDate) {
-    const now = new Date();
-    const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-    if (data.eventDate < todayStr) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Event Date cannot be in the past', path: ['eventDate'] });
-    } else if (data.eventDate === todayStr && data.eventTime) {
-      const currentHours = now.getHours().toString().padStart(2, '0');
-      const currentMinutes = now.getMinutes().toString().padStart(2, '0');
-      if (data.eventTime < `${currentHours}:${currentMinutes}`) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Event Time cannot be in the past', path: ['eventTime'] });
-      }
-    }
+  // A past date is the Event Date field's own rule (eventDateField); today's time that has passed needs both.
+  if (isPastTime(data.eventDate, data.eventTime)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: PAST_TIME_MESSAGE, path: ['eventTime'] });
   }
 });
 
@@ -83,7 +84,7 @@ const EventCreate = () => {
   const [parent, setParent] = useState<Event | null>(null);
   const [parentError, setParentError] = useState('');
 
-  const { register, handleSubmit, watch, setValue, getValues, formState: { errors, isSubmitting } } = useForm<EventForm>({
+  const { register, handleSubmit, watch, setValue, getValues, trigger, formState: { errors, isSubmitting } } = useForm<EventForm>({
     resolver: zodResolver(eventSchema),
     // Nothing chosen yet: the dropdown shows "Select Event Type".
     defaultValues: { eventType: '', customEventType: '' },
@@ -122,22 +123,30 @@ const EventCreate = () => {
   const selectedTime = watch('eventTime');
 
   const now = new Date();
-  const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+  const todayStr = localDateString(now);
 
   let minTime: string | undefined;
   if (selectedDate === todayStr) {
-    minTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    minTime = localTimeString(now);
   }
 
+  // A time that has already gone by today is moved to the current time. The DATE is never
+  // changed for the user: the browser reports a typed year digit by digit (0002, 0020, 0202,
+  // 2026), and replacing each of those "past" dates with today lost the date and showed
+  // the same warning once per digit. A past date is a message on the field instead.
   useEffect(() => {
-    if (selectedDate === todayStr && selectedTime && minTime && selectedTime < minTime) {
-      setValue('eventTime', minTime, { shouldValidate: true });
-      showToast('warning', 'Past time selected. Automatically adjusted to current time.');
-    } else if (selectedDate && selectedDate < todayStr) {
-      setValue('eventDate', todayStr, { shouldValidate: true });
-      showToast('warning', 'Past date selected. Automatically adjusted to today.');
+    const adjusted = pastTimeAdjustment(selectedDate, selectedTime, todayStr, minTime);
+    if (adjusted) {
+      setValue('eventTime', adjusted, { shouldValidate: true });
+      showToast('warning', PAST_TIME_ADJUSTED_TOAST);
     }
   }, [selectedDate, selectedTime, minTime, todayStr, setValue, showToast]);
+
+  // Once the date has four digits of year, say at once whether it is acceptable (one message on
+  // the field, replaced - not added to - by the next), rather than only when the form is submitted.
+  useEffect(() => {
+    if (isCompleteDate(selectedDate)) void trigger('eventDate');
+  }, [selectedDate, trigger]);
 
   const onSubmit = async (form: EventForm) => {
     // eventType is the chosen option, or the type specified under Other.
