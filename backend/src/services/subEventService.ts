@@ -37,6 +37,21 @@ export const memberContactIds = async (eventId: unknown): Promise<mongoose.Types
 };
 
 /**
+ * Whether a number (as stored, +91...) is already on a Sub-Event's list - whether the
+ * guest was added to the Sub-Event itself or assigned from a Main Event. One list never
+ * holds the same number twice.
+ */
+export const isNumberOnMemberList = async (
+  eventId: unknown,
+  phoneNumber: string,
+  exceptContactId?: unknown
+): Promise<boolean> => {
+  const ids = (await memberContactIds(eventId)).filter((id: unknown) => String(id) !== String(exceptContactId));
+  if (ids.length === 0) return false;
+  return Boolean(await Contact.exists({ _id: { $in: ids }, phoneNumber }));
+};
+
+/**
  * A Contact query for an event's guests: a Main Event's own contacts, or a
  * Sub-Event's members - never the Main Event's guests for a Sub-Event, nor a
  * sibling sub-event's.

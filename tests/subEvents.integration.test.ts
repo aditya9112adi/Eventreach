@@ -430,10 +430,7 @@ describe('guest lists, contacts and messaging', () => {
     assert.deepEqual((await Event.findById(fx.haldi._id).lean()).assignedUserIds, []);
   });
 
-  test('contacts are added to the Main Event, never straight into a sub-event', async () => {
-    const res = await call('POST', '/api/contacts', fx.x, { fullName: 'New Guest', phoneNumber: '9812345678', countryCode: 'IN', eventId: fx.haldi._id });
-    assert.equal(res.status, 400);
-    assert.match(res.body.error, /main event/);
+  test('a file cannot be imported into a sub-event (single guests can - see contactsSubEvent.integration)', async () => {
     const imp = await call('POST', `/api/contacts/event/${fx.haldi._id}/import`, fx.x, { contacts: [{ fullName: 'A', phoneNumber: '9812345679' }] });
     assert.equal(imp.status, 400);
   });

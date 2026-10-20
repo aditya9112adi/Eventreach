@@ -111,10 +111,12 @@ test('the member list of a sub-event', async (t) => {
     assert.ok(members.includes('No members match'));
   });
 
-  await t.test('removing takes the contact off this list only, after confirming', () => {
+  await t.test('removing takes an assigned contact off this list only, after confirming; a guest added here is deleted, after confirming', () => {
     assert.ok(members.includes('await api.delete(`/events/${subEvent._id}/members/${confirmRemove._id}`);'));
     assert.ok(members.includes('The contact is not deleted and stays on the main event and any other sub-event.'));
-    assert.ok(members.includes('busyLabel="Removing…"'));
+    assert.ok(members.includes("'Removing…'"));
+    assert.ok(members.includes("'Delete Guest?'"));
+    assert.ok(members.includes('exist only there, so they will be permanently removed.'));
   });
 
   await t.test('uploading refreshes the list; not offered on a completed sub-event', () => {
@@ -131,17 +133,16 @@ test('the member list of a sub-event', async (t) => {
   });
 });
 
-test('a sub-event has no Add Members button or picker', async (t) => {
-  await t.test('the Members section has no such button, dialog, icon or state, and the dialog file is gone', () => {
+test('a sub-event has no Add Members button or picker, but does have Add Guest', async (t) => {
+  await t.test('the Members section has no Add Members button, dialog or state, and the old dialog file is gone', () => {
     assert.equal(members.includes('Add Members'), false);
     assert.equal(members.includes('AddMembersDialog'), false);
     assert.equal(members.includes('isAddOpen'), false);
-    assert.equal(/\bUserPlus\b/.test(members), false);
     assert.equal(fs.existsSync('frontend/src/components/ui/AddMembersDialog.tsx'), false);
   });
 
-  await t.test('the empty state points at Upload, the way members are now added', () => {
-    assert.ok(members.includes('This sub-event starts with an empty list. Use Upload to add contacts from an Excel or PDF file;'));
+  await t.test('the empty state points at Add Guest and Upload', () => {
+    assert.ok(members.includes('This sub-event starts with an empty list. Use Add Guest to add one guest, or Upload to add contacts from an Excel or PDF file;'));
     assert.equal(members.includes('Use Add Members'), false);
   });
 
@@ -163,11 +164,12 @@ test('a sub-event has no Add Members button or picker', async (t) => {
     }
   });
 
-  await t.test('the main event\'s own Add Guest is untouched, and no sub-event screen has a manual add', () => {
+  await t.test('the main event\'s own Add Guest is untouched; of the sub-event screens only the Members section adds a guest', () => {
     const contacts = read('frontend/src/pages/Contacts/ContactList.tsx');
     assert.ok(contacts.includes('Add Guest'));
     assert.ok(contacts.includes("{editingContact ? 'Edit Guest' : 'Add Guest Manually'}"));
-    for (const source of [members, section, upload, detail]) assert.equal(/add guest/i.test(source.replace(/Add guests to/g, '')), false);
+    assert.ok(members.includes('<AddGuestDialog'));
+    for (const source of [section, upload, detail]) assert.equal(/add guest/i.test(source.replace(/Add guests to/g, '')), false);
   });
 });
 

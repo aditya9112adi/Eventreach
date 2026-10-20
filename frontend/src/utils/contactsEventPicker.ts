@@ -4,11 +4,12 @@ import type { Event } from '@eventreach/shared';
  * The Contacts tab with Sub-Events: which events its selector offers, in what
  * order, and what each kind of selection lets the user do.
  *
- * A Sub-Event owns no guests of its own. Its list is a set of existing contacts
- * of a Main Event (the member list); the server refuses to create a guest on it,
- * import a file into it, or delete a guest through it. So on a Sub-Event the page
- * offers exactly one way to add - picking existing contacts - and "remove" means
- * taking a contact off this one list, never deleting the guest.
+ * A Sub-Event's list holds two kinds of contact: guests added to the Sub-Event itself
+ * (it owns them: they are edited and deleted like any guest, and are on no other list) and
+ * existing contacts of its Main Event assigned to it (owned by that Main Event: "remove"
+ * only takes them off this one list, never deleting the guest). The page offers both ways
+ * to add - picking existing contacts, and adding a guest - but no file import, which the
+ * server refuses for a Sub-Event.
  *
  * Pure functions, so every rule can be tested without a browser.
  */
@@ -77,15 +78,31 @@ export type RowAction = 'edit-delete' | 'remove-from-sub-event';
 
 export interface ContactControls {
   kind: 'all' | 'main' | 'sub';
-  /** Add Guest, Import from File and the add/edit guest form: Main Events (and the unselected view) only. */
+  /** Add Guest and the add/edit guest form: every selection. */
   guestManagement: boolean;
+  /** Import from File: Main Events (and the unselected view) only. */
+  importFile: boolean;
   /** Picking existing contacts for a Sub-Event. */
   assignContacts: boolean;
-  /** What each row offers. */
-  rowAction: RowAction;
-  /** Checkboxes and bulk delete, which delete guest records. */
+  /** Checkboxes and bulk delete, which delete guest records - offered per row, see isOwnGuest. */
   selectable: boolean;
 }
+
+/**
+ * True when the guest belongs to the selection itself: every guest of a Main Event or of the
+ * unselected view, and, for a Sub-Event, the guests added to it - not the Main Event's contacts
+ * assigned to it. Only such a guest may be edited, deleted or selected for bulk delete there.
+ */
+export const isOwnGuest = (
+  event: Pick<Event, '_id' | 'parentEventId'> | null | undefined,
+  contact: { eventId?: unknown }
+): boolean => !isSubEventRecord(event) || String(contact.eventId ?? '') === String(event?._id ?? '');
+
+/** What a row offers: Edit/Delete for a guest of the selection, Remove for a contact merely assigned to a Sub-Event. */
+export const rowActionFor = (
+  event: Pick<Event, '_id' | 'parentEventId'> | null | undefined,
+  contact: { eventId?: unknown }
+): RowAction => (isOwnGuest(event, contact) ? 'edit-delete' : 'remove-from-sub-event');
 
 /**
  * What the page offers for the selection. `canDelete` is the role rule for deleting
@@ -93,9 +110,9 @@ export interface ContactControls {
  */
 export const contactControls = (event: EventLike | null | undefined, canDelete: boolean): ContactControls => {
   if (isSubEventRecord(event)) {
-    return { kind: 'sub', guestManagement: false, assignContacts: true, rowAction: 'remove-from-sub-event', selectable: false };
+    return { kind: 'sub', guestManagement: true, importFile: false, assignContacts: true, selectable: canDelete };
   }
-  return { kind: event ? 'main' : 'all', guestManagement: true, assignContacts: false, rowAction: 'edit-delete', selectable: canDelete };
+  return { kind: event ? 'main' : 'all', guestManagement: true, importFile: true, assignContacts: false, selectable: canDelete };
 };
 
 /** The contacts and the total from the server's answer: the paged shape, or (an older server) a plain array. */

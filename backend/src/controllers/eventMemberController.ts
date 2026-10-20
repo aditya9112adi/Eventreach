@@ -9,6 +9,7 @@ import { AuditService } from '../services/AuditService';
 import { RequestWithId } from '../middleware/requestMiddleware';
 import { isEventAuthorized } from '../services/eventAuthService';
 import { countMembersOf, isSubEvent, memberSourceEvents } from '../services/subEventService';
+import { performContactDeletion } from '../services/contactDeletionService';
 import { extractFromExcel, extractFromPDF, ImportFormatError, type RawContact } from '../utils/fileExtractors';
 import {
   MEMBER_UPLOAD_MAX_ROWS,
@@ -245,13 +246,18 @@ export const addMembers = async (req: RequestWithId, res: Response) => {
     if (!parent) throw new MemberRequestError(404, 'The main event no longer exists.');
     const sourceIds = new Set((await memberSourceEvents((req as any).user, parent)).map((s) => String(s._id)));
 
-    const contacts = valid.length ? await Contact.find({ _id: { $in: valid } }).select('_id eventId').lean() : [];
+    const contacts = valid.length ? await Contact.find({ _id: { $in: valid } }).select('_id eventId phoneNumber').lean() : [];
     const contactById = new Map(contacts.map((c: any) => [String(c._id), c]));
+    // Guests added to this Sub-Event itself are on its list already: the same number may not be put there twice.
+    const ownNumbers = new Set(
+      (await Contact.find({ eventId: event._id }).select('phoneNumber').lean()).map((c: any) => c.phoneNumber)
+    );
     const eligible: string[] = [];
     for (const id of valid) {
       const contact: any = contactById.get(id);
       if (!contact) rejected.push({ id, reason: 'Contact not found' });
       else if (!sourceIds.has(String(contact.eventId))) rejected.push({ id, reason: 'Access denied' });
+      else if (ownNumbers.has(contact.phoneNumber)) rejected.push({ id, reason: 'That number is already a guest of this sub-event.' });
       else eligible.push(id);
     }
 
@@ -437,6 +443,11 @@ export const removeMember = async (req: RequestWithId, res: Response) => {
     const removed = await EventMember.findOneAndDelete({ eventId: event._id, contactId }).lean();
     if (!removed) return res.status(404).json({ error: 'That contact is not a member of this sub-event.' });
 
+    // A guest added to this Sub-Event itself exists only for it: taking it off the list
+    // deletes it, rather than leaving a hidden record that still holds its number.
+    const owned = await Contact.findOne({ _id: contactId, eventId: event._id });
+    if (owned) await performContactDeletion(owned, req);
+
     await AuditService.log({
       action: 'EVENT_MEMBER_REMOVED',
       collectionName: 'eventmembers',
@@ -445,11 +456,11 @@ export const removeMember = async (req: RequestWithId, res: Response) => {
       request: AuditService.getRequestInfo(req),
       before: removed,
       description: `Removed a contact from sub-event ${event.eventId || event.eventName}`,
-      metadata: { eventId: event.eventId ?? null, contactId },
+      metadata: { eventId: event.eventId ?? null, contactId, guestDeleted: Boolean(owned) },
     });
 
     const memberCount = await countMembersOf(event._id);
-    res.json({ message: 'Member removed', memberCount });
+    res.json({ message: owned ? 'Guest deleted' : 'Member removed', memberCount, guestDeleted: Boolean(owned) });
   } catch (error) {
     fail(res, error, 'Remove member');
   }

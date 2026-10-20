@@ -84,14 +84,15 @@ describe('a selected sub-event shows its own contacts', () => {
     assert.ok(page.includes('setIsAssignOpen(false);\n    setConfirmRemoveId(null);\n  }, [activeEventId]);'));
   });
 
-  test('an empty sub-event says so and offers the picker, not Add First Guest', () => {
+  test('an empty sub-event says so and offers both ways to fill it: the picker and a first guest', () => {
     assert.ok(page.includes('<p>{emptyContactsText(controls.kind, debouncedSearch)}</p>'));
-    const empty = between(page, "{controls.kind === 'sub' ? (\n              !debouncedSearch && (", ') : (');
+    const empty = between(page, "{(controls.kind !== 'sub' || !debouncedSearch) && (", 'Add First Guest');
+    assert.ok(empty.includes('{controls.assignContacts && ('));
     assert.ok(empty.includes('setIsAssignOpen(true)'));
     assert.ok(empty.includes('Add Contacts'));
-    assert.equal(empty.includes('Add First Guest'), false);
-    // The main-event branch, right after it, keeps its own button.
-    assert.ok(page.includes('              Add First Guest\n            </Button>\n            )}'));
+    assert.ok(empty.includes('disabled={isEventCompleted}'));
+    assert.ok(empty.includes('setIsAddModalOpen(true);'), 'the guest button opens the same form');
+    assert.ok(page.includes('                  Add First Guest\n                </Button>'));
   });
 
   test('a failed load shows an error with Try again, and never leaves another event\'s contacts on screen', () => {
@@ -107,16 +108,18 @@ describe('a selected sub-event shows its own contacts', () => {
 });
 
 describe('adding contacts to a sub-event', () => {
-  test('a sub-event gets one button, Add Contacts, in place of Import from File and Add Guest', () => {
-    const buttons = between(page, '{controls.assignContacts ? (', '</>\n          )}');
-    const sub = buttons.slice(0, buttons.indexOf(') : ('));
-    assert.ok(sub.includes('Add Contacts'));
-    assert.ok(sub.includes('onClick={() => setIsAssignOpen(true)}'));
-    assert.ok(sub.includes('disabled={isEventCompleted}'), 'not offered for a completed sub-event');
-    assert.equal(sub.includes('Import from File'), false);
-    assert.equal(sub.includes('Add Guest'), false);
-    const main = buttons.slice(buttons.indexOf(') : ('));
-    assert.ok(main.includes('Import from File') && main.includes('Add Guest'), 'both stay on the main-event branch');
+  test('a sub-event gets Add Contacts and Add Guest; Import from File is left to main events', () => {
+    const header = between(page, '{controls.assignContacts && (', '</div>\n      </div>');
+    const addContacts = between(header, '{controls.assignContacts && (', '</Button>');
+    assert.ok(addContacts.includes('Add Contacts'));
+    assert.ok(addContacts.includes('onClick={() => setIsAssignOpen(true)}'));
+    assert.ok(addContacts.includes('disabled={isEventCompleted}'), 'not offered for a completed sub-event');
+    const importFile = between(header, '{controls.importFile && (', '))}');
+    assert.ok(importFile.includes('Import from File'));
+    assert.equal(importFile.includes('Add Guest'), false);
+    // Add Guest is outside both conditions: every selection has it.
+    assert.ok(header.indexOf('Add Guest') > header.indexOf('))}'));
+    assert.ok(header.includes('setIsAddModalOpen(true);'));
   });
 
   test('the picker is the contact-selection workflow used before: server candidates, multi-select, batches', () => {
@@ -129,13 +132,20 @@ describe('adding contacts to a sub-event', () => {
     assert.ok(page.includes('{activeEvent && controls.assignContacts && ('), 'it exists only while a sub-event is selected');
   });
 
-  test('no guest can be created on a sub-event from this page, even through a link with ?add=true', () => {
-    assert.ok(page.includes("    if (controls.kind === 'sub') return;\n    if (!activeEvent || saveInFlight.current) return;"));
+  test('Add Guest on a sub-event is the same form as on a main event, and creates the guest on the selected sub-event', () => {
+    assert.equal(page.includes("controls.kind === 'sub') return;"), false, 'no sub-event guard on creating a guest');
     assert.ok(page.includes('{controls.guestManagement && (isAddModalOpen || editingContact) && ReactDOM.createPortal('));
+    assert.ok(page.includes("await api.post('/contacts', {\n        ...data,\n        eventId: activeEvent._id\n      });"));
+    assert.ok(page.includes('const onAddContact = async (data: ContactForm) => {\n    if (!activeEvent || saveInFlight.current) return;'));
+  });
+
+  test('no file can be imported into a sub-event: Import from File is not offered for one', () => {
+    assert.ok(page.includes('{controls.importFile && ('));
+    assert.ok(read('frontend/src/utils/contactsEventPicker.ts').includes("kind: 'sub', guestManagement: true, importFile: false, assignContacts: true"));
   });
 });
 
-describe('a sub-event can never reach a call that deletes or edits a guest', () => {
+describe('on a sub-event, only its own guests can be edited or deleted', () => {
   test('its rows offer Remove, which calls the member endpoint and never the guest endpoints', () => {
     const remove = between(page, 'const confirmRemoveFromSubEvent = async () => {', 'const openEditModal');
     assert.ok(remove.includes('await api.delete(`/events/${activeEvent._id}/members/${confirmRemoveId}`);'));
@@ -144,8 +154,8 @@ describe('a sub-event can never reach a call that deletes or edits a guest', () 
     assert.ok(remove.includes('setRefreshToken((t) => t + 1);'), 'the list is re-read from the server');
   });
 
-  test('the row actions are one or the other: Remove for a sub-event, Edit and Delete otherwise', () => {
-    const actions = between(page, "{controls.rowAction === 'remove-from-sub-event' ? (", '</div>\n                    </td>\n                  </motion.tr>');
+  test('the row actions are one or the other: Remove for a contact merely assigned to the sub-event, Edit and Delete otherwise', () => {
+    const actions = between(page, "{rowActionFor(activeEvent, contact) === 'remove-from-sub-event' ? (", '</div>\n                    </td>\n                  </motion.tr>');
     const removeBranch = actions.slice(0, actions.indexOf(') : ('));
     const guestBranch = actions.slice(actions.indexOf(') : ('));
     assert.ok(removeBranch.includes('setConfirmRemoveId(contact._id)'));
@@ -154,9 +164,12 @@ describe('a sub-event can never reach a call that deletes or edits a guest', () 
     assert.ok(guestBranch.includes('handleDelete(contact._id)'));
   });
 
-  test('selection and bulk delete, which delete guest records, are off for a sub-event', () => {
+  test('selection and bulk delete reach only the sub-event\'s own guests, never the main event\'s contacts assigned to it', () => {
     assert.equal((page.match(/controls\.selectable/g) ?? []).length, 3, 'the bar, the header box and each row box');
     assert.ok(page.includes('{controls.selectable && selectedIds.size > 0 && ('));
+    assert.ok(page.includes('paginatedContacts.filter((c) => isOwnGuest(activeEvent, c)).map((c) => c._id)'), 'select-all takes only the own guests');
+    assert.ok(page.includes('{isOwnGuest(activeEvent, contact) && (\n                          <RowSelectCheckbox'), 'an assigned row has no checkbox');
+    assert.ok(page.includes('{pageIds.length > 0 && (\n                        <SelectAllCheckbox'), 'and no select-all when none can be selected');
     assert.equal(/\{canDelete && \(\s*<th/.test(page), false);
   });
 

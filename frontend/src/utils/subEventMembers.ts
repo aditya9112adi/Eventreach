@@ -111,8 +111,14 @@ export interface SubEventMember {
   email?: string;
   status: string;
   addedAt?: string | null;
+  /** The event that owns the guest: the Sub-Event itself for a guest added there, else the Main Event it was assigned from. */
+  eventId?: string;
   sourceEvent: { _id: string; eventId?: string; eventName: string } | null;
 }
+
+/** True for a guest added to this Sub-Event itself (as opposed to a Main Event's contact assigned to it). */
+export const isOwnGuestOf = (subEventId: string, member: Pick<SubEventMember, 'eventId' | 'sourceEvent'>): boolean =>
+  String(member.eventId ?? member.sourceEvent?._id ?? '') === String(subEventId);
 
 /** The columns of the member download - the member table's, in the same order. */
 export const MEMBER_EXPORT_COLUMNS: ReportColumn<SubEventMember>[] = [

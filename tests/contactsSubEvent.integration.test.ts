@@ -310,18 +310,11 @@ describe('what a sub-event refuses', () => {
     fullName: 'New Guest', phoneNumber: '9876543211', countryCode: 'IN', email: 'newguest@gmail.com', eventId: String(eventId), ...extra,
   });
 
-  test('a guest cannot be created on a sub-event, and nothing is stored', async () => {
-    const before = await Contact.countDocuments({});
-    const res = await call('POST', '/api/contacts', fx.x, guest(fx.haldi._id));
-    assert.equal(res.status, 400);
-    assert.match(res.body.error, /Guests are added to the main event/);
-    assert.equal(await Contact.countDocuments({}), before);
-  });
-
-  test('a file cannot be imported into a sub-event', async () => {
+  test('a file cannot be imported into a sub-event, and says so', async () => {
     const before = await Contact.countDocuments({});
     const preview = await call('POST', `/api/contacts/event/${fx.haldi._id}/upload`, fx.x);
     assert.equal(preview.status, 400);
+    assert.match(preview.body.error, /cannot be imported into a sub-event/);
     const imported = await call('POST', `/api/contacts/event/${fx.haldi._id}/import`, fx.x, { contacts: [{ fullName: 'Imported', phoneNumber: '9876543212', status: 'Valid' }] });
     assert.equal(imported.status, 400);
     assert.equal(await Contact.countDocuments({}), before);
@@ -353,5 +346,178 @@ describe('what a sub-event refuses', () => {
     const guestNames = nameSet(main);
     for (const name of fx.names) assert.ok(guestNames.includes(name), name);
     assert.equal(guestNames.includes('Gita Menon'), false, "a guest of another event, assigned to a sub-event, did not join the main event");
+  });
+});
+
+describe('a guest added to a sub-event', () => {
+  const guest = (eventId: any, extra: Record<string, unknown> = {}) => ({
+    fullName: 'Sub Guest', phoneNumber: '9811110001', countryCode: 'IN', email: 'subguest@gmail.com', eventId: String(eventId), ...extra,
+  });
+  const members = (eventId: any) => EventMember.find({ eventId }).lean();
+
+  test('is created, owned by the sub-event and placed on its own list, and nowhere else', async () => {
+    const res = await call('POST', '/api/contacts', fx.x, guest(fx.haldi._id));
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    const stored = await Contact.findOne({ fullName: 'Sub Guest' }).lean();
+    assert.equal(String(stored.eventId), String(fx.haldi._id), 'the sub-event owns it');
+    assert.equal(stored.phoneNumber, '+919811110001');
+    assert.equal(stored.source, 'Manual');
+    assert.equal((await members(fx.haldi._id)).filter((m: any) => String(m.contactId) === String(stored._id)).length, 1);
+
+    assert.ok(nameSet(await list(fx.haldi._id)).includes('Sub Guest'), "on the sub-event's Members list / Contacts tab");
+    assert.ok(!nameSet(await list(fx.W._id)).includes('Sub Guest'), 'not on the main event');
+    assert.ok(!nameSet(await list(fx.reception._id)).includes('Sub Guest'), 'not on a sibling');
+    assert.ok(!nameSet(await list(fx.W._id, fx.x, '&search=Sub')).includes('Sub Guest'));
+    assert.equal((await call('GET', `/api/events/${fx.haldi._id}`, fx.x)).body.memberCount, (await members(fx.haldi._id)).length);
+  });
+
+  test('is found by search, counted in the total and reached with pagination', async () => {
+    for (let i = 0; i < 3; i++) {
+      assert.equal((await call('POST', '/api/contacts', fx.x, guest(fx.reception._id, { fullName: `Paged ${i}`, phoneNumber: `981111010${i}` }))).status, 201);
+    }
+    const found = await call('GET', `/api/contacts/event/${fx.reception._id}?page=1&limit=10&search=Paged%201`, fx.x);
+    assert.deepEqual(nameSet(found), ['Paged 1']);
+    const p1 = await call('GET', `/api/contacts/event/${fx.reception._id}?page=1&limit=2`, fx.x);
+    const p2 = await call('GET', `/api/contacts/event/${fx.reception._id}?page=2&limit=2`, fx.x);
+    assert.equal(p1.body.pagination.total, p2.body.pagination.total);
+    const seen = [...ids(p1), ...ids(p2)];
+    assert.equal(new Set(seen).size, seen.length, 'no row repeated between pages');
+  });
+
+  test('the same number as a main-event guest is a separate record on the sub-event', async () => {
+    const mainGuest = await Contact.findOne({ eventId: fx.W._id }).lean();
+    const number = mainGuest.phoneNumber.replace('+91', '');
+    const res = await call('POST', '/api/contacts', fx.x, guest(fx.haldi._id, { fullName: 'Twin Of Main', phoneNumber: number }));
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.equal(await Contact.countDocuments({ phoneNumber: mainGuest.phoneNumber }), 2);
+    assert.equal(String((await Contact.findOne({ fullName: mainGuest.fullName, eventId: fx.W._id }).lean())._id), String(mainGuest._id), 'the main-event guest is untouched');
+  });
+
+  test('is refused when the number is already on that sub-event, whether added there or assigned', async () => {
+    const again = await call('POST', '/api/contacts', fx.x, guest(fx.haldi._id, { fullName: 'Second Try' }));
+    assert.equal(again.status, 409, JSON.stringify(again.body));
+    assert.equal(again.body.field, 'phoneNumber');
+
+    const assigned = fx.w[2];
+    assert.ok([200, 201].includes((await assign(fx.reception._id, [assigned])).status));
+    const clash = await call('POST', '/api/contacts', fx.x, guest(fx.reception._id, { fullName: 'Clash', phoneNumber: assigned.phoneNumber.replace('+91', '') }));
+    assert.equal(clash.status, 409, JSON.stringify(clash.body));
+    assert.ok(!nameSet(await list(fx.reception._id)).includes('Clash'));
+    assert.equal(await Contact.countDocuments({ fullName: 'Second Try' }), 0);
+  });
+
+  test('may repeat on a sibling sub-event, which is a different list', async () => {
+    const res = await call('POST', '/api/contacts', fx.x, guest(fx.reception._id, { fullName: 'Sub Guest Too' }));
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.ok(!nameSet(await list(fx.haldi._id)).includes('Sub Guest Too'));
+  });
+
+  test('has the same validation as a main-event guest, and nothing is stored when it fails', async () => {
+    const before = await Contact.countDocuments({});
+    for (const bad of [
+      { fullName: '' }, { fullName: 'x'.repeat(51) }, { phoneNumber: '' }, { phoneNumber: '12345' }, { phoneNumber: '5876543210' },
+      { phoneNumber: '98765432101' }, { email: 'not-an-email' },
+    ]) {
+      const res = await call('POST', '/api/contacts', fx.x, guest(fx.haldi._id, bad));
+      assert.equal(res.status, 400, JSON.stringify(bad) + ' ' + JSON.stringify(res.body));
+    }
+    assert.equal(await Contact.countDocuments({}), before);
+  });
+
+  test('is refused for an event that does not exist, for a malformed id, and for no sign-in', async () => {
+    const before = await Contact.countDocuments({});
+    assert.ok([400, 403, 404].includes((await call('POST', '/api/contacts', fx.x, guest(new mongoose.Types.ObjectId()))).status));
+    assert.ok([400, 403, 404].includes((await call('POST', '/api/contacts', fx.x, guest('not-an-id'))).status));
+    assert.equal((await call('POST', '/api/contacts', undefined, guest(fx.haldi._id))).status, 401);
+    assert.equal(await Contact.countDocuments({}), before);
+  });
+
+  test("cannot be added to another organizer's sub-event, and the other organizer sees nothing", async () => {
+    const before = await Contact.countDocuments({});
+    const res = await call('POST', '/api/contacts', fx.x, guest(fx.bSub._id, { fullName: 'Intruder', phoneNumber: '9811110777' }));
+    assert.equal(res.status, 403, JSON.stringify(res.body));
+    assert.equal(await Contact.countDocuments({}), before);
+    assert.equal(nameSet(await list(fx.bSub._id, fx.y)).includes('Intruder'), false);
+    // ...and a guest added by that organizer to their own sub-event is invisible to the first.
+    assert.equal((await call('POST', '/api/contacts', fx.y, guest(fx.bSub._id, { fullName: 'Y Guest', phoneNumber: '9811110888' }))).status, 201);
+    assert.equal((await list(fx.bSub._id, fx.x)).status, 403);
+    const all = await call('GET', '/api/contacts?page=1&limit=100', fx.x);
+    assert.ok(!all.body.data.some((c: any) => c.fullName === 'Y Guest'));
+  });
+
+  test('a User assigned to a different event cannot add one', async () => {
+    const before = await Contact.countDocuments({});
+    const res = await call('POST', '/api/contacts', fx.userOToken, guest(fx.haldi._id, { fullName: 'Not Mine', phoneNumber: '9811110999' }));
+    assert.equal(res.status, 403, JSON.stringify(res.body));
+    assert.equal(await Contact.countDocuments({}), before);
+  });
+
+  test('can be edited and deleted as a guest, and leaves the list when deleted', async () => {
+    const created = await call('POST', '/api/contacts', fx.x, guest(fx.haldi._id, { fullName: 'To Delete', phoneNumber: '9811112000' }));
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const id = created.body.data?._id ?? created.body._id ?? (await Contact.findOne({ fullName: 'To Delete' }).lean())._id;
+    assert.equal((await call('DELETE', `/api/contacts/${id}`, fx.x)).status, 200);
+    assert.ok(!nameSet(await list(fx.haldi._id)).includes('To Delete'));
+    assert.equal(await EventMember.countDocuments({ contactId: id }), 0);
+  });
+
+  test('is removed with its sub-event, and the main event keeps all of its guests', async () => {
+    const sub = await mkEvent('Mehendi', fx.adminX._id, { parentEventId: fx.W._id });
+    assert.equal((await call('POST', '/api/contacts', fx.x, guest(sub._id, { fullName: 'Mehendi Guest', phoneNumber: '9811113000' }))).status, 201);
+    const mainBefore = await Contact.countDocuments({ eventId: fx.W._id });
+    assert.equal((await call('DELETE', `/api/events/${sub._id}`, fx.x)).status, 200);
+    assert.equal(await Contact.countDocuments({ fullName: 'Mehendi Guest' }), 0);
+    assert.equal(await EventMember.countDocuments({ eventId: sub._id }), 0);
+    assert.equal(await Contact.countDocuments({ eventId: fx.W._id }), mainBefore);
+  });
+
+  test('taking one off the sub-event list deletes it, while an assigned contact is only taken off', async () => {
+    const owned = await call('POST', '/api/contacts', fx.x, guest(fx.haldi._id, { fullName: 'Owned Remove', phoneNumber: '9811115000' }));
+    assert.equal(owned.status, 201, JSON.stringify(owned.body));
+    const ownedId = (await Contact.findOne({ fullName: 'Owned Remove' }).lean())._id;
+    const res = await remove(fx.haldi._id, ownedId);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.guestDeleted, true);
+    assert.equal(await Contact.countDocuments({ _id: ownedId }), 0, 'no hidden record is left holding the number');
+    assert.equal(await EventMember.countDocuments({ contactId: ownedId }), 0);
+    // The number is free again.
+    assert.equal((await call('POST', '/api/contacts', fx.x, guest(fx.haldi._id, { fullName: 'Owned Remove 2', phoneNumber: '9811115000' }))).status, 201);
+
+    const assignedContact = fx.w[4];
+    assert.ok([200, 201].includes((await assign(fx.haldi._id, [assignedContact])).status));
+    const removed = await remove(fx.haldi._id, assignedContact);
+    assert.equal(removed.status, 200);
+    assert.notEqual(removed.body.guestDeleted, true);
+    assert.ok(await Contact.exists({ _id: assignedContact._id }), 'the main event guest is still there');
+  });
+
+  test('assigning a contact whose number is already a guest of the sub-event is refused', async () => {
+    const mainGuest = await mkContact(fx.O, 'Same Number Main');
+    const number = mainGuest.phoneNumber.replace('+91', '');
+    assert.equal((await call('POST', '/api/contacts', fx.x, guest(fx.reception._id, { fullName: 'Same Number Owned', phoneNumber: number }))).status, 201);
+    const res = await assign(fx.reception._id, [mainGuest]);
+    assert.notEqual(res.status, 200, JSON.stringify(res.body));
+    assert.match(JSON.stringify(res.body), /already a guest of this sub-event/);
+    assert.equal(await EventMember.countDocuments({ eventId: fx.reception._id, contactId: mainGuest._id }), 0);
+  });
+
+  test('editing one onto a number already on the list is refused, and a normal edit works', async () => {
+    const a = await call('POST', '/api/contacts', fx.x, guest(fx.haldi._id, { fullName: 'Edit A', phoneNumber: '9811116001' }));
+    assert.equal(a.status, 201, JSON.stringify(a.body));
+    const aId = (await Contact.findOne({ fullName: 'Edit A' }).lean())._id;
+    const assignedContact = fx.w[5];
+    assert.ok([200, 201].includes((await assign(fx.haldi._id, [assignedContact])).status));
+    const clash = await call('PUT', `/api/contacts/${aId}`, fx.x, { fullName: 'Edit A', phoneNumber: assignedContact.phoneNumber.replace('+91', ''), countryCode: 'IN' });
+    assert.equal(clash.status, 409, JSON.stringify(clash.body));
+    const ok = await call('PUT', `/api/contacts/${aId}`, fx.x, { fullName: 'Edit A Renamed', phoneNumber: '9811116001', countryCode: 'IN' });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.ok(nameSet(await list(fx.haldi._id)).includes('Edit A Renamed'));
+  });
+
+  test('a main-event guest is added exactly as before, with no member row', async () => {
+    const before = await EventMember.countDocuments({});
+    const res = await call('POST', '/api/contacts', fx.x, guest(fx.O._id, { fullName: 'Plain Main Guest', phoneNumber: '9811114000' }));
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.equal(await EventMember.countDocuments({}), before);
   });
 });

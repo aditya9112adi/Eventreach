@@ -21,17 +21,17 @@ import { RequestWithId } from '../middleware/requestMiddleware';
 import { isEventAuthorized, getAuthorizedEventIds } from '../services/eventAuthService';
 import { statusesMatching } from '../utils/accessStatus';
 import { Event } from '../models/Event';
-import { eventGuestFilter, isSubEventId, MAIN_EVENT_FILTER } from '../services/subEventService';
+import { eventGuestFilter, isNumberOnMemberList, isSubEventId, MAIN_EVENT_FILTER } from '../services/subEventService';
+import { EventMember } from '../models/EventMember';
 import { eventSearchFilter, readReportSearch, ReportSearchError } from '../utils/reportSearch';
 
 /**
- * A contact is created on a Main Event. A Sub-Event's guests are existing
- * contacts placed on its member list (GET/POST /api/events/:id/members), so
- * adding or importing straight into a Sub-Event is refused rather than
- * creating a second, parallel guest list for it.
+ * A Sub-Event takes guests one at a time (addContact below: the guest belongs to the
+ * Sub-Event and is on its list) or existing contacts assigned to it (POST
+ * /api/events/:id/members). A file cannot be imported into one.
  */
-const SUB_EVENT_GUEST_WRITE =
-  'Guests are added to the main event. Add them to this sub-event from its Members list.';
+const SUB_EVENT_IMPORT =
+  'A file cannot be imported into a sub-event. Add guests to it one at a time, or import them into the main event and add them to this sub-event from the Contacts tab.';
 
 
 /**
@@ -165,9 +165,13 @@ export const addContact = async (req: RequestWithId, res: Response) => {
     if (!authorized) {
       return res.status(403).json({ error: 'Access denied. You do not have access to this event.' });
     }
-    if (await isSubEventId(eventId)) {
-      return res.status(400).json({ error: SUB_EVENT_GUEST_WRITE });
-    }
+    /**
+     * A guest added to a Sub-Event belongs to that Sub-Event: its eventId is the Sub-Event's,
+     * so it is in neither the Main Event's guest list nor a sibling's, is not reached by a
+     * message to either, and goes when the Sub-Event is deleted. It is also placed on the
+     * Sub-Event's member list, which is what that list and its messages are read from.
+     */
+    const forSubEvent = await isSubEventId(eventId);
 
     /**
      * A number typed into the form has to be valid before it is stored: an
@@ -194,6 +198,14 @@ export const addContact = async (req: RequestWithId, res: Response) => {
         .status(CONTACT_ERROR.duplicate.status)
         .json(contactErrorBody(CONTACT_ERROR.duplicate, { field: 'phoneNumber' }));
     }
+    // A Sub-Event's list also holds contacts assigned from a Main Event: the same number
+    // is not allowed twice on one list. (The same number on the Main Event itself, or on
+    // a sibling's list, is a different list and is allowed.)
+    if (forSubEvent && (await isNumberOnMemberList(eventId, normalizedPhone))) {
+      return res
+        .status(CONTACT_ERROR.duplicate.status)
+        .json(contactErrorBody(CONTACT_ERROR.duplicate, { field: 'phoneNumber' }));
+    }
 
     const contact = await Contact.create({
       fullName,
@@ -206,6 +218,16 @@ export const addContact = async (req: RequestWithId, res: Response) => {
       status: 'Valid',
       source: 'Manual',
     });
+
+    if (forSubEvent) {
+      try {
+        await EventMember.create({ eventId, contactId: contact._id, ...((currentUser as any)?.id ? { addedBy: (currentUser as any).id } : {}) });
+      } catch (membershipError) {
+        // A guest on no list would be invisible yet still hold the number: take it back.
+        await Contact.deleteOne({ _id: contact._id });
+        throw membershipError;
+      }
+    }
 
     await AuditService.log({
       action: 'CONTACT_CREATED',
@@ -266,7 +288,7 @@ export const uploadAndPreviewContacts = async (req: Request, res: Response) => {
     }
 
     if (await isSubEventId(eventId)) {
-      return res.status(400).json({ error: SUB_EVENT_GUEST_WRITE });
+      return res.status(400).json({ error: SUB_EVENT_IMPORT });
     }
 
     const file = req.file;
@@ -368,7 +390,7 @@ export const bulkImportContacts = async (req: RequestWithId, res: Response) => {
     }
 
     if (await isSubEventId(eventId)) {
-      return res.status(400).json({ error: SUB_EVENT_GUEST_WRITE });
+      return res.status(400).json({ error: SUB_EVENT_IMPORT });
     }
 
     const { contacts } = req.body as { contacts: ExtractedContact[] };
@@ -624,6 +646,15 @@ export const updateContact = async (req: RequestWithId, res: Response) => {
     // Moving a guest onto a number another guest of the same event already has is
     // a duplicate too (the unique index would refuse it; this answers early).
     if (await Contact.exists({ eventId: beforeContact.eventId, phoneNumber: normalizedPhone, _id: { $ne: beforeContact._id } })) {
+      return res
+        .status(CONTACT_ERROR.duplicate.status)
+        .json(contactErrorBody(CONTACT_ERROR.duplicate, { field: 'phoneNumber' }));
+    }
+    // A guest of a Sub-Event also shares its list with contacts assigned from a Main Event.
+    if (
+      (await isSubEventId(beforeContact.eventId)) &&
+      (await isNumberOnMemberList(beforeContact.eventId, normalizedPhone, beforeContact._id))
+    ) {
       return res
         .status(CONTACT_ERROR.duplicate.status)
         .json(contactErrorBody(CONTACT_ERROR.duplicate, { field: 'phoneNumber' }));

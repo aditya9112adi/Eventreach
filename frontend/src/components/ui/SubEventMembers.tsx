@@ -1,24 +1,26 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FileSpreadsheet, FileText, Search, Upload, UserMinus, Users, X } from 'lucide-react';
+import { FileSpreadsheet, FileText, Search, Upload, UserMinus, UserPlus, Users, X } from 'lucide-react';
 import type { Event } from '@eventreach/shared';
 import api from '../../services/api';
 import { Button } from './Button';
 import { PaginationControls } from './PaginationControls';
-import { ConfirmDeleteDialog } from './DeleteControls';
+import { ConfirmDeleteDialog, DeleteIconButton } from './DeleteControls';
 import { MemberUploadDialog } from './MemberUploadDialog';
+import { AddGuestDialog } from './AddGuestDialog';
 import { useToast } from './Toast';
 import { getSerialNumber } from '../../utils/pagination';
 import { formatDateTime } from '../../utils/datetime';
 import { buildReportFileName, exportToExcel, exportToPdf } from '../../utils/reportExport';
-import { MEMBER_EXPORT_COLUMNS, buildMemberExportMeta, memberCountLabel, type SubEventMember as Member } from '../../utils/subEventMembers';
+import { MEMBER_EXPORT_COLUMNS, buildMemberExportMeta, isOwnGuestOf, memberCountLabel, type SubEventMember as Member } from '../../utils/subEventMembers';
 
 /**
  * A Sub-Event's member list, on its details page: the contacts chosen for this
- * sub-event alone (GET /events/:id/members), with adding, removing and an
- * Excel/PDF download of exactly this list.
+ * sub-event alone (GET /events/:id/members), with adding (a file upload, or one
+ * guest at a time), removing and an Excel/PDF download of exactly this list.
  *
- * Removing a member takes the contact off this list only; the contact, its
+ * A guest added here belongs to this sub-event: removing it deletes it. Removing a
+ * contact assigned from a Main Event takes it off this list only; that contact, its
  * Main Event's guest list and every other sub-event's list are untouched.
  */
 
@@ -41,7 +43,8 @@ export const SubEventMembers = ({ subEvent, onCountChange }: SubEventMembersProp
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [refreshToken, setRefreshToken] = useState(0);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
-  const [confirmRemove, setConfirmRemove] = useState<Member | null>(null);
+  const [isAddGuestOpen, setIsAddGuestOpen] = useState(false);
+const [confirmRemove, setConfirmRemove] = useState<Member | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
   const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null);
 
@@ -85,7 +88,7 @@ export const SubEventMembers = ({ subEvent, onCountChange }: SubEventMembersProp
     setIsRemoving(true);
     try {
       await api.delete(`/events/${subEvent._id}/members/${confirmRemove._id}`);
-      showToast('success', `${confirmRemove.fullName} removed from ${subEvent.eventName}.`);
+      showToast('success', isOwnGuestOf(subEvent._id, confirmRemove) ? `${confirmRemove.fullName} deleted.` : `${confirmRemove.fullName} removed from ${subEvent.eventName}.`);
       setConfirmRemove(null);
       refresh();
     } catch (error: any) {
@@ -138,7 +141,7 @@ export const SubEventMembers = ({ subEvent, onCountChange }: SubEventMembersProp
           <Button variant="secondary" onClick={() => runExport('pdf')} isLoading={exporting === 'pdf'} disabled={memberCount === 0 || Boolean(exporting)} className="text-xs px-3 py-2">
             <FileText className="w-4 h-4 mr-1.5" /> PDF
           </Button>
-          {/* Upload is the one way to add members, so it takes the primary style. */}
+          {/* Upload and Add Guest are the two ways to add members, so both take the primary style. */}
           <Button
             onClick={() => setIsUploadOpen(true)}
             disabled={!canAdd}
@@ -146,6 +149,14 @@ export const SubEventMembers = ({ subEvent, onCountChange }: SubEventMembersProp
             className="text-xs px-4 py-2"
           >
             <Upload className="w-4 h-4 mr-1.5" /> Upload
+          </Button>
+          <Button
+            onClick={() => setIsAddGuestOpen(true)}
+            disabled={!canAdd}
+            title={canAdd ? 'Add one guest to this sub-event' : 'Members cannot be added to a completed event'}
+            className="text-xs px-4 py-2"
+          >
+            <UserPlus className="w-4 h-4 mr-1.5" /> Add Guest
           </Button>
         </div>
       </div>
@@ -185,7 +196,7 @@ export const SubEventMembers = ({ subEvent, onCountChange }: SubEventMembersProp
           <Users className="w-10 h-10 mx-auto text-foreground/20" />
           <p className="font-semibold text-foreground">No members yet</p>
           <p className="text-sm text-foreground/50 max-w-md mx-auto">
-            This sub-event starts with an empty list. Use Upload to add contacts from an Excel or PDF file; each number must match a contact of the main event or your other events.
+            This sub-event starts with an empty list. Use Add Guest to add one guest, or Upload to add contacts from an Excel or PDF file; each uploaded number must match a contact of the main event or your other events.
           </p>
         </div>
       ) : members.length === 0 ? (
@@ -213,18 +224,22 @@ export const SubEventMembers = ({ subEvent, onCountChange }: SubEventMembersProp
                     <td className="py-3 px-4 text-sm font-medium text-foreground">{m.fullName}</td>
                     <td className="py-3 px-4 text-sm text-foreground/80 whitespace-nowrap">{m.phoneNumber}</td>
                     <td className="py-3 px-4 text-sm text-foreground/70">{m.email || '—'}</td>
-                    <td className="py-3 px-4 text-sm text-foreground/70">{m.sourceEvent?.eventName ?? '—'}</td>
+                    <td className="py-3 px-4 text-sm text-foreground/70">{isOwnGuestOf(subEvent._id, m) ? 'This sub-event' : m.sourceEvent?.eventName ?? '—'}</td>
                     <td className="py-3 px-4 text-xs text-foreground/60 uppercase">{m.status}</td>
                     <td className="py-3 px-4 text-sm text-foreground/70 whitespace-nowrap">{formatDateTime(m.addedAt, '—')}</td>
                     <td className="py-3 px-4 text-right">
-                      <button
-                        onClick={() => setConfirmRemove(m)}
-                        title="Remove from this sub-event"
-                        aria-label={`Remove ${m.fullName} from ${subEvent.eventName}`}
-                        className="p-1.5 rounded-md text-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
-                      >
-                        <UserMinus className="w-4 h-4" />
-                      </button>
+                      {isOwnGuestOf(subEvent._id, m) ? (
+                        <DeleteIconButton onClick={() => setConfirmRemove(m)} title="Delete Guest" label={`Delete guest ${m.fullName}`} />
+                      ) : (
+                        <button
+                          onClick={() => setConfirmRemove(m)}
+                          title="Remove from this sub-event"
+                          aria-label={`Remove ${m.fullName} from ${subEvent.eventName}`}
+                          className="p-1.5 rounded-md text-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
+                        >
+                          <UserMinus className="w-4 h-4" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -242,21 +257,29 @@ export const SubEventMembers = ({ subEvent, onCountChange }: SubEventMembersProp
       )}
 
       <MemberUploadDialog subEvent={subEvent} open={isUploadOpen} onClose={() => setIsUploadOpen(false)} onAdded={refresh} />
+      <AddGuestDialog subEvent={subEvent} open={isAddGuestOpen} onClose={() => setIsAddGuestOpen(false)} onAdded={refresh} />
 
       {/* Portalled, as the app's other dialogs are (see MemberUploadDialog). */}
       {createPortal(
         <ConfirmDeleteDialog
           open={Boolean(confirmRemove)}
-          title="Remove Member?"
+          title={confirmRemove && isOwnGuestOf(subEvent._id, confirmRemove) ? 'Delete Guest?' : 'Remove Member?'}
           message={
-            <>
-              Remove <span className="font-semibold text-foreground">{confirmRemove?.fullName}</span> from {subEvent.eventName}?
-              The contact is not deleted and stays on the main event and any other sub-event.
-            </>
+            confirmRemove && isOwnGuestOf(subEvent._id, confirmRemove) ? (
+              <>
+                Delete <span className="font-semibold text-foreground">{confirmRemove.fullName}</span>? They were added to {subEvent.eventName}
+                {' '}and exist only there, so they will be permanently removed. This action cannot be undone.
+              </>
+            ) : (
+              <>
+                Remove <span className="font-semibold text-foreground">{confirmRemove?.fullName}</span> from {subEvent.eventName}?
+                The contact is not deleted and stays on the main event and any other sub-event.
+              </>
+            )
           }
-          confirmLabel="Remove"
-          busyLabel="Removing…"
-          isDeleting={isRemoving}
+          confirmLabel={confirmRemove && isOwnGuestOf(subEvent._id, confirmRemove) ? 'Delete' : 'Remove'}
+          busyLabel={confirmRemove && isOwnGuestOf(subEvent._id, confirmRemove) ? 'Deleting…' : 'Removing…'}
+isDeleting={isRemoving}
           onConfirm={removeMember}
           onCancel={() => setConfirmRemove(null)}
         />,

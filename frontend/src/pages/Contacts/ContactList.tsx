@@ -41,6 +41,8 @@ import {
   eventKindLabel,
   orderEventsWithSubEvents,
   readContactsPayload,
+  isOwnGuest,
+  rowActionFor,
 } from '../../utils/contactsEventPicker';
 
 const contactSchema = z.object({
@@ -215,8 +217,6 @@ const ContactList = () => {
   const saveInFlight = useRef(false);
 
   const onAddContact = async (data: ContactForm) => {
-    // A Sub-Event takes no new guests (the server refuses): its contacts are picked from existing ones.
-    if (controls.kind === 'sub') return;
     if (!activeEvent || saveInFlight.current) return;
     saveInFlight.current = true;
     try {
@@ -372,7 +372,11 @@ const ContactList = () => {
     setConfirmRemoveId(null);
   }, [activeEventId]);
 
-  const pageIds = useMemo(() => paginatedContacts.map((c) => c._id), [paginatedContacts]);
+  // Only guests of the selection itself can be selected: on a Sub-Event, not the Main Event's contacts assigned to it.
+  const pageIds = useMemo(
+    () => paginatedContacts.filter((c) => isOwnGuest(activeEvent, c)).map((c) => c._id),
+    [paginatedContacts, activeEvent]
+  );
   const { allSelected: allPageSelected, someSelected: somePageSelected } = useMemo(
     () => getPageSelectionState(selectedIds, pageIds),
     [selectedIds, pageIds]
@@ -419,14 +423,13 @@ const ContactList = () => {
             />
           </div>
           
-          {controls.assignContacts ? (
-            <Button disabled={isEventCompleted} onClick={() => setIsAssignOpen(true)}>
+          {controls.assignContacts && (
+            <Button variant="secondary" disabled={isEventCompleted} onClick={() => setIsAssignOpen(true)}>
               <UserPlus className="w-4 h-4 mr-2" />
               Add Contacts
             </Button>
-          ) : (
-          <>
-          {isEventCompleted ? (
+          )}
+          {controls.importFile && (isEventCompleted ? (
             <Button variant="secondary" disabled>
               Import from File
             </Button>
@@ -436,8 +439,8 @@ const ContactList = () => {
                 Import from File
               </Button>
             </Link>
-          )}
-          
+          ))}
+
           <Button
             disabled={isEventCompleted}
             onClick={() => { 
@@ -456,8 +459,6 @@ const ContactList = () => {
             <Plus className="w-4 h-4 mr-2" />
             Add Guest
           </Button>
-          </>
-          )}
         </div>
       </div>
 
@@ -509,27 +510,28 @@ const ContactList = () => {
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-foreground/50">
             <Users className="w-12 h-12 text-foreground/20 mb-4" />
             <p>{emptyContactsText(controls.kind, debouncedSearch)}</p>
-            {controls.kind === 'sub' ? (
-              !debouncedSearch && (
-                <Button variant="secondary" className="mt-4" disabled={isEventCompleted} onClick={() => setIsAssignOpen(true)}>
-                  <UserPlus className="w-4 h-4 mr-2" />
-                  Add Contacts
+            {(controls.kind !== 'sub' || !debouncedSearch) && (
+              <div className="flex flex-wrap justify-center gap-3 mt-4">
+                {controls.assignContacts && (
+                  <Button variant="secondary" disabled={isEventCompleted} onClick={() => setIsAssignOpen(true)}>
+                    <UserPlus className="w-4 h-4 mr-2" />
+                    Add Contacts
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  disabled={isEventCompleted}
+                  onClick={() => {
+                    // Match the main "Add Guest" button: clear any stale field
+                    // values and set the country back to the default before opening.
+                    setEditingContact(null);
+                    reset({ countryCode: DEFAULT_COUNTRY_CODE, fullName: '', phoneNumber: '', email: '' });
+                    setIsAddModalOpen(true);
+                  }}
+                >
+                  Add First Guest
                 </Button>
-              )
-            ) : (
-            <Button
-              variant="secondary"
-              className="mt-4"
-              onClick={() => {
-                // Match the main "Add Guest" button: clear any stale field
-                // values and set the country back to the default before opening.
-                setEditingContact(null);
-                reset({ countryCode: DEFAULT_COUNTRY_CODE, fullName: '', phoneNumber: '', email: '' });
-                setIsAddModalOpen(true);
-              }}
-            >
-              Add First Guest
-            </Button>
+              </div>
             )}
           </div>
         ) : (
@@ -539,12 +541,14 @@ const ContactList = () => {
                 <tr className="bg-black/5 dark:bg-white/5 text-foreground/60 text-xs uppercase tracking-wider font-medium border-b border-border">
                   {controls.selectable && (
                     <th className="py-3 px-4 w-10">
-                      <SelectAllCheckbox
-                        checked={allPageSelected}
-                        indeterminate={somePageSelected}
-                        onChange={toggleSelectAll}
-                        label="Select all guests"
-                      />
+                      {pageIds.length > 0 && (
+                        <SelectAllCheckbox
+                          checked={allPageSelected}
+                          indeterminate={somePageSelected}
+                          onChange={toggleSelectAll}
+                          label="Select all guests"
+                        />
+                      )}
                     </th>
                   )}
                   <th className="py-3 px-4 w-20 whitespace-nowrap">Sr No</th>
@@ -573,11 +577,13 @@ const ContactList = () => {
                   >
                     {controls.selectable && (
                       <td className="py-3 px-4">
-                        <RowSelectCheckbox
-                          checked={selectedIds.has(contact._id)}
-                          onChange={() => toggleOne(contact._id)}
-                          label={`Select guest ${contact.fullName}`}
-                        />
+                        {isOwnGuest(activeEvent, contact) && (
+                          <RowSelectCheckbox
+                            checked={selectedIds.has(contact._id)}
+                            onChange={() => toggleOne(contact._id)}
+                            label={`Select guest ${contact.fullName}`}
+                          />
+                        )}
                       </td>
                     )}
                     {/* The server returns this page already searched and
@@ -609,7 +615,7 @@ const ContactList = () => {
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center space-x-1 transition-opacity">
-                        {controls.rowAction === 'remove-from-sub-event' ? (
+                        {rowActionFor(activeEvent, contact) === 'remove-from-sub-event' ? (
                           <button
                             onClick={() => setConfirmRemoveId(contact._id)}
                             className="p-1.5 text-foreground/40 hover:text-destructive hover:bg-destructive/10 rounded transition-colors"

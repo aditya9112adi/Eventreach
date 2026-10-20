@@ -19,9 +19,11 @@ import {
   emptyContactsText,
   eventKindLabel,
   filterEventOptions,
+  isOwnGuest,
   isSubEventRecord,
   orderEventsWithSubEvents,
   readContactsPayload,
+  rowActionFor,
 } from './contactsEventPicker.ts';
 
 const main = (_id: string, eventName: string, extra: Partial<Event> = {}): Event =>
@@ -127,11 +129,11 @@ describe('searching and selecting', () => {
 describe('what each selection offers', () => {
   test('no selection: the guest list view, as before', () => {
     const c = contactControls(null, true);
-    assert.deepEqual(c, { kind: 'all', guestManagement: true, assignContacts: false, rowAction: 'edit-delete', selectable: true });
+    assert.deepEqual(c, { kind: 'all', guestManagement: true, importFile: true, assignContacts: false, selectable: true });
   });
 
   test('a Main Event keeps Add Guest, Import, edit, delete and selection', () => {
-    assert.deepEqual(contactControls(WEDDING, true), { kind: 'main', guestManagement: true, assignContacts: false, rowAction: 'edit-delete', selectable: true });
+    assert.deepEqual(contactControls(WEDDING, true), { kind: 'main', guestManagement: true, importFile: true, assignContacts: false, selectable: true });
   });
 
   test('a User cannot select for deletion on a Main Event, exactly as before', () => {
@@ -139,14 +141,34 @@ describe('what each selection offers', () => {
     assert.equal(contactControls(WEDDING, false).guestManagement, true);
   });
 
-  test('a Sub-Event offers only the picker: no Add Guest, no Import, no edit, no delete, no selection', () => {
-    for (const canDelete of [true, false]) {
-      assert.deepEqual(contactControls(HALDI, canDelete), { kind: 'sub', guestManagement: false, assignContacts: true, rowAction: 'remove-from-sub-event', selectable: false });
+  test('a Sub-Event offers the picker and Add Guest, but no file import; selection follows the role as on a Main Event', () => {
+    assert.deepEqual(contactControls(HALDI, true), { kind: 'sub', guestManagement: true, importFile: false, assignContacts: true, selectable: true });
+    assert.deepEqual(contactControls(HALDI, false), { kind: 'sub', guestManagement: true, importFile: false, assignContacts: true, selectable: false });
+  });
+
+  test('on a Sub-Event, its own guests are edited and deleted; contacts assigned from a Main Event are only removed', () => {
+    const own = { eventId: 'h' };
+    const assigned = { eventId: 'w' };
+    assert.equal(isOwnGuest(HALDI, own), true);
+    assert.equal(isOwnGuest(HALDI, assigned), false);
+    assert.equal(rowActionFor(HALDI, own), 'edit-delete');
+    assert.equal(rowActionFor(HALDI, assigned), 'remove-from-sub-event');
+    // A contact of another sub-event is never "its own" either.
+    assert.equal(isOwnGuest(HALDI, { eventId: 'r' }), false);
+  });
+
+  test('a Main Event and the unselected view treat every row as a guest, exactly as before', () => {
+    for (const event of [WEDDING, null]) {
+      for (const row of [{ eventId: 'w' }, { eventId: 'anything' }, {}]) {
+        assert.equal(isOwnGuest(event, row), true);
+        assert.equal(rowActionFor(event, row), 'edit-delete');
+      }
     }
   });
 
-  test('removing on a Sub-Event is a different action from deleting a guest', () => {
-    assert.notEqual(contactControls(HALDI, true).rowAction, contactControls(WEDDING, true).rowAction);
+  test('ids are compared as text, so an id object and its string are the same guest', () => {
+    assert.equal(isOwnGuest(HALDI, { eventId: { toString: () => 'h' } }), true);
+    assert.equal(isOwnGuest(HALDI, {}), false, 'a row with no owner is not claimed');
   });
 });
 
