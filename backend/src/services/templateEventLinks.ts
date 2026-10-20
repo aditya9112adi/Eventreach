@@ -67,3 +67,46 @@ export const migrateLegacyTemplateLinks = async (): Promise<{ converted: number;
   }
   return { converted, unresolved };
 };
+
+/**
+ * How a maintenance script connects. Mongoose, by default, creates a model's collection and builds its
+ * declared indexes the moment a connection opens - writes - for every model that was imported, whatever
+ * the script then does. A dry run (or any read-only user) must not do that, so both are switched off.
+ */
+export const MAINTENANCE_CONNECT_OPTIONS = { autoIndex: false, autoCreate: false, serverSelectionTimeoutMS: 15_000 } as const;
+
+/** The database a connection string names, or null when it names none (the driver would then use "test"). */
+export const databaseNameOf = (uri: string): string | null => {
+  const match = /^mongodb(?:\+srv)?:\/\/[^/?]*\/([^?]*)/.exec(uri.trim());
+  const name = match ? decodeURIComponent(match[1]).trim() : '';
+  return name || null;
+};
+
+/**
+ * Removes a connection string's credentials and host names from text before it is printed. Driver errors
+ * can quote the host that could not be reached; none of it belongs in a terminal log.
+ */
+export const redactConnectionDetails = (text: string, uri: string): string => {
+  let out = String(text ?? '');
+  const parts = /^mongodb(?:\+srv)?:\/\/(?:([^@/]*)@)?([^/?]*)/.exec(uri.trim());
+  const secrets = new Set<string>([uri.trim()]);
+  if (parts) {
+    const [, userinfo, hosts] = parts;
+    if (userinfo) {
+      secrets.add(userinfo);
+      const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return s; } };
+      for (const piece of [userinfo, ...userinfo.split(':')]) {
+        secrets.add(piece);
+        secrets.add(decode(piece)); // a password typed as p@ss is stored as p%40ss; either form could surface
+      }
+    }
+    for (const host of hosts.split(',')) {
+      secrets.add(host);
+      secrets.add(host.replace(/:\d+$/, ''));
+    }
+  }
+  for (const secret of [...secrets].filter((s) => s.length >= 3).sort((a, b) => b.length - a.length)) {
+    out = out.split(secret).join('[redacted]');
+  }
+  return out;
+};
