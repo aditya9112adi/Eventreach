@@ -26,7 +26,9 @@ const run = (args: string[], uri: string | null = URI) => {
     cwd: new URL('../backend/', import.meta.url),
     shell: true,
     encoding: 'utf-8',
-    env: { ...process.env, MONGODB_URI: uri ?? '' },
+    // NODE_OPTIONS is dropped: a suite-wide preload (such as an outbound-HTTP guard) would also reach `npx`, which
+    // checks a registry over HTTPS. The script itself talks only to the MongoDB URI it is given.
+    env: { ...process.env, NODE_OPTIONS: '', MONGODB_URI: uri ?? '' },
     timeout: 120_000,
   });
   return { code: result.status, out: `${result.stdout}${result.stderr}`.replace(/\r/g, '') };
