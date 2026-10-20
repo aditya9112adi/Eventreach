@@ -12,6 +12,7 @@ import { useLoader } from '../../components/ui/FullScreenLoader';
 import { useToast } from '../../components/ui/Toast';
 import { EventTypeField } from '../../components/ui/EventTypeField';
 import { refineEventType, resolveEventType } from '../../utils/eventType';
+import { applyOrganizerMobileInput, counterLabel, reconcileOrganizerMobileChange } from '../../utils/organizerMobile';
 
 const LIMITS = {
   organizerName: 50,
@@ -51,12 +52,16 @@ const eventSchema = z.object({
 
 type EventForm = z.infer<typeof eventSchema>;
 
-const CharCount = ({ value, max }: { value: string | undefined; max: number }) => {
-  const len = value?.length ?? 0;
-  const atLimit = len >= max;
+/**
+ * `limitAttempted` is given only by a field that warns on an attempt to go past
+ * its limit (the organizer mobile number); every other field shows the warning
+ * whenever it is full, as before.
+ */
+const CharCount = ({ value, max, limitAttempted }: { value: string | undefined; max: number; limitAttempted?: boolean }) => {
+  const { text, atLimit } = counterLabel(value?.length ?? 0, max, limitAttempted);
   return (
     <p className={`mt-1 text-xs text-right ${atLimit ? 'text-destructive font-semibold' : 'text-foreground/40'}`}>
-      {len}/{max}{atLimit ? ' — limit reached' : ''}
+      {text}
     </p>
   );
 };
@@ -78,11 +83,15 @@ const EventCreate = () => {
   const [parent, setParent] = useState<Event | null>(null);
   const [parentError, setParentError] = useState('');
 
-  const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm<EventForm>({
+  const { register, handleSubmit, watch, setValue, getValues, formState: { errors, isSubmitting } } = useForm<EventForm>({
     resolver: zodResolver(eventSchema),
     // Nothing chosen yet: the dropdown shows "Select Event Type".
     defaultValues: { eventType: '', customEventType: '' },
   });
+
+  // The organizer mobile number takes at most 10 digits, and warns only on an attempt to add an 11th.
+  const organizerMobileField = register('organizerMobile');
+  const [mobileLimitAttempted, setMobileLimitAttempted] = useState(false);
 
   // The Main Event: named in the heading, and its organizer offered as the
   // sub-event's (editable - a ceremony can have its own contact person).
@@ -200,11 +209,53 @@ const EventCreate = () => {
               <Input
                 label="Organizer Mobile Number"
                 placeholder="e.g. 9876543210"
-                maxLength={10}
-                {...register('organizerMobile')}
+                inputMode="numeric"
+                {...organizerMobileField}
+                /* No native maxLength: it would stop the 11th digit before the page could see the
+                   attempt, and cut a pasted number silently. A keystroke or paste that would go
+                   past 10 digits is stopped here instead, so the digits already typed, and the
+                   cursor, stay exactly as they were. */
+                onKeyDown={(e) => {
+                  if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
+                  const input = e.currentTarget;
+                  const result = applyOrganizerMobileInput(
+                    { value: input.value, limitAttempted: mobileLimitAttempted },
+                    { start: input.selectionStart ?? input.value.length, end: input.selectionEnd ?? input.value.length, text: e.key }
+                  );
+                  if (!result.accepted) e.preventDefault();
+                  setMobileLimitAttempted(result.limitAttempted);
+                }}
+                onPaste={(e) => {
+                  e.preventDefault();
+                  const input = e.currentTarget;
+                  const result = applyOrganizerMobileInput(
+                    { value: input.value, limitAttempted: mobileLimitAttempted },
+                    { start: input.selectionStart ?? input.value.length, end: input.selectionEnd ?? input.value.length, text: e.clipboardData.getData('text'), isPaste: true }
+                  );
+                  setMobileLimitAttempted(result.limitAttempted);
+                  if (!result.accepted) return;
+                  setValue('organizerMobile', result.value, { shouldValidate: true, shouldDirty: true });
+                  input.setSelectionRange(result.caret, result.caret);
+                }}
+                // Input the key handler cannot see (a phone's on-screen keyboard): put the
+                // previous digits and the cursor back instead of accepting an 11th digit.
+                onChange={(e) => {
+                  const input = e.currentTarget;
+                  const result = reconcileOrganizerMobileChange(
+                    { value: getValues('organizerMobile') ?? '', limitAttempted: mobileLimitAttempted },
+                    input.value,
+                    input.selectionStart ?? input.value.length
+                  );
+                  if (result.value !== input.value) {
+                    input.value = result.value;
+                    input.setSelectionRange(result.caret, result.caret);
+                  }
+                  organizerMobileField.onChange(e);
+                  setMobileLimitAttempted(result.limitAttempted);
+                }}
                 error={errors.organizerMobile?.message}
               />
-              <CharCount value={wOrgMobile} max={10} />
+              <CharCount value={wOrgMobile} max={10} limitAttempted={mobileLimitAttempted} />
             </div>
             <div>
               <Input

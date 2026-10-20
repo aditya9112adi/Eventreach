@@ -96,7 +96,12 @@ test('Create and Edit use the same field, rules and save', async (t) => {
     assert.ok(edit.includes('await api.put(`/events/${id}`, data);'));
     for (const source of [create, edit]) {
       for (const f of ['organizerName', 'organizerMobile', 'eventName', 'eventDate', 'eventTime', 'eventVenue', 'eventDescription']) {
-        assert.ok(source.includes(`{...register('${f}')}`), f);
+        // Create registers its organizer mobile once up front, so the field's own handlers can wrap
+        // its onChange (see utils/organizerMobile.ts); every other field, and Edit, are as before.
+        const registration = source === create && f === 'organizerMobile'
+          ? "const organizerMobileField = register('organizerMobile');"
+          : `{...register('${f}')}`;
+        assert.ok(source.includes(registration), f);
       }
     }
   });
