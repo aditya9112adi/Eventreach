@@ -940,3 +940,27 @@ export const WHATSAPP_TEMPLATE_VARIABLE_SOURCE_LABELS: Record<WhatsAppTemplateVa
   'event.description': 'Event description',
   fixed: 'Fixed text',
 };
+
+// ── Event business ID ───────────────────────────────────────────────────────
+// The public, immutable id every event is given when it is created ("EVT-" and
+// at least six digits, e.g. EVT-000017 or EVT-0000017). It is not the MongoDB
+// _id. The backend's Event model enforces the same pattern.
+export const EVENT_BUSINESS_ID_PATTERN = /^EVT-\d{6,}$/;
+
+export const EVENT_BUSINESS_ID_PLACEHOLDER = 'Enter Event ID (e.g., EVT-0000017)';
+
+export type EventBusinessIdCheck = { ok: true; value: string } | { ok: false; message: string };
+
+/**
+ * Trims what a person typed and checks it has the shape of an event's business
+ * id. Shape only: whether the event exists, and whether the person may use it,
+ * is decided by the server from the database.
+ */
+export const checkEventBusinessId = (input: unknown): EventBusinessIdCheck => {
+  const value = typeof input === 'string' ? input.trim() : '';
+  if (!value) return { ok: false, message: 'Event ID is required.' };
+  if (!EVENT_BUSINESS_ID_PATTERN.test(value)) {
+    return { ok: false, message: 'Enter the event ID as EVT- followed by at least 6 digits, for example EVT-0000017.' };
+  }
+  return { ok: true, value };
+};

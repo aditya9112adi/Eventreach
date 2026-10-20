@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, Info, Lock, Plus, Save, ShieldAlert, Trash2 } from 'lucide-react';
 import api from '../../services/api';
+import { EVENT_BUSINESS_ID_PLACEHOLDER } from '@eventreach/shared';
 import { useAuth } from '../../store/authStore';
-import { useToast } from '../../components/ui/Toast';
+import { useToast }from '../../components/ui/Toast';
 import { Button } from '../../components/ui/Button';
 import { useUnsavedChangesGuard } from '../../components/useUnsavedChangesGuard';
 import { UnsavedChangesDialog } from '../../components/ui/UnsavedChangesDialog';
@@ -35,13 +36,6 @@ import {
   type TemplateView,
   type VariableRow,
 } from '../../utils/whatsappTemplates';
-
-interface EventOption {
-  _id: string;
-  eventName: string;
-  adminId?: string | null;
-  createdBy?: string | null;
-}
 
 interface AdminOption {
   _id: string;
@@ -82,20 +76,12 @@ const TemplateEditor = () => {
   const [languageOther, setLanguageOther] = useState(false);
   const [placeholderError, setPlaceholderError] = useState<string | null>(null);
   const [previewBlankGuest, setPreviewBlankGuest] = useState(false);
-  const [events, setEvents] = useState<EventOption[]>([]);
-  const [admins, setAdmins] = useState<AdminOption[]>([]);
+const [admins, setAdmins] = useState<AdminOption[]>([]);
 
   const dirty = isFormDirty(form, saved);
   const leaveGuard = useUnsavedChangesGuard(dirty && !saving);
 
-  useEffect(() => {
-    api
-      .get('/events', { params: { includeSubEvents: 'true' } })
-      .then((response) => setEvents(Array.isArray(response.data) ? response.data : []))
-      .catch(() => setEvents([]));
-  }, []);
-
-  // A Super Admin may create a template for a particular Admin.
+// A Super Admin may create a template for a particular Admin.
   useEffect(() => {
     if (!isSuperAdmin || isEdit) return;
     api
@@ -131,14 +117,7 @@ const TemplateEditor = () => {
     };
   }, [id, isEdit]);
 
-  /** Events the chosen owner holds - the API refuses another owner's event. */
-  const eventOptions = useMemo(() => {
-    const owner = isEdit ? loaded?.ownerAdminId ?? '' : isSuperAdmin ? form.ownerAdminId : user?.id ?? '';
-    if (!owner) return events;
-    return events.filter((e) => String(e.adminId ?? e.createdBy ?? '') === owner);
-  }, [events, form.ownerAdminId, isEdit, isSuperAdmin, loaded, user]);
-
-  const update = (patch: Partial<TemplateForm>) => {
+const update = (patch: Partial<TemplateForm>) => {
     setForm((f) => ({ ...f, ...patch }));
     setErrors((e) => {
       const next = { ...e };
@@ -265,6 +244,27 @@ const TemplateEditor = () => {
         <div className="space-y-6">
           <section className="bg-surface rounded-xl border border-border p-5 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* The first field. A typed business ID, not a list: the server finds the event and checks you may use it. */}
+              <div className="md:col-span-2">
+                <label className={labelClass} htmlFor="tpl-event-id">Event ID <span className="text-destructive" aria-hidden="true">*</span></label>
+                <input
+                  id="tpl-event-id"
+                  className={`${inputClass} font-mono`}
+                  value={form.eventId}
+                  onChange={(e) => update({ eventId: e.target.value })}
+                  onBlur={() => form.eventId !== form.eventId.trim() && update({ eventId: form.eventId.trim() })}
+                  placeholder={EVENT_BUSINESS_ID_PLACEHOLDER}
+                  required
+                  aria-required="true"
+                  aria-invalid={errors.eventId ? true : undefined}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <p className="mt-1 text-[11px] text-foreground/40">
+                  The ID of the event this template is for. Once approved, it can be sent only for that event.
+                </p>
+                <FieldError message={errors.eventId} />
+              </div>
               <div>
                 <label className={labelClass} htmlFor="tpl-display-name">Display name</label>
                 <input id="tpl-display-name" className={inputClass} value={form.displayName} onChange={(e) => onDisplayName(e.target.value)} placeholder="Wedding invitation" />
@@ -333,7 +333,7 @@ const TemplateEditor = () => {
               {isSuperAdmin && !isEdit && (
                 <div>
                   <label className={labelClass} htmlFor="tpl-owner">Owner</label>
-                  <select id="tpl-owner" className={inputClass} value={form.ownerAdminId} onChange={(e) => update({ ownerAdminId: e.target.value, eventId: '' })}>
+                  <select id="tpl-owner" className={inputClass} value={form.ownerAdminId} onChange={(e) => update({ ownerAdminId: e.target.value })}>
                     <option value="">Shared (read-only for Admins)</option>
                     {admins.map((a) => (
                       <option key={a._id} value={a._id}>
@@ -344,16 +344,6 @@ const TemplateEditor = () => {
                   <FieldError message={errors.ownerAdminId} />
                 </div>
               )}
-              <div>
-                <label className={labelClass} htmlFor="tpl-event">Event</label>
-                <select id="tpl-event" className={inputClass} value={form.eventId} onChange={(e) => update({ eventId: e.target.value })}>
-                  <option value="">Reusable across events</option>
-                  {eventOptions.map((e) => (
-                    <option key={e._id} value={e._id}>{e.eventName}</option>
-                  ))}
-                </select>
-                <FieldError message={errors.eventId} />
-              </div>
             </div>
           </section>
 

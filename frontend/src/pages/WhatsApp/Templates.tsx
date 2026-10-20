@@ -254,7 +254,14 @@ const Templates = () => {
                         <td className="py-3 px-4 text-foreground/80">{t.category.charAt(0) + t.category.slice(1).toLowerCase()}</td>
                         <td className="py-3 px-4 text-foreground/80 font-mono text-xs">{t.language}</td>
                         <td className="py-3 px-4 text-foreground/80">
-                          {t.eventId ? eventName.get(t.eventId) ?? 'Event' : <span className="text-foreground/40 italic">Reusable</span>}
+                          {t.eventId ? (
+                            <>
+                              <span className="font-mono text-xs">{t.eventId}</span>
+                              {t.eventObjectId && eventName.get(t.eventObjectId) ? <span className="block text-foreground/50 text-xs">{eventName.get(t.eventObjectId)}</span> : null}
+                            </>
+                          ) : (
+                            <span className="text-foreground/40 italic" title="Made before templates were tied to an event. It cannot be sent from the Message tab until an Event ID is added.">No event</span>
+                          )}
                         </td>
                         <td className="py-3 px-4">
                           <Badge variant={status.variant} title={t.metaStatus ? `${status.hint} WhatsApp status: ${t.metaStatus}` : status.hint}>

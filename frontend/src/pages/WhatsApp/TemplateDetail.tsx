@@ -70,15 +70,15 @@ const TemplateDetail = () => {
   }, [load]);
 
   useEffect(() => {
-    if (!template?.eventId) {
+    if (!template?.eventObjectId) {
       setEventName(null);
       return;
     }
     api
-      .get(`/events/${template.eventId}`)
+      .get(`/events/${template.eventObjectId}`)
       .then((response) => setEventName(response.data?.eventName ?? null))
       .catch(() => setEventName(null));
-  }, [template?.eventId]);
+  }, [template?.eventObjectId]);
 
   /** Submit, Check status and Refresh status answer 200 with an outcome and the template as stored. */
   const runOutcomeAction = async (path: 'submit' | 'reconcile' | 'refresh', body?: Record<string, unknown>) => {
@@ -266,7 +266,16 @@ const TemplateDetail = () => {
                 <Row label="Category at WhatsApp">{template.metaCategory}</Row>
               )}
               <Row label="Language"><span className="font-mono">{template.language}</span></Row>
-              <Row label="Event">{template.eventId ? eventName ?? 'Event' : 'Reusable across events'}</Row>
+              <Row label="Event">
+                {template.eventId ? (
+                  <>
+                    <span className="font-mono">{template.eventId}</span>
+                    {eventName ? <span className="text-foreground/60"> · {eventName}</span> : null}
+                  </>
+                ) : (
+                  'No event - edit the draft to add an Event ID'
+                )}
+              </Row>
               <Row label="Owner">{template.ownerAdminId ? (template.ownerAdminId === user?.id ? 'You' : 'An Admin') : 'Shared'}</Row>
               <Row label="Status">{status.label}</Row>
               {template.metaStatus && <Row label="WhatsApp status"><span className="font-mono">{template.metaStatus}</span></Row>}

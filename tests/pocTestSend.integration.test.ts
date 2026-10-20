@@ -40,6 +40,7 @@ const whatsappSenderRoutes = require('../backend/dist/routes/whatsappSenderRoute
 const { __applyStatusUpdatesForTest } = require('../backend/dist/controllers/webhookController');
 const { Admin } = require('../backend/dist/models/Admin');
 const { User } = require('../backend/dist/models/User');
+const { Event } = require('../backend/dist/models/Event');
 const { WhatsAppTemplate } = require('../backend/dist/models/WhatsAppTemplate');
 const { WhatsAppSender } = require('../backend/dist/models/WhatsAppSender');
 const { PocTestRecipient } = require('../backend/dist/models/PocTestRecipient');
@@ -103,6 +104,7 @@ let nameSeq = 0;
 
 const makeTemplate = async (overrides: Record<string, any> = {}) => {
   const created = await call('POST', '/api/whatsapp/templates', fx.g, {
+    eventId: fx.event.eventId,
     displayName: 'Invitation',
     name: `poc_invite_${++nameSeq}`,
     language: 'en',
@@ -142,6 +144,11 @@ before(async () => {
   fx.user = await User.create({ name: 'User', email: 'user-poc@example.com', passwordHash: 'x', status: 'Active', adminId: fx.granted._id });
   fx.super = tokenFor(fx.superAdmin, 'SuperAdmin');
   fx.g = tokenFor(fx.granted, 'Admin');
+  fx.event = await Event.create({
+    organizerName: 'Organiser', organizerMobile: BigInt('9112472833'), eventName: 'POC Wedding', eventType: 'Wedding',
+    eventDate: new Date('2027-01-30T00:00:00.000Z'), eventTime: new Date('2027-01-30T13:30:00.000Z'),
+    eventVenue: 'Pune', eventStatus: 'Upcoming', adminId: fx.granted._id, createdBy: fx.granted._id,
+  });
   fx.gB = tokenFor(fx.grantedB, 'Admin');
   fx.p = tokenFor(fx.plain, 'Admin');
   fx.u = tokenFor(fx.user, 'User');
@@ -693,7 +700,7 @@ describe('nothing sends by itself', () => {
   });
 
   test('creating or submitting a template never sends a message', async () => {
-    const created = await call('POST', '/api/whatsapp/templates', fx.g, { displayName: 'x', name: 'poc_nosend', language: 'en', category: 'UTILITY', body: 'Hello there.', variables: [] });
+    const created = await call('POST', '/api/whatsapp/templates', fx.g, { eventId: fx.event.eventId, displayName: 'x', name: 'poc_nosend', language: 'en',category: 'UTILITY', body: 'Hello there.', variables: [] });
     assert.equal(created.status, 201);
     const review = await call('GET', `/api/whatsapp/templates/${created.body.template.id}/payload`, fx.g);
     await call('POST', `/api/whatsapp/templates/${created.body.template.id}/submit`, fx.g, { confirmPayloadHash: review.body.payloadHash });

@@ -58,7 +58,10 @@ export interface IWhatsAppTemplate extends Document {
   language: string;
   category: TemplateCategory;
   allowCategoryChange: boolean;
-  eventId: mongoose.Types.ObjectId | null;
+  /** The event this template is for: its MongoDB _id, resolved from `eventId` by the server. */
+  eventObjectId: mongoose.Types.ObjectId | null;
+  /** The same event's business id ("EVT-0000017"). */
+  eventId: string | null;
   headerText: string | null;
   body: string;
   footer: string | null;
@@ -127,8 +130,11 @@ const whatsAppTemplateSchema = new Schema<IWhatsAppTemplate>(
     language: { type: String, required: true, trim: true },
     category: { type: String, required: true, enum: TEMPLATE_CATEGORIES },
     allowCategoryChange: { type: Boolean, default: false },
-    // Null: reusable across the owner's events.
-    eventId: { type: Schema.Types.ObjectId, ref: 'Event', default: null },
+    // Both are set together, from the event the server resolved - never from a
+    // client-supplied ObjectId. Null on a template made before templates were
+    // tied to an event: it is not offered for sending (see eventScopedTemplates).
+    eventObjectId: { type: Schema.Types.ObjectId, ref: 'Event', default: null },
+    eventId: { type: String, default: null, trim: true, match: /^EVT-\d{6,}$/ },
     headerText: { type: String, default: null, maxlength: 60 },
     body: { type: String, required: true, maxlength: 1024 },
     footer: { type: String, default: null, maxlength: 60 },
@@ -161,7 +167,7 @@ whatsAppTemplateSchema.index(
   { unique: true, partialFilterExpression: { metaTemplateId: { $type: 'string' } } }
 );
 whatsAppTemplateSchema.index({ ownerAdminId: 1, localState: 1 });
-whatsAppTemplateSchema.index({ eventId: 1 });
+whatsAppTemplateSchema.index({ eventObjectId: 1, localState: 1 });
 // Submissions in the last hour, per account (Meta allows 100 per hour).
 whatsAppTemplateSchema.index({ wabaId: 1, 'submission.startedAt': -1 });
 

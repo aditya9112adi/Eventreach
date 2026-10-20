@@ -1,9 +1,8 @@
 /**
- * pranjali_ankit_wedding_invite in the Composer's template dropdown: offered
- * for every event, mirrored from the backend allowlist, sent exactly as
- * approved (nothing filled in, no guest name) - and, like every template,
- * only sendable once the preview confirms the approved body takes exactly the
- * values this page fills: here, none.
+ * The send rules for a template that takes no values (pranjali_ankit_wedding_invite is the example): shown
+ * exactly as approved (no guest name), and - like every template - only sendable once the preview confirms the
+ * approved body takes exactly the values this page fills. The Message tab no longer lists the built-in
+ * templates (only the selected event's own); the backend allowlist is unchanged.
  *
  * Run: npx tsx --test frontend/src/pages/Campaigns/ComposerWeddingTemplate.test.ts
  */
@@ -22,37 +21,15 @@ import {
 const NAME = 'pranjali_ankit_wedding_invite';
 const source = fs.readFileSync('frontend/src/pages/Campaigns/Composer.tsx', 'utf-8').split('\r\n').join('\n');
 
-/** The names in the page's TEMPLATES list, in order. */
-const listedNames = (): string[] => {
-  const list = /const TEMPLATES = \[([\s\S]*?)\n\];/.exec(source);
-  assert.ok(list, 'the TEMPLATES list is present');
-  return [...list[1].matchAll(/name: '([a-z0-9_]+)'/g)].map((m) => m[1]);
-};
-
-test('the dropdown offers the wedding template, described as sent exactly as approved', () => {
-  assert.ok(listedNames().includes(NAME));
-  assert.ok(source.includes("label: 'Pranjali & Ankit wedding invite',"));
-  assert.ok(
-    source.includes(
-      "'Approved marketing template, sent exactly as approved. Nothing is filled in or personalised; its wording is set by the approved template and cannot be edited here.',"
-    )
-  );
-  assert.equal(source.includes('Fills the guest name; the rest of its wording'), false, 'no claim that it is personalised');
+test('the Message tab no longer lists the built-in wedding template (or any general template)', () => {
+  assert.equal(source.includes(NAME), false);
+  assert.equal(/\bTEMPLATES\b/.test(source), false);
+  assert.equal(source.includes('Pranjali & Ankit'), false);
 });
 
-test('the dropdown lists exactly what the backend will send, existing templates first and unchanged', () => {
-  assert.deepEqual(listedNames(), ['event_reminder', 'event_document', 'event_image', 'event_video', NAME]);
-  assert.deepEqual(listedNames(), Object.keys(EVENT_TEMPLATES));
-});
-
-test('the backend fills nothing for it', () => {
+test('the backend allowlist still holds the built-in templates, so existing API clients keep working', () => {
+  assert.deepEqual(Object.keys(EVENT_TEMPLATES), ['event_reminder', 'event_document', 'event_image', 'event_video', NAME]);
   assert.deepEqual([...EVENT_TEMPLATES[NAME].fields], []);
-});
-
-test('it is offered for any event: the list is rendered whole, never filtered by event', () => {
-  assert.ok(source.includes('{TEMPLATES.map((template) => ('));
-  assert.equal(/TEMPLATES\.filter\(/.test(source), false, 'no per-event filtering of templates');
-  assert.equal(source.split(NAME).length - 1, 1, 'named once, in the list - no special case elsewhere on the page');
 });
 
 const APPROVED_BODY = 'You are warmly invited to celebrate with us. [mocked body for the test]';

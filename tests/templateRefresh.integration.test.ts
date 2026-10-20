@@ -33,6 +33,7 @@ const mongoose = require('mongoose');
 const svc = require('../backend/dist/services/templateService');
 const { WhatsAppTemplate } = require('../backend/dist/models/WhatsAppTemplate');
 const { Admin } = require('../backend/dist/models/Admin');
+const { Event } = require('../backend/dist/models/Event');
 const { AuditLog } = require('../backend/dist/models/AuditLog');
 
 const FAKE_TOKEN = 'EAAG-FAKE-SENTINEL-TOKEN-never-real-7f3a9c';
@@ -74,10 +75,14 @@ const node = (t: any, status: string, extra: Record<string, any> = {}) => ({
   data: { id: t.metaTemplateId, name: t.name, language: t.language, status, category: 'MARKETING', ...extra },
 });
 
+/** The business Event ID of an event the owner holds (a Super Admin's template may use any). */
+const eventIdFor = (owner: any) => (String(owner.id) === String(fx.adminB._id) ? fx.eventB : fx.eventA).eventId;
+
 /** A template submitted to (mocked) Meta and now Pending. */
 const pending = async (owner = fx.A) => {
   const name = `refresh_${++seq}`;
   const t = await svc.createTemplateDraft(owner, {
+    eventId: eventIdFor(owner),
     displayName: 'Invitation', name, language: 'en', category: 'MARKETING',
     body: 'Dear {{1}}, you are invited.', variables: [{ position: 1, label: 'Guest', source: 'guest.name', sample: 'Riya' }],
   }, { connection: CONNECTION });
@@ -100,6 +105,14 @@ before(async () => {
   fx.adminA = await Admin.create({ name: 'A', email: 'a-refresh@example.com', passwordHash: 'x', role: 'Admin', status: 'Active', canManageWhatsAppTemplates: true });
   fx.adminB = await Admin.create({ name: 'B', email: 'b-refresh@example.com', passwordHash: 'x', role: 'Admin', status: 'Active', canManageWhatsAppTemplates: true });
   fx.adminC = await Admin.create({ name: 'C', email: 'c-refresh@example.com', passwordHash: 'x', role: 'Admin', status: 'Active' });
+  const mkEvent = (eventName: string, adminId: any) =>
+    Event.create({
+      organizerName: 'Organiser', organizerMobile: BigInt('9112472833'), eventName, eventType: 'Wedding',
+      eventDate: new Date('2027-01-30T00:00:00.000Z'), eventTime: new Date('2027-01-30T13:30:00.000Z'),
+      eventVenue: 'Pune', eventStatus: 'Upcoming', adminId, createdBy: adminId,
+    });
+  fx.eventA = await mkEvent('A Wedding', fx.adminA._id);
+  fx.eventB = await mkEvent('B Wedding', fx.adminB._id);
   fx.S = { id: String(fx.superAdmin._id), role: 'SuperAdmin' };
   fx.A = { id: String(fx.adminA._id), role: 'Admin' };
   fx.B = { id: String(fx.adminB._id), role: 'Admin' };
@@ -214,7 +227,8 @@ describe('who may refresh, and what', () => {
   test('only a Pending template with a valid Meta id in the configured account', async () => {
     const m = meta();
     const draft = await svc.createTemplateDraft(fx.A, {
-      displayName: 'D', name: `draft_${++seq}`, language: 'en', category: 'UTILITY', body: 'Hello there.', variables: [],
+      eventId: eventIdFor(fx.A),
+      displayName: 'D', name: `draft_${++seq}`,language: 'en', category: 'UTILITY', body: 'Hello there.', variables: [],
     }, { connection: CONNECTION });
     assert.equal(await code(svc.refreshTemplateStatus(fx.A, draft.id, m.deps)), '409:NOT_REFRESHABLE');
 

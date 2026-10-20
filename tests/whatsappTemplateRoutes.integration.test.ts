@@ -96,6 +96,8 @@ const draft = (overrides: Record<string, any> = {}) => ({
   category: 'MARKETING',
   body: 'Dear {{1}}, you are invited to the wedding of Pranjali & Ankit.',
   variables: [{ position: 1, label: 'Guest name', source: 'guest.name', sample: 'Riya' }],
+  // Every template is tied to an event by its business Event ID.
+  eventId: fx.event?.eventId,
   ...overrides,
 });
 
@@ -118,6 +120,16 @@ before(async () => {
     organizerName: 'Organiser', organizerMobile: BigInt('9112472833'), eventName: 'Wedding', eventType: 'Wedding',
     eventDate: new Date('2027-01-30T00:00:00.000Z'), eventTime: new Date('2027-01-30T13:30:00.000Z'),
     eventVenue: 'Pune', eventStatus: 'Upcoming', adminId: fx.granted._id, createdBy: fx.granted._id,
+  });
+  fx.eventG2 = await Event.create({
+    organizerName: 'Organiser', organizerMobile: BigInt('9112472833'), eventName: 'Second Wedding', eventType: 'Wedding',
+    eventDate: new Date('2027-01-30T00:00:00.000Z'), eventTime: new Date('2027-01-30T13:30:00.000Z'),
+    eventVenue: 'Pune', eventStatus: 'Upcoming', adminId: fx.granted._id, createdBy: fx.granted._id,
+  });
+  fx.eventB = await Event.create({
+    organizerName: 'Organiser', organizerMobile: BigInt('9112472833'), eventName: 'B Wedding', eventType: 'Wedding',
+    eventDate: new Date('2027-01-30T00:00:00.000Z'), eventTime: new Date('2027-01-30T13:30:00.000Z'),
+    eventVenue: 'Pune', eventStatus: 'Upcoming', adminId: fx.grantedB._id, createdBy: fx.grantedB._id,
   });
 
   const app = express();
@@ -150,7 +162,9 @@ const submit = async (id: string, token: string) => {
   return call('POST', `${T}/${id}/submit`, token, { confirmPayloadHash: review.body.payloadHash });
 };
 
-const create = async (token: string, body = draft()) => {
+const create = async (token: string, body: Record<string, any> = draft()) => {
+  // The second Admin's templates use the second Admin's event.
+  if (token === fx.gB && body.eventId === fx.event.eventId) body = { ...body, eventId: fx.eventB.eventId };
   const res = await call('POST', T, token, body);
   assert.equal(res.status, 201, JSON.stringify(res.body));
   return res.body.template;
@@ -236,15 +250,18 @@ describe('creating and editing', () => {
   });
 
   test('a list is paginated and filtered; Admins never see the account id', async () => {
-    await create(fx.g, draft({ displayName: 'Haldi reminder', category: 'UTILITY', eventId: String(fx.event._id) }));
-    await create(fx.g);
+    await create(fx.g, draft({ displayName: 'Haldi reminder', category: 'UTILITY' }));
+    await create(fx.g, draft({ eventId: fx.eventG2.eventId }));
     await create(fx.gB);
     const res = await call('GET', `${T}?limit=1&page=1`, fx.g);
     assert.equal(res.status, 200);
     assert.deepEqual(res.body.pagination, { total: 2, page: 1, limit: 1, totalPages: 2 });
     assert.equal(res.raw.includes(WABA), false);
-    const filtered = await call('GET', `${T}?category=utility&eventId=${fx.event._id}`, fx.g);
+    const filtered = await call('GET', `${T}?category=utility&eventId=${fx.event.eventId}`, fx.g);
     assert.deepEqual(filtered.body.data.map((t: any) => t.displayName), ['Haldi reminder']);
+    const byObjectId = await call('GET', `${T}?category=utility&eventObjectId=${fx.event._id}`, fx.g);
+    assert.deepEqual(byObjectId.body.data.map((t: any) => t.displayName), ['Haldi reminder']);
+    assert.equal((await call('GET', `${T}?eventId=not-an-event-id`, fx.g)).status, 400);
     assert.equal((await call('GET', T, fx.super)).body.data[0].wabaId, WABA);
   });
 

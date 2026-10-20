@@ -32,7 +32,7 @@ test('the Custom Message flow is gone from the page', () => {
 });
 
 test('the template flow is unchanged: template, guests, header file, preview and send', () => {
-  assert.ok(source.includes('{TEMPLATES.map((template) => ('));
+  assert.ok(source.includes('eventTemplates.map((template) => ('));
   assert.ok(source.includes('<GuestMultiSelect'));
   assert.ok(source.includes('onFileSelect={handleHeaderUpload}'));
   assert.ok(source.includes(".get('/whatsapp/event-template-preview', {"));
@@ -40,7 +40,7 @@ test('the template flow is unchanged: template, guests, header file, preview and
   assert.ok(source.includes('onClick={handleSendTemplate}'));
   // Guests and the preview load as soon as an event is chosen.
   assert.ok(source.includes('    if (!selectedEventId) {\n      setIsContactsLoading(false);'));
-  assert.ok(source.includes('    if (!selectedEventId || !previewContactId) {'));
+  assert.ok(source.includes('    if (!selectedEventId || !previewContactId || !templateName) {'));
 });
 
 test('the page heading stays "Message"', () => {

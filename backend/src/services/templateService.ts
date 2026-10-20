@@ -27,6 +27,7 @@ import {
   type MetaTemplateApiDeps,
 } from './metaTemplateApi';
 import { escapeRegex } from '../utils/reportSearch';
+import { checkEventBusinessId, EVENT_BUSINESS_ID_PATTERN } from '@eventreach/shared';
 
 /**
  * WhatsApp template management: drafts, submission to Meta, and reconciling
@@ -144,22 +145,49 @@ const resolveOwner = async (actor: TemplateActor, requested: unknown): Promise<s
   return requested;
 };
 
-/** An event-specific template: the event must be one the actor can manage, and the owner's. */
-const resolveEvent = async (actor: TemplateActor, requested: unknown, ownerAdminId: string | null): Promise<string | null> => {
-  if (requested === undefined || requested === null || requested === '') return null;
-  if (typeof requested !== 'string' || !mongoose.Types.ObjectId.isValid(requested)) {
-    throw new TemplateServiceError('VALIDATION_ERROR', 'eventId must be an event id.', 400, [{ field: 'eventId', message: 'Choose a valid event.' }]);
+/** What every refusal to use an Event ID says, so an id that exists but is not yours cannot be told from one that does not exist. */
+const EVENT_UNAVAILABLE = 'No event with that Event ID is available to you. Check the ID and try again.';
+
+export interface EventLink {
+  /** The event's MongoDB _id, as the database holds it. */
+  eventObjectId: string;
+  /** The event's business id ("EVT-0000017"). */
+  eventId: string;
+}
+
+/**
+ * The event a template is for, from the business Event ID a person typed.
+ *
+ * The id is trimmed and checked for shape, then looked up in the database; the
+ * event found - not anything the client sent - supplies both stored ids. The
+ * event must be one the actor may access and, when the template has an owner,
+ * one that owner holds. A malformed id, an unknown id and an id outside the
+ * actor's scope are all refused (400, field eventId) and none creates anything.
+ */
+const resolveEvent = async (actor: TemplateActor, requested: unknown, ownerAdminId: string | null): Promise<EventLink> => {
+  const check = checkEventBusinessId(requested);
+  if (!check.ok) {
+    throw new TemplateServiceError('VALIDATION_ERROR', check.message, 400, [{ field: 'eventId', message: check.message }]);
   }
-  if (!(await isEventAuthorized(actor, requested))) {
-    throw new TemplateServiceError('ACCESS_DENIED', 'You do not have access to that event.', 403);
-  }
-  const event: any = await Event.findById(requested).select('adminId createdBy').lean();
-  if (!event) throw new TemplateServiceError('EVENT_NOT_FOUND', 'Event not found.', 404);
+  const refuse = () => new TemplateServiceError('VALIDATION_ERROR', EVENT_UNAVAILABLE, 400, [{ field: 'eventId', message: EVENT_UNAVAILABLE }]);
+
+  const event: any = await Event.findOne({ eventId: check.value }).select('_id eventId adminId createdBy').lean();
+  if (!event) throw refuse();
+  if (!(await isEventAuthorized(actor, String(event._id)))) throw refuse();
   const eventOwner = String(event.adminId ?? event.createdBy ?? '');
-  if (ownerAdminId && eventOwner !== ownerAdminId) {
-    throw new TemplateServiceError('VALIDATION_ERROR', "The event must belong to the template's owner.", 400, [{ field: 'eventId', message: "Choose one of the owner's events." }]);
-  }
-  return requested;
+  if (ownerAdminId && eventOwner !== ownerAdminId) throw refuse();
+  return { eventObjectId: String(event._id), eventId: String(event.eventId) };
+};
+
+/**
+ * The event link a stored template carries. A template made before templates
+ * were tied to an event has none (its old `eventId` was an ObjectId, which is
+ * not a business id and is not shown as one).
+ */
+export const storedEventLink = (t: { eventObjectId?: unknown; eventId?: unknown }): EventLink | null => {
+  const business = typeof t.eventId === 'string' && EVENT_BUSINESS_ID_PATTERN.test(t.eventId) ? t.eventId : null;
+  if (!t.eventObjectId || !business) return null;
+  return { eventObjectId: String(t.eventObjectId), eventId: business };
 };
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -217,7 +245,9 @@ export const toTemplateView = (t: IWhatsAppTemplate | any, viewer?: TemplateActo
     language: o.language,
     category: o.category,
     allowCategoryChange: o.allowCategoryChange,
-    eventId: o.eventId ? String(o.eventId) : null,
+    // null on a template made before templates were tied to an event.
+    eventObjectId: storedEventLink(o)?.eventObjectId ?? null,
+    eventId: storedEventLink(o)?.eventId ?? null,
     headerText: o.headerText ?? null,
     body: o.body,
     footer: o.footer ?? null,
@@ -261,14 +291,15 @@ export const createTemplateDraft = async (caller: TemplateActor, input: Template
   }
   const value = requireValid(input);
   const ownerAdminId = await resolveOwner(actor, input.ownerAdminId);
-  const eventId = await resolveEvent(actor, input.eventId, ownerAdminId);
+  const link = await resolveEvent(actor, input.eventId, ownerAdminId);
 
   try {
     const template = await WhatsAppTemplate.create({
       ...value,
       wabaId,
       ownerAdminId,
-      eventId,
+      eventObjectId: link.eventObjectId,
+      eventId: link.eventId,
       createdBy: actor.id,
       updatedBy: actor.id,
       localState: 'Draft',
@@ -296,14 +327,15 @@ export const updateTemplateDraft = async (caller: TemplateActor, id: unknown, in
     if (input[key] !== undefined) (merged as any)[key] = input[key];
   }
   const value = requireValid(merged);
-  const eventId = input.eventId !== undefined ? await resolveEvent(actor, input.eventId, ownerOf(existing)) : existing.eventId ? String(existing.eventId) : null;
+  // Changing the event goes through the same lookup as creating; leaving it out keeps what is stored.
+  const link = input.eventId !== undefined ? await resolveEvent(actor, input.eventId, ownerOf(existing)) : null;
 
   try {
     // Conditional on the state, so an edit can never land on a template that
     // was submitted between the read above and this write.
     const updated = await WhatsAppTemplate.findOneAndUpdate(
       { _id: existing._id, localState: { $in: EDITABLE_STATES } },
-      { $set: { ...value, eventId, updatedBy: actor.id }, $push: pushHistory(historyEntry('updated', actor, {}, nowOf(deps))) },
+      { $set: { ...value, ...(link ? { eventObjectId: link.eventObjectId, eventId: link.eventId } : {}), updatedBy: actor.id }, $push:pushHistory(historyEntry('updated', actor, {}, nowOf(deps))) },
       { new: true, runValidators: true }
     );
     if (!updated) throw new TemplateServiceError('TEMPLATE_LOCKED', 'The template was submitted while you were editing it.', 409);
@@ -344,7 +376,10 @@ export interface TemplateListFilters {
   q?: unknown;
   category?: unknown;
   language?: unknown;
+  /** An event's business id ("EVT-0000017"). */
   eventId?: unknown;
+  /** An event's MongoDB _id. */
+  eventObjectId?: unknown;
   state?: unknown;
   page?: unknown;
   limit?: unknown;
@@ -370,9 +405,14 @@ export const listTemplates = async (caller: TemplateActor, filters: TemplateList
   if (typeof filters.category === 'string' && filters.category) query.category = filters.category.toUpperCase();
   if (typeof filters.language === 'string' && filters.language) query.language = filters.language;
   if (typeof filters.state === 'string' && filters.state) query.localState = filters.state;
+  if (typeof filters.eventObjectId === 'string' && filters.eventObjectId) {
+    if (!mongoose.Types.ObjectId.isValid(filters.eventObjectId)) throw new TemplateServiceError('VALIDATION_ERROR', 'eventObjectId must be an event id.', 400);
+    query.eventObjectId = new mongoose.Types.ObjectId(filters.eventObjectId);
+  }
   if (typeof filters.eventId === 'string' && filters.eventId) {
-    if (!mongoose.Types.ObjectId.isValid(filters.eventId)) throw new TemplateServiceError('VALIDATION_ERROR', 'eventId must be an event id.', 400);
-    query.eventId = new mongoose.Types.ObjectId(filters.eventId);
+    const check = checkEventBusinessId(filters.eventId);
+    if (!check.ok) throw new TemplateServiceError('VALIDATION_ERROR', check.message, 400, [{ field: 'eventId', message: check.message }]);
+    query.eventId = check.value;
   }
 
   const page = positiveInt(filters.page, 1);

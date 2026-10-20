@@ -3,6 +3,7 @@ import {
   testTemplateMessage,
   previewEventTemplate,
   sendEventTemplate,
+  listEventTemplates,
 } from '../controllers/whatsappController';
 import {
   listTemplatesHandler,
@@ -45,6 +46,8 @@ router.post('/test-template', requireRole('SuperAdmin'), actionLimiter, testTemp
 // it carries the same per-event authorization as the rest of that flow
 // (isEventAuthorized, applied inside the handler) rather than a role check.
 router.get('/event-template-preview', previewEventTemplate);
+// The approved templates tied to one event (same per-event authorization).
+router.get('/event-templates', listEventTemplates);
 router.post('/event-template', actionLimiter, sendEventTemplate);
 
 // WhatsApp template management. No role check here on purpose: the template

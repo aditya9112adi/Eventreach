@@ -90,6 +90,8 @@ const draft = (overrides: Record<string, any> = {}) => ({
   category: 'UTILITY',
   body: 'Hello {{1}}, your event is coming up.',
   variables: [{ position: 1, label: 'Guest name', source: 'guest.name', sample: 'Riya' }],
+  // Every template is tied to an event by its business Event ID.
+  eventId: fx.event?.eventId,
   ...overrides,
 });
 

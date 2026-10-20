@@ -38,7 +38,7 @@ import {
 
 const template = (overrides: Partial<TemplateView> = {}): TemplateView => ({
   id: 't1', ownerAdminId: 'admin-1', createdBy: 'admin-1', displayName: 'Wedding invitation', name: 'wedding_invite',
-  language: 'en', category: 'MARKETING', eventId: null, headerText: null, body: 'Dear {{1}}, welcome.', footer: null,
+  language: 'en', category: 'MARKETING', eventId: null, eventObjectId: null, headerText: null,body: 'Dear {{1}}, welcome.', footer: null,
   variables: [{ position: 1, label: 'Guest name', source: 'guest.name', sample: 'Riya' }],
   localState: 'Draft', metaTemplateId: null, metaStatus: null, metaCategory: null, rejectionReason: null, lastSyncedAt: null,
   submissionAttempts: 0, history: [], version: 1, createdAt: '2026-10-12T00:00:00Z', updatedAt: '2026-10-12T00:00:00Z',
@@ -51,6 +51,7 @@ const OTHER = { id: 'admin-2', role: 'Admin', canManageWhatsAppTemplates: true }
 
 const form = (overrides: Partial<TemplateForm> = {}): TemplateForm => ({
   ...EMPTY_FORM,
+  eventId: 'EVT-0000017',
   displayName: 'Wedding invitation',
   name: 'wedding_invite',
   body: 'Dear {{1}}, welcome.',
@@ -81,7 +82,8 @@ describe('list page', () => {
   test('only the filters that are set are sent, with the page', () => {
     assert.deepEqual(listParams(EMPTY_FILTERS, 1, 20), { page: 1, limit: 20 });
     assert.deepEqual(listParams({ q: ' haldi ', category: 'UTILITY', language: '', eventId: 'e1', state: 'Pending' }, 3, 50), {
-      page: 3, limit: 50, q: 'haldi', category: 'UTILITY', eventId: 'e1', state: 'Pending',
+      // The event filter is chosen from the events list, so it carries the event's _id.
+      page: 3, limit: 50, q: 'haldi', category: 'UTILITY', eventObjectId: 'e1', state: 'Pending',
     });
     assert.equal(hasActiveFilters(EMPTY_FILTERS), false);
     assert.equal(hasActiveFilters({ ...EMPTY_FILTERS, language: 'hi' }), true);
@@ -205,6 +207,29 @@ describe('editor', () => {
     assert.deepEqual(p.variables[0], { position: 1, label: 'Guest', source: 'guest.name', sample: 'Riya' });
   });
 
+  test('the Event ID is required, trimmed and checked for shape before anything is sent', () => {
+    assert.deepEqual(validateForm(form()), {});
+    assert.equal(validateForm(form({ eventId: '' })).eventId, 'Event ID is required.');
+    assert.equal(validateForm(form({ eventId: '   ' })).eventId, 'Event ID is required.');
+    for (const bad of ['evt-0000017', 'EVT0000017', 'EVT-123', 'EVT-12345', 'EVT-000001x', '507f1f77bcf86cd799439011', 'EVT-0000017 EVT-0000018']) {
+      assert.match(validateForm(form({ eventId: bad })).eventId, /EVT- followed by at least 6 digits/, bad);
+    }
+    // Whitespace around a good ID is not an error: it is removed.
+    assert.deepEqual(validateForm(form({ eventId: '  EVT-0000017\t' })), {});
+    assert.equal((buildTemplatePayload(form({ eventId: '  EVT-0000017  ' })) as any).eventId, 'EVT-0000017');
+    // Both the older 6-digit form and longer ones are real Event IDs.
+    for (const good of ['EVT-000001', 'EVT-000017', 'EVT-0000017', 'EVT-12345678']) assert.deepEqual(validateForm(form({ eventId: good })), {}, good);
+    // The Event ID problem comes first.
+    assert.equal(Object.keys(validateForm(form({ eventId: '', displayName: '' })))[0], 'eventId');
+  });
+
+  test('a template made before templates were tied to an event opens with an empty Event ID, which must be filled', () => {
+    const legacy = template({ eventId: null, eventObjectId: null });
+    const f = formFromTemplate(legacy);
+    assert.equal(f.eventId, '');
+    assert.ok(validateForm(f).eventId);
+  });
+
   test('the shared rules run before sending, keyed like the API', () => {
     assert.deepEqual(validateForm(form()), {});
     const errors = validateForm(form({ headerText: 'For {{1}}', variables: [{ position: 1, label: '', source: '', fixedValue: '', fallback: '', sample: '' }] }));
@@ -212,9 +237,9 @@ describe('editor', () => {
   });
 
   test('a stored template round-trips through the form unchanged', () => {
-    const t = template({ headerText: 'You are invited', footer: 'With love', eventId: 'e1' });
+    const t = template({ headerText: 'You are invited', footer: 'With love', eventId: 'EVT-0000017', eventObjectId: 'e1' });
     const p: any = buildTemplatePayload(formFromTemplate(t));
-    assert.deepEqual([p.headerText, p.footer, p.eventId, p.body], ['You are invited', 'With love', 'e1', t.body]);
+    assert.deepEqual([p.headerText, p.footer, p.eventId, p.body], ['You are invited', 'With love', 'EVT-0000017', t.body]);
     assert.deepEqual(p.variables, t.variables);
   });
 

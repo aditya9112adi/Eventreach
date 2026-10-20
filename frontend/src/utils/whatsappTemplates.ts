@@ -1,5 +1,6 @@
 import {
   COMMON_TEMPLATE_LANGUAGES,
+  checkEventBusinessId,
   WHATSAPP_TEMPLATE_BUTTON_LIMITS,
   WHATSAPP_TEMPLATE_BUTTON_TYPES,
   WHATSAPP_TEMPLATE_CATEGORIES,
@@ -76,7 +77,10 @@ export interface TemplateView {
   name: string;
   language: string;
   category: string;
+  /** The event's business id ("EVT-0000017"); null on a template made before templates were tied to an event. */
   eventId: string | null;
+  /** The same event's MongoDB _id. */
+  eventObjectId: string | null;
   headerText: string | null;
   body: string;
   footer: string | null;
@@ -213,12 +217,15 @@ export const EMPTY_FILTERS: TemplateFilters = { q: '', category: '', language: '
 
 export const hasActiveFilters = (f: TemplateFilters) => Object.values(f).some((v) => v.trim() !== '');
 
-/** Query parameters for GET /whatsapp/templates - only the filters that are set. */
+/**
+ * Query parameters for GET /whatsapp/templates - only the filters that are set.
+ * The event filter is chosen from the events list, so it holds an event's _id and is sent as eventObjectId.
+ */
 export const listParams = (f: TemplateFilters, page: number, limit: number) => {
   const params: Record<string, string | number> = { page, limit };
   for (const key of ['q', 'category', 'language', 'eventId', 'state'] as const) {
     const value = f[key].trim();
-    if (value) params[key] = value;
+    if (value) params[key === 'eventId' ? 'eventObjectId' : key] = value;
   }
   return params;
 };
@@ -416,8 +423,9 @@ export const buildTemplatePayload = (form: TemplateForm, options: { includeOwner
   headerText: form.headerText.trim() || null,
   body: form.body.trim(),
   footer: form.footer.trim() || null,
-  eventId: form.eventId || null,
-  ...(options.includeOwner ? { ownerAdminId: form.ownerAdminId || null } : {}),
+  // Always the business Event ID the person typed, trimmed; the server looks the event up.
+  eventId: form.eventId.trim(),
+  ...(options.includeOwner? { ownerAdminId: form.ownerAdminId || null } : {}),
   variables: form.variables.map((v) => ({
     position: v.position,
     label: v.label.trim(),
@@ -435,8 +443,16 @@ export const buildTemplatePayload = (form: TemplateForm, options: { includeOwner
 });
 
 /** The shared validation the API runs, applied before sending. */
-export const validateForm = (form: TemplateForm): Record<string, string> =>
-  fieldErrorMap(validateTemplateDraft(buildTemplatePayload(form)).errors);
+/** The Event ID problem, if any: required, and in the shape of an event's business id. Whether it exists is the server's to say. */
+export const eventIdProblem = (value: string): string | null => {
+  const check = checkEventBusinessId(value);
+  return check.ok ? null : check.message;
+};
+
+export const validateForm = (form: TemplateForm): Record<string, string> => {
+  const problem = eventIdProblem(form.eventId);
+  return { ...(problem ? { eventId: problem } : {}), ...fieldErrorMap(validateTemplateDraft(buildTemplatePayload(form)).errors) };
+};
 
 export const isFormDirty = (form: TemplateForm, saved: TemplateForm) => JSON.stringify(form) !== JSON.stringify(saved);
 

@@ -67,7 +67,17 @@ const draft = (overrides: Record<string, any> = {}) => ({
   ...overrides,
 });
 
-/** A mocked Meta. Records every call; answers as told. */
+/**
+ * Every template is tied to an event by its business Event ID. Unless a test names one, the template
+ * gets the event of the Admin who will own it (the caller, or ownerAdminId for a Super Admin).
+ */
+const createDraft = (caller: any, input: Record<string, any>, deps?: any) => {
+  const owner = String(caller.role === 'Admin' ? caller.id : input.ownerAdminId ?? fx.adminA._id);
+  const event = [fx.eventA, fx.eventB, fx.eventC].find((e) => String(e.adminId) === owner) ?? fx.eventA;
+  return svc.createTemplateDraft(caller, { eventId: event.eventId, ...input }, deps);
+};
+
+/** A mocked Meta.Records every call; answers as told. */
 const metaMock = (opts: { post?: (body: any) => any; get?: (params: any) => any; delayMs?: number } = {}) => {
   const calls = { post: [] as any[], get: [] as any[] };
   return {
@@ -102,6 +112,8 @@ before(async () => {
   fx.adminC = await Admin.create({ name: 'Admin C', email: 'c-tpl@example.com', passwordHash: 'x', role: 'Admin', status: 'Active' });
   fx.eventA = await mkEvent('A Wedding', fx.adminA._id);
   fx.eventB = await mkEvent('B Wedding', fx.adminB._id);
+  fx.eventA2 = await mkEvent('A Second Wedding', fx.adminA._id);
+  fx.eventC = await mkEvent('C Wedding', fx.adminC._id);
   fx.S = actor(fx.superAdmin, 'SuperAdmin');
   fx.A = actor(fx.adminA, 'Admin');
   fx.B = actor(fx.adminB, 'Admin');
@@ -136,16 +148,16 @@ describe('Meta is mocked at the adapter boundary', () => {
 
 describe('who can manage templates', () => {
   test('a User cannot create, list or read templates', async () => {
-    assert.equal(await code(svc.createTemplateDraft(fx.U, draft(), { connection: CONNECTION })), '403:ACCESS_DENIED');
+    assert.equal(await code(createDraft(fx.U, draft(), { connection: CONNECTION })), '403:ACCESS_DENIED');
     assert.equal(await code(svc.listTemplates(fx.U)), '403:ACCESS_DENIED');
   });
 
   test('an Admin without the grant is refused on every operation', async () => {
-    const shared = await svc.createTemplateDraft(fx.S, draft(), { connection: CONNECTION });
-    const ofA = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const shared = await createDraft(fx.S, draft(), { connection: CONNECTION });
+    const ofA = await createDraft(fx.A, draft(), { connection: CONNECTION });
     const { deps, calls } = metaMock();
     for (const [label, attempt] of [
-      ['create', () => svc.createTemplateDraft(fx.C, draft(), { connection: CONNECTION })],
+      ['create', () => createDraft(fx.C, draft(), { connection: CONNECTION })],
       ['list', () => svc.listTemplates(fx.C)],
       ['read shared', () => svc.getTemplate(fx.C, shared.id)],
       ['read private', () => svc.getTemplate(fx.C, ofA.id)],
@@ -160,7 +172,7 @@ describe('who can manage templates', () => {
 
   test('a grant or revocation applies on the very next call; templates are kept', async () => {
     await Admin.updateOne({ _id: fx.adminC._id }, { $set: { canManageWhatsAppTemplates: true } });
-    const t = await svc.createTemplateDraft(fx.C, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.C, draft(), { connection: CONNECTION });
 
     await Admin.updateOne({ _id: fx.adminC._id }, { $set: { canManageWhatsAppTemplates: false } });
     assert.equal(await code(svc.updateTemplateDraft(fx.C, t.id, { displayName: 'after revoke' })), '403:ACCESS_DENIED');
@@ -174,13 +186,13 @@ describe('who can manage templates', () => {
   test('a claimed role is never trusted: the database decides', async () => {
     assert.equal(await code(svc.listTemplates({ ...fx.C, role: 'SuperAdmin' })), '403:ACCESS_DENIED', 'an ungranted Admin claiming Super Admin');
     assert.equal(await code(svc.listTemplates({ ...fx.U, role: 'SuperAdmin' })), '403:ACCESS_DENIED', 'an id that is not an Admin account');
-    const ofB = await svc.createTemplateDraft(fx.B, draft(), { connection: CONNECTION });
+    const ofB = await createDraft(fx.B, draft(), { connection: CONNECTION });
     // A real Super Admin is one even if the caller says Admin.
     assert.equal((await svc.getTemplate({ ...fx.S, role: 'Admin' }, ofB.id)).id, ofB.id);
   });
 
   test('an Admin always owns what they create, whatever the request says', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft({ ownerAdminId: String(fx.adminB._id) }), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft({ ownerAdminId: String(fx.adminB._id) }), { connection: CONNECTION });
     assert.equal(t.ownerAdminId, String(fx.adminA._id));
     assert.equal(t.localState, 'Draft');
     assert.equal('wabaId' in t, false, 'not shown to an Admin');
@@ -188,16 +200,16 @@ describe('who can manage templates', () => {
   });
 
   test('a Super Admin creates shared templates, or templates for an Admin', async () => {
-    const shared = await svc.createTemplateDraft(fx.S, draft(), { connection: CONNECTION });
-    const forA = await svc.createTemplateDraft(fx.S, draft({ ownerAdminId: String(fx.adminA._id) }), { connection: CONNECTION });
+    const shared = await createDraft(fx.S, draft(), { connection: CONNECTION });
+    const forA = await createDraft(fx.S, draft({ ownerAdminId: String(fx.adminA._id) }), { connection: CONNECTION });
     assert.equal(shared.ownerAdminId, null);
     assert.equal(forA.ownerAdminId, String(fx.adminA._id));
-    assert.equal(await code(svc.createTemplateDraft(fx.S, draft({ ownerAdminId: String(fx.superAdmin._id) }), { connection: CONNECTION })), '400:VALIDATION_ERROR', 'an owner must be an Admin');
+    assert.equal(await code(createDraft(fx.S, draft({ ownerAdminId: String(fx.superAdmin._id) }), { connection: CONNECTION })), '400:VALIDATION_ERROR', 'an owner must be an Admin');
   });
 
   test("another client's template is invisible; a shared one is read-only", async () => {
-    const ofB = await svc.createTemplateDraft(fx.B, draft(), { connection: CONNECTION });
-    const shared = await svc.createTemplateDraft(fx.S, draft(), { connection: CONNECTION });
+    const ofB = await createDraft(fx.B, draft(), { connection: CONNECTION });
+    const shared = await createDraft(fx.S, draft(), { connection: CONNECTION });
     const { deps, calls } = metaMock();
 
     assert.equal(await code(svc.getTemplate(fx.A, ofB.id)), '404:TEMPLATE_NOT_FOUND');
@@ -210,33 +222,35 @@ describe('who can manage templates', () => {
   });
 
   test('lists are scoped: own and shared for an Admin, everything for a Super Admin', async () => {
-    const ofA = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
-    const ofB = await svc.createTemplateDraft(fx.B, draft(), { connection: CONNECTION });
-    const shared = await svc.createTemplateDraft(fx.S, draft(), { connection: CONNECTION });
+    const ofA = await createDraft(fx.A, draft(), { connection: CONNECTION });
+    const ofB = await createDraft(fx.B, draft(), { connection: CONNECTION });
+    const shared = await createDraft(fx.S, draft(), { connection: CONNECTION });
     const ids = (page: any) => page.data.map((t: any) => t.id).sort();
     assert.deepEqual(ids(await svc.listTemplates(fx.A)), [ofA.id, shared.id].sort());
     assert.deepEqual(ids(await svc.listTemplates(fx.B)), [ofB.id, shared.id].sort());
     assert.deepEqual(ids(await svc.listTemplates(fx.S)), [ofA.id, ofB.id, shared.id].sort());
   });
 
-  test("an event-specific template must use the owner's own event", async () => {
-    assert.equal(await code(svc.createTemplateDraft(fx.A, draft({ eventId: String(fx.eventB._id) }), { connection: CONNECTION })), '403:ACCESS_DENIED');
-    const t = await svc.createTemplateDraft(fx.A, draft({ eventId: String(fx.eventA._id) }), { connection: CONNECTION });
-    assert.equal(t.eventId, String(fx.eventA._id));
+  test("a template must use the owner's own event, named by its Event ID", async () => {
+    assert.equal(await code(createDraft(fx.A, draft({ eventId: fx.eventB.eventId }), { connection: CONNECTION })), '400:VALIDATION_ERROR');
+    const t = await createDraft(fx.A, draft({ eventId: fx.eventA.eventId }), { connection: CONNECTION });
+    assert.equal(t.eventId, fx.eventA.eventId);
+    assert.equal(t.eventObjectId, String(fx.eventA._id));
     assert.equal(
-      await code(svc.createTemplateDraft(fx.S, draft({ ownerAdminId: String(fx.adminA._id), eventId: String(fx.eventB._id) }), { connection: CONNECTION })),
+      await code(createDraft(fx.S, draft({ ownerAdminId: String(fx.adminA._id), eventId: fx.eventB.eventId }), { connection: CONNECTION })),
       '400:VALIDATION_ERROR'
     );
   });
 
   test('list filters: search, category, language, event and state', async () => {
-    await svc.createTemplateDraft(fx.A, draft({ displayName: 'Haldi reminder', name: 'haldi_reminder', category: 'UTILITY', eventId: String(fx.eventA._id) }), { connection: CONNECTION });
-    await svc.createTemplateDraft(fx.A, draft({ displayName: 'Invitation', language: 'hi' }), { connection: CONNECTION });
+    await createDraft(fx.A, draft({ displayName: 'Haldi reminder', name: 'haldi_reminder', category: 'UTILITY', eventId: fx.eventA.eventId }), { connection: CONNECTION });
+    await createDraft(fx.A, draft({ displayName: 'Invitation', language: 'hi', eventId: fx.eventA2.eventId }), { connection: CONNECTION });
     const names = async (filters: any) => (await svc.listTemplates(fx.A, filters)).data.map((t: any) => t.displayName);
     assert.deepEqual(await names({ q: 'haldi' }), ['Haldi reminder']);
     assert.deepEqual(await names({ category: 'utility' }), ['Haldi reminder']);
     assert.deepEqual(await names({ language: 'hi' }), ['Invitation']);
-    assert.deepEqual(await names({ eventId: String(fx.eventA._id) }), ['Haldi reminder']);
+    assert.deepEqual(await names({ eventId: fx.eventA.eventId }), ['Haldi reminder']);
+    assert.deepEqual(await names({ eventObjectId: String(fx.eventA._id) }), ['Haldi reminder']);
     assert.equal((await names({ state: 'Draft' })).length, 2);
     assert.deepEqual(await names({ q: '.*' }), [], 'search text is not a regular expression');
   });
@@ -244,7 +258,7 @@ describe('who can manage templates', () => {
 
 describe('lists, views and deletion', () => {
   test('lists are paginated, newest first, with no overlap between pages', async () => {
-    for (let i = 0; i < 5; i++) await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    for (let i = 0; i < 5; i++) await createDraft(fx.A, draft(), { connection: CONNECTION });
     const first = await svc.listTemplates(fx.A, { page: '1', limit: '2' });
     const second = await svc.listTemplates(fx.A, { page: '2', limit: '2' });
     const third = await svc.listTemplates(fx.A, { page: '3', limit: '2' });
@@ -256,7 +270,7 @@ describe('lists, views and deletion', () => {
   });
 
   test('the WhatsApp Business Account id is shown to a Super Admin only', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft(), { connection: CONNECTION });
     assert.equal('wabaId' in t, false);
     assert.equal('wabaId' in (await svc.getTemplate(fx.A, t.id)), false);
     assert.equal((await svc.listTemplates(fx.A)).data.some((v: any) => 'wabaId' in v), false);
@@ -264,7 +278,7 @@ describe('lists, views and deletion', () => {
   });
 
   test('a draft never sent to Meta can be deleted, locally only', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft(), { connection: CONNECTION });
     const { deps, calls } = metaMock();
     await svc.deleteTemplateDraft(fx.A, t.id);
     assert.equal(await WhatsAppTemplate.countDocuments({ _id: t.id }), 0);
@@ -274,9 +288,9 @@ describe('lists, views and deletion', () => {
   });
 
   test('anything that reached Meta, or might have, cannot be deleted', async () => {
-    const submitted = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const submitted = await createDraft(fx.A, draft(), { connection: CONNECTION });
     await svc.submitTemplate(fx.A, submitted.id, metaMock().deps);
-    const failed = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const failed = await createDraft(fx.A, draft(), { connection: CONNECTION });
     await svc.submitTemplate(fx.A, failed.id, metaMock({ post: () => { throw { response: { status: 400, data: { error: { code: 100, message: 'bad' } } } }; } }).deps);
     for (const t of [submitted, failed]) {
       assert.equal(await code(svc.deleteTemplateDraft(fx.A, t.id)), '409:TEMPLATE_LOCKED');
@@ -285,8 +299,8 @@ describe('lists, views and deletion', () => {
   });
 
   test('deletion follows the same permissions', async () => {
-    const ofA = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
-    const shared = await svc.createTemplateDraft(fx.S, draft(), { connection: CONNECTION });
+    const ofA = await createDraft(fx.A, draft(), { connection: CONNECTION });
+    const shared = await createDraft(fx.S, draft(), { connection: CONNECTION });
     assert.equal(await code(svc.deleteTemplateDraft(fx.B, ofA.id)), '404:TEMPLATE_NOT_FOUND');
     assert.equal(await code(svc.deleteTemplateDraft(fx.C, ofA.id)), '403:ACCESS_DENIED');
     assert.equal(await code(svc.deleteTemplateDraft(fx.A, shared.id)), '403:ACCESS_DENIED');
@@ -295,11 +309,11 @@ describe('lists, views and deletion', () => {
 
   test('category changes cannot be requested by anyone; Meta always gets false', async () => {
     for (const who of [fx.S, fx.A]) {
-      const error = await svc.createTemplateDraft(who, draft({ allowCategoryChange: true }), { connection: CONNECTION }).catch((e: any) => e);
+      const error = await createDraft(who, draft({ allowCategoryChange: true }), { connection: CONNECTION }).catch((e: any) => e);
       assert.equal(error.code, 'VALIDATION_ERROR');
       assert.ok(error.errors.some((e: any) => e.field === 'allowCategoryChange'));
     }
-    const t = await svc.createTemplateDraft(fx.A, draft({ allowCategoryChange: false }), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft({ allowCategoryChange: false }), { connection: CONNECTION });
     assert.equal(await code(svc.updateTemplateDraft(fx.A, t.id, { allowCategoryChange: true })), '400:VALIDATION_ERROR');
     // Even a stored true (written outside the API) is never sent.
     await WhatsAppTemplate.collection.updateOne({ _id: new mongoose.Types.ObjectId(t.id) }, { $set: { allowCategoryChange: true } });
@@ -311,7 +325,7 @@ describe('lists, views and deletion', () => {
 
 describe('drafts', () => {
   test('an invalid definition is refused with every problem, and nothing is stored', async () => {
-    const error = await svc.createTemplateDraft(fx.A, draft({ name: 'Bad Name', body: 'Hi {{2}}' }), { connection: CONNECTION }).catch((e: any) => e);
+    const error = await createDraft(fx.A, draft({ name: 'Bad Name', body: 'Hi {{2}}' }), { connection: CONNECTION }).catch((e: any) => e);
     assert.equal(error.code, 'VALIDATION_ERROR');
     assert.ok(error.errors.some((e: any) => e.field === 'name'));
     assert.ok(error.errors.some((e: any) => e.field === 'body'));
@@ -319,17 +333,17 @@ describe('drafts', () => {
   });
 
   test('one name per language per account: a duplicate is refused, another language is not', async () => {
-    await svc.createTemplateDraft(fx.A, draft({ name: 'event_invite' }), { connection: CONNECTION });
-    assert.equal(await code(svc.createTemplateDraft(fx.B, draft({ name: 'event_invite' }), { connection: CONNECTION })), '409:TEMPLATE_NAME_TAKEN');
-    await svc.createTemplateDraft(fx.A, draft({ name: 'event_invite', language: 'hi' }), { connection: CONNECTION });
+    await createDraft(fx.A, draft({ name: 'event_invite' }), { connection: CONNECTION });
+    assert.equal(await code(createDraft(fx.B, draft({ name: 'event_invite' }), { connection: CONNECTION })), '409:TEMPLATE_NAME_TAKEN');
+    await createDraft(fx.A, draft({ name: 'event_invite', language: 'hi' }), { connection: CONNECTION });
   });
 
   test('without a WhatsApp Business Account configured, nothing can be created', async () => {
-    assert.equal(await code(svc.createTemplateDraft(fx.A, draft(), { connection: { ...CONNECTION, wabaId: undefined } })), '503:CONFIGURATION_ERROR');
+    assert.equal(await code(createDraft(fx.A, draft(), { connection: { ...CONNECTION, wabaId: undefined } })), '503:CONFIGURATION_ERROR');
   });
 
   test('a draft can be edited; a submitted template cannot', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft(), { connection: CONNECTION });
     const edited = await svc.updateTemplateDraft(fx.A, t.id, { displayName: 'Invitation v2', footer: 'With love' });
     assert.equal(edited.displayName, 'Invitation v2');
     assert.equal(edited.footer, 'With love');
@@ -343,7 +357,7 @@ describe('drafts', () => {
 
 describe('submission to Meta (mocked)', () => {
   test('success: the WABA receives the definition; Meta id and status are stored; not approved', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft({ headerText: 'You are invited' }), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft({ headerText: 'You are invited' }), { connection: CONNECTION });
     const { deps, calls } = metaMock();
     const result = await svc.submitTemplate(fx.A, t.id, deps);
 
@@ -360,7 +374,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('Approved only when Meta itself says APPROVED', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft(), { connection: CONNECTION });
     const { deps } = metaMock({ post: () => ({ data: { id: '777', status: 'APPROVED', category: 'UTILITY' } }) });
     const result = await svc.submitTemplate(fx.A, t.id, deps);
     assert.equal(result.template.localState, 'Approved');
@@ -368,7 +382,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('a stored definition that is no longer valid is never sent', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft(), { connection: CONNECTION });
     await WhatsAppTemplate.collection.updateOne({ _id: new mongoose.Types.ObjectId(t.id) }, { $set: { body: 'Hi {{2}}' } });
     const { deps, calls } = metaMock();
     assert.equal(await code(svc.submitTemplate(fx.A, t.id, deps)), '400:VALIDATION_ERROR');
@@ -377,7 +391,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test("Meta's rejection: SubmissionFailed with its reason, scrubbed; fix and submit again", async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft(), { connection: CONNECTION });
     const reject = metaMock({ post: () => { throw { response: { status: 400, data: { error: { code: 100, message: `Invalid parameter (token ${FAKE_TOKEN})`, error_data: { details: 'Body contains too many variables' } } } } }; } });
     const first = await svc.submitTemplate(fx.A, t.id, reject.deps);
     assert.equal(first.outcome, 'rejected');
@@ -394,7 +408,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('a credential failure is reported as such and can be retried', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft(), { connection: CONNECTION });
     const { deps } = metaMock({ post: () => { throw { response: { status: 401, data: { error: { code: 190, message: 'Error validating access token' } } } }; } });
     const result = await svc.submitTemplate(fx.A, t.id, deps);
     assert.equal(result.template.localState, 'SubmissionFailed');
@@ -402,7 +416,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('two submissions at once: Meta is called exactly once', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft(), { connection: CONNECTION });
     const { deps, calls } = metaMock({ delayMs: 150 });
     const outcomes = await Promise.allSettled([svc.submitTemplate(fx.A, t.id, deps), svc.submitTemplate(fx.A, t.id, deps), svc.submitTemplate(fx.S, t.id, deps)]);
     assert.equal(calls.post.length, 1);
@@ -415,7 +429,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('timeout, then Meta has it: adopted with its id - not created twice', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft({ name: 'timeout_found' }), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft({ name: 'timeout_found' }), { connection: CONNECTION });
     const { deps, calls } = metaMock({
       post: timeout,
       get: () => ({ data: { data: [{ id: '5551', name: 'timeout_found', language: 'en', status: 'PENDING', category: 'MARKETING' }] } }),
@@ -429,7 +443,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('timeout, then Meta does not have it: safe to submit again', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft({ name: 'timeout_absent' }), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft({ name: 'timeout_absent' }), { connection: CONNECTION });
     const first = await svc.submitTemplate(fx.A, t.id, metaMock({ post: timeout, get: () => ({ data: { data: [] } }) }).deps);
     assert.equal(first.template.localState, 'SubmissionFailed');
     assert.match(first.template.rejectionReason, /was not created/);
@@ -441,7 +455,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('a match in another language is not this template', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft({ name: 'lang_check' }), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft({ name: 'lang_check' }), { connection: CONNECTION });
     const result = await svc.submitTemplate(fx.A, t.id, metaMock({
       post: timeout,
       get: () => ({ data: { data: [{ id: '1', name: 'lang_check', language: 'hi', status: 'APPROVED', category: 'MARKETING' }] } }),
@@ -451,7 +465,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('timeout and the lookup fails too: Unknown, blocked from resubmitting until checked', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft({ name: 'double_failure' }), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft({ name: 'double_failure' }), { connection: CONNECTION });
     const down = metaMock({ post: timeout, get: () => { throw { code: 'ETIMEDOUT' }; } });
     const result = await svc.submitTemplate(fx.A, t.id, down.deps);
     assert.equal(result.outcome, 'uncertain');
@@ -470,7 +484,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('a Submitting claim left by a stopped process is reconciled only once it is stale', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft({ name: 'stale_claim' }), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft({ name: 'stale_claim' }), { connection: CONNECTION });
     const startedAt = new Date('2026-10-12T10:00:00Z');
     await WhatsAppTemplate.updateOne({ _id: t.id }, { $set: { localState: 'Submitting', 'submission.attemptId': 'lost', 'submission.startedAt': startedAt } });
     const { deps } = metaMock();
@@ -486,7 +500,7 @@ describe('submission to Meta (mocked)', () => {
 
   test('a failed template that turns up at Meta later is adopted, not stuck', async () => {
     // The timed-out request completed at Meta after the first lookup found nothing.
-    const t = await svc.createTemplateDraft(fx.A, draft({ name: 'late_arrival' }), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft({ name: 'late_arrival' }), { connection: CONNECTION });
     await svc.submitTemplate(fx.A, t.id, metaMock({ post: timeout, get: () => ({ data: { data: [] } }) }).deps);
     assert.equal((await svc.getTemplate(fx.A, t.id)).localState, 'SubmissionFailed');
 
@@ -503,7 +517,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('a slow reconcile never overwrites a submission that started meanwhile', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft({ name: 'race_check' }), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft({ name: 'race_check' }), { connection: CONNECTION });
     await svc.submitTemplate(fx.A, t.id, metaMock({ post: timeout, get: () => ({ data: { data: [] } }) }).deps);
 
     const slowLookup = metaMock({ get: async () => { await new Promise((r) => setTimeout(r, 150)); return { data: { data: [] } }; } });
@@ -522,7 +536,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('nothing to reconcile for a template with a clear state', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft(), { connection: CONNECTION });
     assert.equal(await code(svc.reconcileTemplate(fx.A, t.id, metaMock().deps)), '409:NOTHING_TO_RECONCILE');
   });
 
@@ -533,7 +547,7 @@ describe('submission to Meta (mocked)', () => {
       createdBy: fx.adminA._id, ownerAdminId: fx.adminA._id, localState: 'Pending', variables: [], history: [],
       submission: { attemptId: null, startedAt: new Date(now.getTime() - 10 * 60 * 1000), attempts: 1 },
     })));
-    const t = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft(), { connection: CONNECTION });
     const { deps, calls } = metaMock();
     assert.equal(await code(svc.submitTemplate(fx.A, t.id, deps)), '429:RATE_LIMITED');
     assert.equal(calls.post.length, 0);
@@ -541,7 +555,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('a template from another WhatsApp Business Account is not submitted to this one', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft(), { connection: CONNECTION });
     const other = { ...CONNECTION, wabaId: '999999999999999' };
     let called = false;
     const deps = { connection: other, meta: { connection: other, post: async () => { called = true; return { data: { id: '1' } }; } } };
@@ -550,7 +564,7 @@ describe('submission to Meta (mocked)', () => {
   });
 
   test('no token anywhere in stored templates or audit entries', async () => {
-    const t = await svc.createTemplateDraft(fx.A, draft(), { connection: CONNECTION });
+    const t = await createDraft(fx.A, draft(), { connection: CONNECTION });
     await svc.submitTemplate(fx.A, t.id, metaMock({ post: () => { throw { response: { status: 400, data: { error: { code: 100, message: `bad ${FAKE_TOKEN}` } } } }; } }).deps);
     const stored = JSON.stringify([await WhatsAppTemplate.find({}).lean(), await AuditLog.find({}).lean()]);
     assert.equal(stored.includes(FAKE_TOKEN), false);

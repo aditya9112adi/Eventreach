@@ -1,3 +1,5 @@
+import { WHATSAPP_TEMPLATE_VARIABLE_SOURCE_LABELS } from '@eventreach/shared';
+
 /**
  * WhatsApp template send from the Campaign Composer: the decisions around it,
  * kept out of the component so they can be tested.
@@ -71,7 +73,7 @@ export interface TemplatePreview {
   templateStatus: string | null;
   /** The approved body as Meta holds it, or null when it could not be read. */
   bodyText: string | null;
-  bodySource: 'meta' | 'unavailable';
+  bodySource: 'meta' | 'template' | 'unavailable';
   placeholderMismatch: boolean;
   /** What the approved template expects above the body, or null for none. */
   header: TemplateHeaderRequirement | null;
@@ -95,7 +97,8 @@ export const VARIABLE_LABELS: Record<string, string> = {
   eventVenue: 'Venue',
 };
 
-export const variableLabel = (field: string): string => VARIABLE_LABELS[field] ?? field;
+export const variableLabel = (field: string): string =>
+  VARIABLE_LABELS[field] ?? (WHATSAPP_TEMPLATE_VARIABLE_SOURCE_LABELS as Record<string, string>)[field] ?? field;
 
 /**
  * Substitutes {{1}}, {{2}}, … in the approved body with the resolved values.

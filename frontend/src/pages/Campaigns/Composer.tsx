@@ -20,6 +20,18 @@ import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
 import { GuestMultiSelect } from '../../components/ui/GuestMultiSelect';
 import {
+  NO_EVENT_TEMPLATES_TEXT,
+  SELECT_EVENT_FOR_TEMPLATES_TEXT,
+  templatePlaceholder,
+  describeEventTemplate,
+  eventTemplateKey,
+  reconcileTemplateKey,
+  readEventTemplates,
+  templateRequestFields,
+  eventTemplateIdOf,
+  type EventTemplateOption,
+} from '../../utils/eventTemplates';
+import {
   canSendTemplate,
   describeSendError,
   headerUploadPrompt,
@@ -33,43 +45,6 @@ import {
   type TemplatePreview,
 } from '../../utils/templateTest';
 
-/**
- * The approved WhatsApp templates this page can send. The backend keeps the
- * same allowlist in EVENT_TEMPLATES and is what actually decides — this is only
- * what the user sees, so a name added here alone would be rejected on send.
- */
-const TEMPLATES = [
-  {
-    name: 'event_reminder',
-    label: 'Event reminder',
-    description: 'Approved utility template. Fills guest name, event, date, time and venue.',
-  },
-  {
-    name: 'event_document',
-    label: 'Event document',
-    description:
-      'Approved utility template with a fixed message and a PDF attached. Its wording is set by the approved template and cannot be edited here.',
-  },
-  {
-    name: 'event_image',
-    label: 'Event image',
-    description:
-      'Approved utility template with a fixed message and an image attached. Its wording is set by the approved template and cannot be edited here.',
-  },
-  {
-    name: 'event_video',
-    label: 'Event video',
-    description:
-      'Approved utility template with a fixed message and an MP4 video attached. Its wording is set by the approved template and cannot be edited here.',
-  },
-  {
-    name: 'pranjali_ankit_wedding_invite',
-    label: 'Pranjali & Ankit wedding invite',
-    description:
-      'Approved marketing template, sent exactly as approved. Nothing is filled in or personalised; its wording is set by the approved template and cannot be edited here.',
-  },
-];
-
 const Composer = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -82,7 +57,14 @@ const Composer = () => {
   // The page sends one approved WhatsApp template to the selected guests -
   // real messages, each rendered by Meta from that guest's own values. (The
   // free-text "Custom Message" option has been removed.)
-  const [templateName, setTemplateName] = useState(TEMPLATES[0].name);
+  // The chosen template: an event template's key (utils/eventTemplates), or '' for none. Only the
+  // selected event's own approved templates are offered; there are no general templates.
+  const [templateName, setTemplateName] = useState('');
+  // The approved templates tied to the selected event, from the server. Empty with no event selected.
+  const [eventTemplates, setEventTemplates] = useState<EventTemplateOption[]>([]);
+  const [eventTemplatesState, setEventTemplatesState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  // Bumped by "Try again" to ask for the list once more.
+  const [eventTemplatesRefresh, setEventTemplatesRefresh] = useState(0);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
   const [isContactsLoading, setIsContactsLoading] = useState(false);
@@ -125,6 +107,41 @@ const Composer = () => {
   }, [selectedEventId]);
 
 
+
+  /**
+   * The selected event's own templates. They are cleared the moment the event
+   * changes, so another event's template is never on offer - or selected - even
+   * for an instant, and a late answer for a previous event is ignored.
+   */
+  useEffect(() => {
+    setEventTemplates([]);
+    if (!selectedEventId) {
+      setEventTemplatesState('idle');
+      return;
+    }
+    let cancelled = false;
+    setEventTemplatesState('loading');
+    api
+      .get('/whatsapp/event-templates', { params: { eventId: selectedEventId } })
+      .then((response) => {
+        if (cancelled) return;
+        setEventTemplates(readEventTemplates(response.data));
+        setEventTemplatesState('ready');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setEventTemplates([]);
+        setEventTemplatesState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEventId, eventTemplatesRefresh]);
+
+  // A template that is not the selected event's is cleared, never carried over to another event.
+  useEffect(() => {
+    setTemplateName((current) => reconcileTemplateKey(current, eventTemplates, ''));
+  }, [eventTemplates, selectedEventId]);
 
   /**
    * Guests of the selected event, for the template send.
@@ -190,7 +207,7 @@ const Composer = () => {
     setSendSummary(null);
     setTemplateError('');
 
-    if (!selectedEventId || !previewContactId) {
+    if (!selectedEventId || !previewContactId || !templateName) {
       setTemplatePreview(null);
       setPreviewError('');
       setIsPreviewLoading(false);
@@ -203,7 +220,7 @@ const Composer = () => {
 
     api
       .get('/whatsapp/event-template-preview', {
-        params: { eventId: selectedEventId, contactId: previewContactId, templateName },
+        params: { eventId: selectedEventId, contactId: previewContactId, ...templateRequestFields(templateName) },
       })
       .then((response) => {
         if (previewRequestRef.current !== requestId) return; // a later selection won
@@ -290,7 +307,7 @@ const Composer = () => {
       const response = await api.post('/whatsapp/event-template', {
         eventId: selectedEventId,
         contactIds: selectedContactIds,
-        templateName,
+        ...templateRequestFields(templateName),
         ...(templateAttachment ? { attachment: templateAttachment } : {}),
       });
       const summary = summarizeSendResult(response.data);
@@ -383,17 +400,33 @@ const Composer = () => {
                   <select
                     value={templateName}
                     onChange={(e) => setTemplateName(e.target.value)}
-                    className="w-full max-w-md rounded-md border border-border bg-background text-foreground p-2.5 text-sm focus:ring-2 focus:ring-white/20 outline-none"
+                    disabled={!selectedEventId || eventTemplates.length === 0 || isSendingTemplate}
+                    className="w-full max-w-md rounded-md border border-border bg-background text-foreground p-2.5 text-sm focus:ring-2 focus:ring-white/20 outline-none disabled:opacity-60"
                   >
-                    {TEMPLATES.map((template) => (
-                      <option key={template.name} value={template.name}>
-                        {template.label} ({template.name})
-                      </option>
-                    ))}
+                    <option value="">{templatePlaceholder(selectedEventId, eventTemplatesState, eventTemplates.length)}</option>
+                    {selectedEventId &&
+                      eventTemplates.map((template) => (
+                        <option key={template.id} value={eventTemplateKey(template.id)}>
+                          {template.displayName} ({template.name})
+                        </option>
+                      ))}
                   </select>
                   <p className="text-xs text-foreground/50 mt-2">
-                    {TEMPLATES.find((template) => template.name === templateName)?.description}
+                    {(() => {
+                      const chosen = eventTemplates.find((t) => t.id === eventTemplateIdOf(templateName));
+                      return chosen ? describeEventTemplate(chosen) : '';
+                    })()}
                   </p>
+                  {!selectedEventId && <p className="text-xs text-foreground/50 mt-1">{SELECT_EVENT_FOR_TEMPLATES_TEXT}</p>}
+                  {selectedEventId && eventTemplatesState === 'ready' && eventTemplates.length === 0 && (
+                    <p className="text-xs text-foreground/50 mt-1">{NO_EVENT_TEMPLATES_TEXT}</p>
+                  )}
+                  {eventTemplatesState === 'error' && (
+                    <p className="text-xs text-destructive mt-1">
+                      This event's templates could not be loaded.{' '}
+                      <button type="button" className="underline" onClick={() => setEventTemplatesRefresh((n) => n + 1)}>Try again</button>
+                    </p>
+                  )}
                 </div>
 
                 <div>

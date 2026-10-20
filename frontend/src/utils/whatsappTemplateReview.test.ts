@@ -33,7 +33,7 @@ import {
 const HASH = 'b'.repeat(64);
 
 const form = (buttons: ButtonRow[] = []): TemplateForm => ({
-  ...EMPTY_FORM, displayName: 'Invite', name: 'invite', body: 'You are invited. Please reply.', buttons,
+  ...EMPTY_FORM, eventId: 'EVT-0000017', displayName: 'Invite', name: 'invite', body: 'You are invited. Please reply.', buttons,
 });
 
 const row = (over: Partial<ButtonRow>): ButtonRow => ({ ...emptyButtonRow('QUICK_REPLY'), ...over });

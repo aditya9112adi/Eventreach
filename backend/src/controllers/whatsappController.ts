@@ -37,6 +37,9 @@ import { normalizeIndianPhone } from '../utils/indianPhone';
 import { assertSameSender, resolveSendingSender, sendTargetFor } from '../services/senderResolution';
 import type { SendTarget } from '../services/WhatsAppService';
 import { assertTemplateUsableFromSender } from '../services/senderTemplateCheck';
+import { assertTemplateAccount, listApprovedEventTemplates, loadEventTemplate, type ScopedTemplate } from '../services/eventScopedTemplates';
+import { resolveTemplateVariables } from '../services/templateVariables';
+import { readCatalogConfig } from '../services/whatsappTemplateCatalog';
 
 /**
  * Named request fields for each known template, in {{1}}, {{2}}, … order.
@@ -323,6 +326,9 @@ const sendEventTemplateBody = z.object({
   contactIds: z.array(z.string()).optional(),
   contactId: z.string().optional(),
   templateName: z.string().optional(),
+  // An event-specific template managed under WhatsApp Templates. Sent instead of
+  // templateName, never with it.
+  templateId: z.string().optional(),
   attachment: templateAttachmentBody,
 });
 
@@ -338,6 +344,8 @@ export interface EventTemplateContext {
    */
   /** The resolved sender's phone number id and, for a connected number, its own token. */
   sendTarget?: SendTarget;
+  /** Set when the send is an event-specific template (templateId) rather than one of the built-in ones. */
+  scopedTemplate?: ScopedTemplate;
 }
 
 export interface ResolvedEventTemplate extends EventTemplateContext {
@@ -392,10 +400,14 @@ export const readRecipientIds = (body: { contactIds?: unknown; contactId?: unkno
  * not use this event is refused outright rather than per recipient.
  */
 export const resolveEventContext = async (
-  input: { eventId?: unknown; templateName?: unknown },
+  input: { eventId?: unknown; templateName?: unknown; templateId?: unknown },
   user: any
 ): Promise<EventTemplateContext> => {
-  const { name, spec } = resolveEventTemplate(input.templateName);
+  const wantsScoped = input.templateId !== undefined && input.templateId !== null && input.templateId !== '';
+  if (wantsScoped && input.templateName !== undefined && input.templateName !== null && input.templateName !== '') {
+    throw new EventTemplateError('VALIDATION_ERROR', 'Choose a template by name or by id, not both.', 400, 'templateId');
+  }
+  const builtIn = wantsScoped ? null : resolveEventTemplate(input.templateName);
   const eventId = requireObjectId(input.eventId, 'eventId', 'An event');
 
   if (!(await isEventAuthorized(user, eventId))) {
@@ -417,11 +429,17 @@ export const resolveEventContext = async (
     );
   }
 
+  if (!builtIn) {
+    // Checked against THIS event, from the database, before anything is sent.
+    const scopedTemplate = await loadEventTemplate(event, input.templateId);
+    return { event, templateName: scopedTemplate.name, languageCode: scopedTemplate.languageCode, scopedTemplate };
+  }
+
   return {
     event,
-    templateName: name,
-    languageCode: spec.languageCode,
-    headerFormat: spec.headerFormat,
+    templateName: builtIn.name,
+    languageCode: builtIn.spec.languageCode,
+    headerFormat: builtIn.spec.headerFormat,
   };
 };
 
@@ -453,13 +471,19 @@ export const resolveGuestVariables = async (
   return {
     ...context,
     contact,
-    variables: buildEventTemplateVariables(context.templateName, context.event, contact),
+    variables: context.scopedTemplate
+      ? resolveTemplateVariables(context.scopedTemplate.mapping, context.event, contact).map((v) => ({
+          index: v.position,
+          field: v.source,
+          value: v.value,
+        }))
+      : buildEventTemplateVariables(context.templateName, context.event, contact),
   };
 };
 
 /** The single-guest resolution the preview endpoint uses. */
 export const resolveEventTemplateRequest = async (
-  input: { eventId?: unknown; contactId?: unknown; templateName?: unknown },
+  input: { eventId?: unknown; contactId?: unknown; templateName?: unknown; templateId?: unknown },
   user: any
 ): Promise<ResolvedEventTemplate> => {
   const context = await resolveEventContext(input, user);
@@ -495,20 +519,25 @@ export const previewEventTemplate = async (req: Request, res: Response) => {
         eventId: req.query.eventId,
         contactId: req.query.contactId,
         templateName: req.query.templateName,
+        templateId: req.query.templateId,
       },
       (req as any).user
     );
 
-    const definition = await fetchTemplateDefinition(context.templateName, context.languageCode);
+    // An event-specific template's wording is the one stored (and approved) in
+    // EventReach; a built-in one is read from Meta.
+    const definition = context.scopedTemplate
+      ? null
+      : await fetchTemplateDefinition(context.templateName, context.languageCode);
     const phone = normalizeIndianPhone(context.contact.phoneNumber);
 
     res.json({
       success: true,
       templateName: context.templateName,
       languageCode: context.languageCode,
-      templateStatus: definition?.status ?? null,
-      bodyText: definition?.bodyText ?? null,
-      bodySource: definition ? 'meta' : 'unavailable',
+      templateStatus: context.scopedTemplate ? 'APPROVED' : definition?.status ?? null,
+      bodyText: context.scopedTemplate ? context.scopedTemplate.body : definition?.bodyText ?? null,
+      bodySource: context.scopedTemplate ? 'template' : definition ? 'meta' : 'unavailable',
       // A body taking a different number of placeholders than this flow fills
       // would be rejected by Meta (132000) — say so before anything is sent.
       placeholderMismatch:
@@ -619,6 +648,7 @@ export const buildEventTemplateHandler = (
        * environment sender. Nothing in the request can choose it.
        */
       const sender = await resolveSendingSender(context.event);
+      if (context.scopedTemplate) assertTemplateAccount(context.scopedTemplate, sender as any, readCatalogConfig().wabaId);
       const target = await sendTargetFor(sender);
       context.sendTarget = target;
       // An assigned sender sends from its own phone number id - with its own
@@ -637,7 +667,9 @@ export const buildEventTemplateHandler = (
           accessToken: target.accessToken,
           templateName: context.templateName,
           languageCode: context.languageCode,
-          expectedPlaceholders: resolveEventTemplate(context.templateName).spec.fields.length,
+          expectedPlaceholders: context.scopedTemplate
+            ? context.scopedTemplate.mapping.length
+            : resolveEventTemplate(context.templateName).spec.fields.length,
           headerFormat: context.headerFormat,
         });
       }
@@ -671,6 +703,7 @@ export const buildEventTemplateHandler = (
             String(context.event._id),
             String(guest.contact._id),
             context.templateName,
+            ...(context.scopedTemplate ? [context.scopedTemplate.id] : []),
           ].join(':');
 
           const last = recentSends.get(dedupeKey);
@@ -751,6 +784,7 @@ export const buildEventTemplateHandler = (
             metadata: {
               eventId: String(context.event._id),
               templateName: context.templateName,
+              ...(context.scopedTemplate ? { templateId: context.scopedTemplate.id } : {}),
               languageCode: context.languageCode,
               messageId: result.messageId,
               recipientCount: contactIds.length,
@@ -868,3 +902,29 @@ export const buildEventTemplateHandler = (
   };
 
 export const sendEventTemplate = buildEventTemplateHandler();
+
+/**
+ * GET /api/whatsapp/event-templates?eventId=<event _id>
+ *
+ * The approved templates tied to ONE event, for the Composer. The event must be
+ * one the caller may access (the same check as sending). Nothing is listed
+ * without an event, and a template tied to another event, or one that is not
+ * approved, is never in the answer. Sending re-checks all of this.
+ */
+export const listEventTemplates = async (req: Request, res: Response) => {
+  try {
+    const eventId = requireObjectId(req.query.eventId, 'eventId', 'An event');
+    if (!(await isEventAuthorized((req as any).user, eventId))) {
+      throw new EventTemplateError('ACCESS_DENIED', 'Access denied. You do not have access to this event.', 403);
+    }
+    const event = await Event.findById(eventId).select('_id eventId eventName').lean();
+    if (!event) throw new EventTemplateError('EVENT_NOT_FOUND', 'Event not found.', 404, 'eventId');
+    res.json({
+      success: true,
+      event: { _id: String(event._id), eventId: (event as any).eventId ?? null },
+      templates: await listApprovedEventTemplates(event as any),
+    });
+  } catch (error) {
+    errorResponse(res, error, 'WhatsApp event templates');
+  }
+};
