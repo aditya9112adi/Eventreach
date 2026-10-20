@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { motion } from 'framer-motion';
 import { useSearchParams, Link } from 'react-router-dom';
-import { Search, Plus, Phone, CheckCircle2, XCircle, AlertTriangle, Users, Edit3, X, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Search, Plus, Phone, CheckCircle2, XCircle, AlertTriangle, Users, Edit3, X, ChevronRight, ChevronLeft, UserPlus, UserMinus } from 'lucide-react';
 import api from '../../services/api';
 import type { Contact, Event } from '@eventreach/shared';
 import {
@@ -32,6 +32,16 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { EventSearch } from '../../components/ui/EventSearch';
+import { AssignContactsDialog } from '../../components/ui/AssignContactsDialog';
+import {
+  contactControls,
+  contactsEndpoint,
+  contactsLoadMessage,
+  emptyContactsText,
+  eventKindLabel,
+  orderEventsWithSubEvents,
+  readContactsPayload,
+} from '../../utils/contactsEventPicker';
 
 const contactSchema = z.object({
   fullName: z.string().min(1, 'Name is required').max(50, 'Full name must be at most 50 characters'),
@@ -109,7 +119,19 @@ const ContactList = () => {
   // click cannot send a second deletion.
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Why the contact list could not be shown, if it could not.
+  const [loadError, setLoadError] = useState('');
+  // A Sub-Event's own controls: the contact picker, and taking one contact off its list.
+  const [isAssignOpen, setIsAssignOpen] = useState(false);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [isRemoving, setIsRemoving] = useState(false);
+
   const activeEvent = events.find(e => e._id === activeEventId) || null;
+  // Main Events with their Sub-Events under them, for the selector.
+  const orderedEvents = useMemo(() => orderEventsWithSubEvents(events), [events]);
+  // What the selection allows. A Sub-Event owns no guests: it can only be given existing
+  // contacts, and "remove" takes a contact off its list without deleting the guest.
+  const controls = contactControls(activeEvent, canDelete);
 
   // Derive whether the currently selected event is completed
   const isEventCompleted = activeEvent?.eventStatus === 'Completed';
@@ -128,7 +150,8 @@ const ContactList = () => {
   useEffect(() => {
     const fetchEvents = async () => {
       try {
-        const response = await api.get('/events');
+        // Sub-Events too, each naming its Main Event; the server lists only events this user may see.
+        const response = await api.get('/events', { params: { includeSubEvents: 'true' } });
         setEvents(response.data);
       } catch (error) {
         console.error('Failed to fetch events', error);
@@ -150,8 +173,9 @@ const ContactList = () => {
 
     const fetchContacts = async () => {
       setIsLoading(true);
+      setLoadError('');
       try {
-        const endpoint = activeEventId ? `/contacts/event/${activeEventId}` : '/contacts';
+        const endpoint = contactsEndpoint(activeEventId);
         // Only this page is fetched. Passing page/limit opts into the
         // paginated response shape; callers that omit them still get an array.
         const response = await api.get(endpoint, {
@@ -163,17 +187,18 @@ const ContactList = () => {
         });
         if (cancelled) return;
 
-        const payload = response.data;
-        if (Array.isArray(payload)) {
-          // Defensive: an older backend would still return a bare array.
-          setContacts(payload);
-          setTotalContacts(payload.length);
-        } else {
-          setContacts(payload.data || []);
-          setTotalContacts(payload.pagination?.total ?? 0);
-        }
+        // The paged shape, or (an older backend) a bare array.
+        const { contacts: rows, total } = readContactsPayload(response.data);
+        setContacts(rows);
+        setTotalContacts(total);
       } catch (error) {
-        if (!cancelled) console.error('Failed to fetch contacts', error);
+        if (!cancelled) {
+          console.error('Failed to fetch contacts', error);
+          // Never leave another event's guests on screen under this one.
+          setContacts([]);
+          setTotalContacts(0);
+          setLoadError(contactsLoadMessage(error));
+        }
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -190,6 +215,8 @@ const ContactList = () => {
   const saveInFlight = useRef(false);
 
   const onAddContact = async (data: ContactForm) => {
+    // A Sub-Event takes no new guests (the server refuses): its contacts are picked from existing ones.
+    if (controls.kind === 'sub') return;
     if (!activeEvent || saveInFlight.current) return;
     saveInFlight.current = true;
     try {
@@ -286,6 +313,24 @@ const ContactList = () => {
     }
   };
 
+  // Takes the contact off THIS sub-event's list only. The guest, its main event and every other
+  // sub-event are untouched, so this is never the guest-deletion call above.
+  const confirmRemoveFromSubEvent = async () => {
+    if (!confirmRemoveId || !activeEvent || controls.kind !== 'sub' || isRemoving) return;
+    setIsRemoving(true);
+    try {
+      await api.delete(`/events/${activeEvent._id}/members/${confirmRemoveId}`);
+      setRefreshToken((t) => t + 1);
+      showToast('success', 'Removed from this sub-event.');
+      setConfirmRemoveId(null);
+    } catch (err: any) {
+      // The dialog stays open so the user can retry or cancel.
+      showToast('error', err?.response?.data?.error || 'Could not remove the contact from this sub-event.');
+    } finally {
+      setIsRemoving(false);
+    }
+  };
+
   const openEditModal = (contact: Contact) => {
     setEditingContact(contact);
     setValue('fullName', contact.fullName);
@@ -321,6 +366,12 @@ const ContactList = () => {
     setSelectedIds(new Set());
   }, [activeEventId, currentPage, rowsPerPage, debouncedSearch]);
 
+  // Switching events closes whatever was open for the previous one.
+  useEffect(() => {
+    setIsAssignOpen(false);
+    setConfirmRemoveId(null);
+  }, [activeEventId]);
+
   const pageIds = useMemo(() => paginatedContacts.map((c) => c._id), [paginatedContacts]);
   const { allSelected: allPageSelected, someSelected: somePageSelected } = useMemo(
     () => getPageSelectionState(selectedIds, pageIds),
@@ -331,6 +382,7 @@ const ContactList = () => {
 
   // Looked up so the confirmation names the guest rather than saying "this contact".
   const contactToDelete = confirmDeleteId ? contacts.find((c) => c._id === confirmDeleteId) ?? null : null;
+  const contactToRemove = confirmRemoveId ? contacts.find((c) => c._id === confirmRemoveId) ?? null : null;
 
   const getStatusIcon = (status: string, reason?: string) => {
     if (status === 'Valid') return <span title="Valid Number"><CheckCircle2 className="w-5 h-5 text-emerald-500" /></span>;
@@ -347,6 +399,9 @@ const ContactList = () => {
             <p className="text-xs text-foreground/50 mt-1 flex items-center gap-1">
               Showing:
               <span className="text-accent font-semibold">{activeEvent.eventName}</span>
+              <span className="ml-1 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-foreground/60">
+                {eventKindLabel(activeEvent)}
+              </span>
             </p>
           )}
         </div>
@@ -355,7 +410,8 @@ const ContactList = () => {
           {/* Event Search dropdown */}
           <div className="w-full sm:w-72 relative z-50">
             <EventSearch
-              events={events}
+              events={orderedEvents}
+              groupSubEvents
               value={activeEventId}
               onChange={(id) => setActiveEventId(id)}
               placeholder="All Events (Search...)"
@@ -363,6 +419,13 @@ const ContactList = () => {
             />
           </div>
           
+          {controls.assignContacts ? (
+            <Button disabled={isEventCompleted} onClick={() => setIsAssignOpen(true)}>
+              <UserPlus className="w-4 h-4 mr-2" />
+              Add Contacts
+            </Button>
+          ) : (
+          <>
           {isEventCompleted ? (
             <Button variant="secondary" disabled>
               Import from File
@@ -393,6 +456,8 @@ const ContactList = () => {
             <Plus className="w-4 h-4 mr-2" />
             Add Guest
           </Button>
+          </>
+          )}
         </div>
       </div>
 
@@ -423,7 +488,7 @@ const ContactList = () => {
           </div>
         </div>
 
-        {canDelete && selectedIds.size > 0 && (
+        {controls.selectable && selectedIds.size > 0 && (
           <div className="px-4 pt-4">
             <BulkDeleteBar count={selectedIds.size} noun="guest" onDelete={() => setConfirmBulk(true)} />
           </div>
@@ -433,10 +498,25 @@ const ContactList = () => {
           <div className="flex-1 flex items-center justify-center p-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
           </div>
+        ) : loadError ? (
+          <div role="alert" className="flex-1 flex flex-col items-center justify-center p-8 text-center gap-3">
+            <AlertTriangle className="w-10 h-10 text-destructive/70" />
+            <p className="font-semibold text-destructive">The contacts could not be loaded</p>
+            <p className="text-sm text-foreground/60 max-w-md">{loadError}</p>
+            <Button variant="secondary" onClick={() => setRefreshToken((t) => t + 1)}>Try again</Button>
+          </div>
         ) : filteredContacts.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-foreground/50">
             <Users className="w-12 h-12 text-foreground/20 mb-4" />
-            <p>No guests found for this event.</p>
+            <p>{emptyContactsText(controls.kind, debouncedSearch)}</p>
+            {controls.kind === 'sub' ? (
+              !debouncedSearch && (
+                <Button variant="secondary" className="mt-4" disabled={isEventCompleted} onClick={() => setIsAssignOpen(true)}>
+                  <UserPlus className="w-4 h-4 mr-2" />
+                  Add Contacts
+                </Button>
+              )
+            ) : (
             <Button
               variant="secondary"
               className="mt-4"
@@ -450,13 +530,14 @@ const ContactList = () => {
             >
               Add First Guest
             </Button>
+            )}
           </div>
         ) : (
           <div className="table-scroll flex-1">
             <table className="w-full text-left border-collapse min-w-[1000px]">
               <thead>
                 <tr className="bg-black/5 dark:bg-white/5 text-foreground/60 text-xs uppercase tracking-wider font-medium border-b border-border">
-                  {canDelete && (
+                  {controls.selectable && (
                     <th className="py-3 px-4 w-10">
                       <SelectAllCheckbox
                         checked={allPageSelected}
@@ -490,7 +571,7 @@ const ContactList = () => {
                     }}
                     className="hover:bg-surfaceHover transition-colors group"
                   >
-                    {canDelete && (
+                    {controls.selectable && (
                       <td className="py-3 px-4">
                         <RowSelectCheckbox
                           checked={selectedIds.has(contact._id)}
@@ -528,6 +609,17 @@ const ContactList = () => {
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center space-x-1 transition-opacity">
+                        {controls.rowAction === 'remove-from-sub-event' ? (
+                          <button
+                            onClick={() => setConfirmRemoveId(contact._id)}
+                            className="p-1.5 text-foreground/40 hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
+                            title="Remove from this sub-event"
+                            aria-label={`Remove ${contact.fullName} from this sub-event`}
+                          >
+                            <UserMinus className="w-4 h-4" />
+                          </button>
+                        ) : (
+                        <>
                         <button
                           onClick={() => openEditModal(contact)}
                           className="p-1.5 text-foreground/40 hover:text-accent hover:bg-accent/10 rounded transition-colors"
@@ -541,6 +633,8 @@ const ContactList = () => {
                             title="Delete Guest"
                             label={`Delete guest ${contact.fullName}`}
                           />
+                        )}
+                        </>
                         )}
                       </div>
                     </td>
@@ -564,7 +658,7 @@ const ContactList = () => {
       </div>
 
       {/* Add / Edit Contact Modal */}
-      {(isAddModalOpen || editingContact) && ReactDOM.createPortal(
+      {controls.guestManagement && (isAddModalOpen || editingContact) && ReactDOM.createPortal(
         <div className="fixed top-0 left-0 w-screen h-screen z-50 flex items-center justify-center p-4 bg-background/40 backdrop-blur-md animate-fade-in">
           <div className="glass-panel rounded-3xl w-full max-w-md overflow-hidden animate-spring-up shadow-glass-lg">
             <div className="p-6 border-b border-white/10 flex justify-between items-center">
@@ -727,8 +821,34 @@ const ContactList = () => {
             onConfirm={confirmBulkDelete}
             onCancel={() => setConfirmBulk(false)}
           />
+          <ConfirmDeleteDialog
+            open={Boolean(confirmRemoveId) && controls.kind === 'sub'}
+            title="Remove From Sub-Event?"
+            message={
+              <>
+                Remove{' '}
+                {contactToRemove ? <span className="font-semibold text-foreground">{contactToRemove.fullName}</span> : 'this contact'}
+                {' '}from {activeEvent?.eventName}? The contact is not deleted and stays on the main event and any other sub-event.
+              </>
+            }
+            confirmLabel="Remove"
+            busyLabel="Removing…"
+            isDeleting={isRemoving}
+            onConfirm={confirmRemoveFromSubEvent}
+            onCancel={() => setConfirmRemoveId(null)}
+          />
         </>,
         document.body
+      )}
+
+      {/* Picks existing contacts for the selected Sub-Event; the server authorizes and de-duplicates every one. */}
+      {activeEvent && controls.assignContacts && (
+        <AssignContactsDialog
+          subEvent={activeEvent}
+          open={isAssignOpen}
+          onClose={() => setIsAssignOpen(false)}
+          onAdded={() => setRefreshToken((t) => t + 1)}
+        />
       )}
     </div>
   );

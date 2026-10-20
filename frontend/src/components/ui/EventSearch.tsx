@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Search, ChevronDown, X } from 'lucide-react';
 import type { Event } from '@eventreach/shared';
 import { formatEventType } from '../../utils/eventType';
+import { filterEventOptions } from '../../utils/contactsEventPicker';
 
 interface EventSearchProps {
   events: Event[];
@@ -19,24 +20,24 @@ interface EventSearchProps {
    * list is never mistaken for "there are no events".
    */
   emptyText?: string;
+  /**
+   * Show each Sub-Event indented under its Main Event, with a "Sub-event" / "Main event" tag.
+   * The list is shown in the order given (the page orders it, see contactsEventPicker.ts).
+   * Off, the selector looks as it always has.
+   */
+  groupSubEvents?: boolean;
 }
 
-export const EventSearch = ({ events, value, onChange, placeholder = 'Search events...', allowClear = true, onOpen, emptyText = 'No events found' }: EventSearchProps) => {
+export const EventSearch = ({ events, value, onChange, placeholder = 'Search events...', allowClear = true, onOpen, emptyText = 'No events found', groupSubEvents = false }: EventSearchProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   const selectedEvent = events.find(e => e._id === value);
 
-  const q = searchTerm.toLowerCase();
-  const filteredEvents = events.filter(e =>
-    e.eventName.toLowerCase().includes(q) ||
-    e.eventType?.toLowerCase().includes(q) ||
-    e.eventId?.toLowerCase().includes(q) ||
-    // A Sub-Event (listed only where a page asks for them) is found by its
-    // Main Event's name too.
-    e.parentEvent?.eventName?.toLowerCase().includes(q)
-  ).slice(0, 50);
+  // Name, type, Event ID - and a Sub-Event (listed only where a page asks for them) by its
+  // Main Event's name too. The rules live in contactsEventPicker.ts, where they are tested.
+  const filteredEvents = filterEventOptions(events, searchTerm, groupSubEvents ? 100 : 50);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -133,13 +134,20 @@ export const EventSearch = ({ events, value, onChange, placeholder = 'Search eve
                     key={evt._id}
                     className={`px-4 py-3 cursor-pointer hover:bg-surfaceHover transition-colors flex items-start justify-between gap-4 ${
                       value === evt._id ? 'bg-accent/10' : ''
-                    }`}
+                    } ${groupSubEvents && evt.parentEvent ? 'pl-9 border-l-2 border-l-accent/40' : ''}`}
                     onClick={() => { onChange(evt._id); setIsOpen(false); setSearchTerm(''); }}
                   >
                     <div className="min-w-0">
                       <p className="text-sm font-bold text-foreground truncate">
                         {evt.eventId ? <span className="text-foreground/50 font-mono font-normal">{evt.eventId} | </span> : null}
                         {evt.eventName}
+                        {groupSubEvents ? (
+                          <span className={`ml-2 align-middle text-[10px] uppercase tracking-wider font-semibold rounded border px-1.5 py-0.5 ${
+                            evt.parentEvent ? 'text-accent border-accent/40' : 'text-foreground/50 border-border'
+                          }`}>
+                            {evt.parentEvent ? 'Sub-event' : 'Main event'}
+                          </span>
+                        ) : null}
                       </p>
                       <p className="text-xs text-foreground/50 mt-0.5 truncate">
                         {formatEventType(evt.eventType)}
