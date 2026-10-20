@@ -75,12 +75,16 @@ test('the page reviews first, confirms once with the reviewed count, and keeps t
   assert.ok(page.includes('role="status" aria-live="polite"'), 'the outcome is announced to screen readers');
 });
 
-test('the page is reachable by Admins and Super Admins only, from the Events page', () => {
+test('the page is reachable by Admins and Super Admins only; the Events page no longer has a button for it', () => {
   const app = read('frontend/src/App.tsx');
   assert.ok(app.includes('<Route path="/events/poc-bulk" element={<PageWrapper><RoleRoute allow={[\'SuperAdmin\', \'Admin\']}><BulkPocUpdate /></RoleRoute></PageWrapper>} />'));
   const list = read('frontend/src/pages/Events/EventList.tsx');
-  assert.ok(list.includes('<Link to="/events/poc-bulk">'));
-  const linkAt = list.indexOf('<Link to="/events/poc-bulk">');
-  const guardAt = list.lastIndexOf("{user?.role !== 'User' && (", linkAt);
-  assert.ok(guardAt !== -1 && linkAt - guardAt < 200, 'the link is inside the non-User block');
+  assert.equal(list.includes('/events/poc-bulk'), false, 'no link to the bulk page');
+  assert.equal(list.includes('Update POC number'), false, 'no "Update POC number" button');
+  assert.equal(/\bPhoneCall\b/.test(list), false, 'and its icon is no longer imported');
+  // Create Event is untouched, inside the same non-User block and wrapper as before.
+  assert.ok(list.includes('<Link to="/events/create">\n              <Button><Plus className="w-4 h-4 mr-2" />Create Event</Button>\n            </Link>'));
+  const createAt = list.indexOf('<Link to="/events/create">');
+  const guardAt = list.lastIndexOf("{user?.role !== 'User' && (", createAt);
+  assert.ok(guardAt !== -1 && createAt - guardAt < 120, 'Create Event is still inside the non-User block');
 });
