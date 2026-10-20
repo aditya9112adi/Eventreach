@@ -1,6 +1,6 @@
 /**
  * The Sub-Events screens: the section on a Main Event's details page, the
- * create/edit form, the member list and the Add Members picker.
+ * create/edit form and the member list.
  *
  * Their logic lives in utils/subEventMembers.ts (tested for real there) and on
  * the server (tests/subEvents.integration.test.ts). This repo has no DOM test
@@ -17,7 +17,7 @@ import fs from 'fs';
 const read = (file: string) => fs.readFileSync(file, 'utf-8').split('\r\n').join('\n');
 const section = read('frontend/src/components/ui/SubEventsSection.tsx');
 const members = read('frontend/src/components/ui/SubEventMembers.tsx');
-const picker = read('frontend/src/components/ui/AddMembersDialog.tsx');
+const upload = read('frontend/src/components/ui/MemberUploadDialog.tsx');
 const detail = read('frontend/src/pages/Events/EventDetail.tsx');
 const create = read('frontend/src/pages/Events/EventCreate.tsx');
 const edit = read('frontend/src/pages/Events/EventEdit.tsx');
@@ -117,9 +117,10 @@ test('the member list of a sub-event', async (t) => {
     assert.ok(members.includes('busyLabel="Removing…"'));
   });
 
-  await t.test('adding refreshes the list; not offered on a completed sub-event', () => {
-    assert.ok(members.includes('<AddMembersDialog subEvent={subEvent} open={isAddOpen} onClose={() => setIsAddOpen(false)} onAdded={refresh} />'));
+  await t.test('uploading refreshes the list; not offered on a completed sub-event', () => {
+    assert.ok(members.includes('<MemberUploadDialog subEvent={subEvent} open={isUploadOpen} onClose={() => setIsUploadOpen(false)} onAdded={refresh} />'));
     assert.ok(members.includes("const canAdd = subEvent.eventStatus !== 'Completed';"));
+    assert.ok(/onClick=\{\(\) => setIsUploadOpen\(true\)\}\s+disabled=\{!canAdd\}/.test(members));
   });
 
   await t.test('the download is this sub-event\'s own member list', () => {
@@ -130,43 +131,50 @@ test('the member list of a sub-event', async (t) => {
   });
 });
 
-test('the Add Members picker', async (t) => {
-  await t.test('offers the server\'s candidates, the Main Event first', () => {
-    assert.ok(picker.includes('await api.get(`/events/${subEvent._id}/member-candidates`'));
-    assert.ok(picker.includes("useState<string>(subEvent.parentEventId || '')"));
-    assert.ok(picker.includes("{s._id === subEvent.parentEventId ? ' (main event)' : ''}"));
+test('a sub-event has no Add Members button or picker', async (t) => {
+  await t.test('the Members section has no such button, dialog, icon or state, and the dialog file is gone', () => {
+    assert.equal(members.includes('Add Members'), false);
+    assert.equal(members.includes('AddMembersDialog'), false);
+    assert.equal(members.includes('isAddOpen'), false);
+    assert.equal(/\bUserPlus\b/.test(members), false);
+    assert.equal(fs.existsSync('frontend/src/components/ui/AddMembersDialog.tsx'), false);
   });
 
-  await t.test('reuses the Contacts tab\'s row and page selection', () => {
-    assert.ok(picker.includes("import { getPageSelectionState, toggleSelectAllOnPage, toggleSelection } from '../../utils/selection';"));
-    assert.ok(picker.includes('<SelectAllCheckbox'));
-    assert.ok(picker.includes('<RowSelectCheckbox'));
+  await t.test('the empty state points at Upload, the way members are now added', () => {
+    assert.ok(members.includes('This sub-event starts with an empty list. Use Upload to add contacts from an Excel or PDF file;'));
+    assert.equal(members.includes('Use Add Members'), false);
   });
 
-  await t.test('existing members are marked and cannot be picked again', () => {
-    assert.ok(picker.includes('const selectableIds = useMemo(() => candidates.filter((c) => !c.isMember).map((c) => c._id), [candidates]);'));
-    assert.ok(picker.includes('<input type="checkbox" checked disabled aria-label={`${c.fullName} is already a member`}'));
-    assert.ok(picker.includes('<Badge variant="success" className="ml-2">Member</Badge>'));
+  await t.test('the member list, the exports and the Upload button are all still there', () => {
+    assert.ok(members.includes("onClick={() => runExport('excel')}"));
+    assert.ok(members.includes("onClick={() => runExport('pdf')}"));
+    assert.ok(members.includes('<Upload className="w-4 h-4 mr-1.5" /> Upload'));
+    assert.ok(members.includes('<PaginationControls'));
+    assert.ok(members.includes('No members yet'));
+    assert.ok(members.includes('await api.delete(`/events/${subEvent._id}/members/${confirmRemove._id}`);'));
   });
 
-  await t.test('sends the selection in batches and reports what the server said', () => {
-    assert.ok(picker.includes('const batches = chunkIds(ids, ADD_MEMBERS_BATCH_SIZE);'));
-    assert.ok(picker.includes("const res = await api.post(`/events/${subEvent._id}/members`, { contactIds: batches[i] });"));
-    assert.ok(picker.includes('result = mergeBatchResponse(result, res.data);'));
-    assert.ok(picker.includes('const { tone, message } = describeOutcome(result);'));
+  await t.test('what the upload shares is intact: the batched add, and the server\'s member routes', () => {
+    assert.ok(upload.includes('const batches = chunkIds(ids, ADD_MEMBERS_BATCH_SIZE);'));
+    assert.ok(upload.includes("const res = await api.post(`/events/${subEvent._id}/members`, { contactIds: batches[i] });"));
+    const routes = read('backend/src/routes/eventRoutes.ts');
+    for (const route of ["router.post('/:id/members', addMembers);", "router.get('/:id/members', listMembers);", "router.get('/:id/member-candidates', listMemberCandidates);", "router.delete('/:id/members/:contactId', removeMember);"]) {
+      assert.ok(routes.includes(route), route);
+    }
   });
 
-  await t.test('one add at a time, with failed ids offered for retry', () => {
-    assert.ok(picker.includes('if (isAdding || ids.length === 0) return;'));
-    assert.ok(picker.includes('Retry failed ({retryIds.length})'));
-    assert.ok(picker.includes('setSelected(new Set(retryableIds(result)));'));
+  await t.test('the main event\'s own Add Guest is untouched, and no sub-event screen has a manual add', () => {
+    const contacts = read('frontend/src/pages/Contacts/ContactList.tsx');
+    assert.ok(contacts.includes('Add Guest'));
+    assert.ok(contacts.includes("{editingContact ? 'Edit Guest' : 'Add Guest Manually'}"));
+    for (const source of [members, section, upload, detail]) assert.equal(/add guest/i.test(source.replace(/Add guests to/g, '')), false);
   });
 });
 
 test('dialogs render over the window, like the app\'s other dialogs', () => {
   // The page wrapper animates with a transform, which pins `position: fixed`
   // to the page; portalling to <body> is what the Contacts tab does too.
-  assert.ok(picker.includes('return createPortal(\n    <div className="fixed inset-0'));
+  assert.ok(upload.includes('return createPortal(\n    <div className="fixed inset-0'));
   assert.ok(section.includes('{createPortal(\n        <ConfirmDeleteDialog'));
   assert.ok(members.includes('{createPortal(\n        <ConfirmDeleteDialog'));
 });

@@ -135,26 +135,27 @@ describe('how the page and dialog are wired', () => {
   const members = read('frontend/src/components/ui/SubEventMembers.tsx');
   const dialog = read('frontend/src/components/ui/MemberUploadDialog.tsx');
 
-  test('the Members section has an Upload button beside Excel, PDF and Add Members, gated as Add Members is', () => {
+  test('the Members section has an Upload button after Excel and PDF, switched off for a completed event', () => {
     assert.ok(members.includes('<Upload className="w-4 h-4 mr-1.5" /> Upload'));
     assert.ok(members.includes('onClick={() => setIsUploadOpen(true)}'));
     const upload = members.slice(members.indexOf('onClick={() => setIsUploadOpen(true)}'));
     assert.ok(upload.slice(0, 200).includes('disabled={!canAdd}'));
-    const order = ['<FileSpreadsheet', '<FileText', '<Upload', '<UserPlus'].map((tag) => members.indexOf(`${tag} className="w-4 h-4 mr-1.5"`));
-    assert.deepEqual([...order].sort((a, b) => a - b), order, 'Excel, PDF, Upload, Add Members in that order');
+    const order = ['<FileSpreadsheet', '<FileText', '<Upload'].map((tag) => members.indexOf(`${tag} className="w-4 h-4 mr-1.5"`));
+    assert.deepEqual([...order].sort((a, b) => a - b), order, 'Excel, PDF, Upload in that order');
     assert.ok(order.every((i) => i > 0));
+    assert.equal(members.includes('Add Members'), false, 'and Add Members is no longer offered');
   });
 
   test('the existing controls are unchanged', () => {
     assert.ok(members.includes("onClick={() => runExport('excel')}"));
     assert.ok(members.includes("onClick={() => runExport('pdf')}"));
-    assert.ok(members.includes('onClick={() => setIsAddOpen(true)}'));
-    assert.ok(members.includes('<AddMembersDialog subEvent={subEvent} open={isAddOpen} onClose={() => setIsAddOpen(false)} onAdded={refresh} />'));
+    assert.equal(members.includes('setIsAddOpen'), false);
+    assert.equal(members.includes('AddMembersDialog'), false);
     assert.ok(members.includes('<PaginationControls'));
     assert.ok(members.includes('value={searchTerm}'));
   });
 
-  test('uploading refreshes the list, through the same refresh Add Members uses', () => {
+  test('uploading refreshes the member list', () => {
     assert.ok(members.includes('<MemberUploadDialog subEvent={subEvent} open={isUploadOpen} onClose={() => setIsUploadOpen(false)} onAdded={refresh} />'));
   });
 
@@ -164,7 +165,7 @@ describe('how the page and dialog are wired', () => {
     assert.ok(dialog.includes("'Content-Type': 'multipart/form-data'"));
   });
 
-  test('confirming reuses the Add Members call and its batching, sending the sub-event\'s own id', () => {
+  test('confirming adds through the member list\'s add call and its batching, sending the sub-event\'s own id', () => {
     assert.ok(dialog.includes('api.post(`/events/${subEvent._id}/members`, { contactIds: batches[i] })'));
     assert.ok(dialog.includes('chunkIds(ids, ADD_MEMBERS_BATCH_SIZE)'));
     assert.ok(dialog.includes('mergeBatchResponse(result, res.data)'));

@@ -6,7 +6,7 @@ import type { AddMembersOutcome } from './subEventMembers';
  *
  * The server reads the file and matches each row to an existing contact
  * (POST /events/:id/members/upload, which saves nothing); confirming sends the
- * matched contact ids through the same batched add as the Add Members dialog
+ * matched contact ids through the batched add in subEventMembers.ts
  * (see subEventMembers.ts). These helpers hold the checks and wording that are
  * not React, so they can be tested directly.
  */

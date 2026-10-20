@@ -35,7 +35,7 @@ import {
  *
  * A Sub-Event's members are existing contacts, so each row is matched to one
  * (the server does it, and saves nothing at the preview step). Confirming adds
- * the matched contacts to this Sub-Event through the same call as Add Members;
+ * the matched contacts to this Sub-Event through POST /events/:id/members;
  * numbers that are not contacts are skipped, never created. The Main Event and
  * every other Sub-Event are untouched.
  */
