@@ -246,9 +246,10 @@ test('an event\'s "Access Report" link opens the report on that event', async (t
     assert.ok(reports.includes("const open = target === 'event' ? setSelectedEventId : setScopedViewEventId;"), 'which still opens the event');
   });
 
-  await t.test('the Event Details page offers it to the roles that can open it', () => {
-    assert.ok(eventDetail.includes("const canViewAccessReport = user?.role === 'SuperAdmin' || user?.role === 'Admin';"));
-    assert.ok(eventDetail.includes('navigate(`/reports?type=access&eventId=${event._id}`)'));
+  await t.test('the Event Details page no longer has the button; the link into the report is the Event Report View\'s', () => {
+    assert.equal(eventDetail.includes('canViewAccessReport'), false);
+    assert.equal(eventDetail.includes('type=access'), false);
+    assert.equal(eventDetail.includes('Access Report'), false);
   });
 
   await t.test('the report takes a well-formed id from the link and opens its View, leaving no event filter behind', () => {

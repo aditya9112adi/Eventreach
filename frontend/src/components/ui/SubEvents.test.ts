@@ -65,7 +65,7 @@ test('the details page shows the section that fits the event', () => {
   assert.ok(detail.includes('<SubEventsSection parent={event} canManage={canManageSubEvents} />'));
   assert.ok(detail.includes("const canManageSubEvents = user?.role === 'SuperAdmin' || user?.role === 'Admin';"));
   assert.ok(detail.includes("const backTo = isSubEvent ? `/events/${event.parentEventId}` : '/events';"), 'a sub-event leads back to its Main Event');
-  assert.ok(detail.includes('{canViewAccessReport && !isSubEvent && ('), 'the Access Report stays a Main Event report');
+  assert.equal(detail.includes('canViewAccessReport'), false, 'the details page no longer has an Access Report button (the report itself is unchanged)');
   assert.ok(detail.includes('Sub-event of{\' \'}'));
 });
 

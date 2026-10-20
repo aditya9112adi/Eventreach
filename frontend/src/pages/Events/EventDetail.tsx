@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Calendar, MapPin, Edit3, UserCircle, Phone, ShieldAlert, ShieldCheck, Layers } from 'lucide-react';
+import { ArrowLeft, Calendar, MapPin, Edit3, UserCircle, Phone, ShieldAlert, Layers } from 'lucide-react';
 import api from '../../services/api';
 import type { Event } from '@eventreach/shared';
 import { Button } from '../../components/ui/Button';
@@ -14,9 +14,6 @@ const EventDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  // The Access Report is offered to the roles that can open it; the server
-  // enforces this regardless.
-  const canViewAccessReport = user?.role === 'SuperAdmin' || user?.role === 'Admin';
   // Creating and deleting sub-events is administrative, as on the server.
   const canManageSubEvents = user?.role === 'SuperAdmin' || user?.role === 'Admin';
   // contactCount is still returned by GET /events/:id, but this page no longer
@@ -118,17 +115,6 @@ const EventDetail = () => {
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {/* The Access Report is per Main Event; a Sub-Event's people
-                  are its Main Event's. */}
-              {canViewAccessReport && !isSubEvent && (
-                <Button
-                  variant="secondary"
-                  onClick={() => navigate(`/reports?type=access&eventId=${event._id}`)}
-                >
-                  <ShieldCheck className="w-4 h-4 mr-2" />
-                  Access Report
-                </Button>
-              )}
               {event.eventStatus !== 'Completed' && (
                 <Button
                   variant="secondary"
