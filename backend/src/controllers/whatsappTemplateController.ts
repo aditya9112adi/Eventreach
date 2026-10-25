@@ -4,6 +4,7 @@ import {
   createTemplateDraft,
   deleteTemplateDraft,
   getTemplate,
+  linkTemplateToEvent,
   listAccountTemplates,
   listTemplates,
   reconcileTemplate,
@@ -74,6 +75,22 @@ export const updateTemplateHandler = async (req: Request, res: Response) => {
     res.json({ template: await updateTemplateDraft(actorOf(req), req.params.id, req.body) });
   } catch (error) {
     fail(res, error, 'update');
+  }
+};
+
+/**
+ * PUT /api/whatsapp/templates/:id/event  { eventId: "EVT-000011" }
+ *
+ * Ties the template to an event, or moves it to another. Only `eventId`, the event's business id, is read
+ * from the body: the stored ObjectId always comes from the event the server looks up. 200 with
+ * { template, changed, previousEventId }. Sends nothing to Meta.
+ */
+export const linkTemplateEventHandler = async (req: Request, res: Response) => {
+  if (!requireBodyObject(req, res)) return;
+  try {
+    res.json(await linkTemplateToEvent(actorOf(req), req.params.id, { eventId: (req.body as { eventId?: unknown }).eventId }));
+  } catch (error) {
+    fail(res, error, 'event link');
   }
 };
 

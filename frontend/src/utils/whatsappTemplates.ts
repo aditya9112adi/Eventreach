@@ -138,11 +138,13 @@ export interface TemplateActions {
   /** "Refresh status": ask Meta about a template pending review (the API's refresh). */
   refresh: boolean;
   delete: boolean;
+  /** "Link to an event" / "Change event": any state but Submitting, by whoever manages the template. Local only. */
+  linkEvent: boolean;
 }
 
 /** The controls the API would accept for this template, matching its rules. */
 export const templateActions = (viewer: Viewer | null | undefined, t: TemplateView): TemplateActions => {
-  if (!viewerManages(viewer, t)) return { edit: false, submit: false, checkStatus: false, refresh: false, delete: false };
+  if (!viewerManages(viewer, t)) return { edit: false, submit: false, checkStatus: false, refresh: false, delete: false, linkEvent: false };
   const editable = (WHATSAPP_TEMPLATE_EDITABLE_STATES as readonly string[]).includes(t.localState);
   return {
     edit: editable,
@@ -150,7 +152,56 @@ export const templateActions = (viewer: Viewer | null | undefined, t: TemplateVi
     checkStatus: t.localState === 'Unknown' || t.localState === 'SubmissionFailed',
     refresh: t.localState === 'Pending',
     delete: t.localState === 'Draft' && !t.submissionAttempts && !t.metaTemplateId,
+    // Which event a template is offered for is EventReach's own record, so it can be fixed after submission.
+    // Not while the submission is in flight.
+    linkEvent: t.localState !== 'Submitting',
   };
+};
+
+// ── linking a template to an event ──────────────────────────────────────────
+
+/**
+ * What "Link to an event" sends: the typed Event ID, trimmed and checked for shape. Never an ObjectId - the server
+ * looks the event up, checks the caller may use it, and stores both ids from what it found.
+ */
+export const eventLinkRequest = (input: string): { ok: true; body: { eventId: string } } | { ok: false; message: string } => {
+  const check = checkEventBusinessId(input);
+  return check.ok ? { ok: true, body: { eventId: check.value } } : { ok: false, message: check.message };
+};
+
+export interface EventLinkConfirmation {
+  unchanged: boolean;
+  title: string;
+  message: string;
+  confirmLabel: string;
+}
+
+/** The question asked before a template is linked to, or moved to, an event. Says what changes and what does not. */
+export const eventLinkConfirmation = (t: { eventId: string | null; localState: string }, next: string): EventLinkConfirmation => {
+  if (t.eventId === next) {
+    return { unchanged: true, title: 'Already linked', message: `This template is already linked to ${next}.`, confirmLabel: 'OK' };
+  }
+  const unaffected = 'Only where this template is offered changes. Its WhatsApp approval, wording and template ID stay as they are, and nothing is sent to WhatsApp.';
+  const offered =
+    t.localState === 'Approved'
+      ? `It will be offered in the Message tab for ${next} only, starting now.`
+      : `Once WhatsApp approves it, it will be offered in the Message tab for ${next} only.`;
+  if (!t.eventId) {
+    return { unchanged: false, title: `Link this template to ${next}?`, message: `${offered} ${unaffected}`, confirmLabel: `Link to ${next}` };
+  }
+  return {
+    unchanged: false,
+    title: `Move this template to ${next}?`,
+    message: `It will stop being offered for ${t.eventId}. ${offered} ${unaffected}`,
+    confirmLabel: `Move to ${next}`,
+  };
+};
+
+/** The toast after PUT /templates/:id/event answers 200. */
+export const eventLinkToast = (result: { changed?: boolean; previousEventId?: string | null; template?: { eventId?: string | null } }): { type: ToastKind; message: string } => {
+  const id = result?.template?.eventId ?? 'the event';
+  if (result?.changed === false) return { type: 'info', message: `Already linked to ${id}. Nothing changed.` };
+  return { type: 'success', message: result?.previousEventId ? `Moved to ${id}.` : `Linked to ${id}.` };
 };
 
 // ── status ──────────────────────────────────────────────────────────────────
@@ -185,6 +236,7 @@ export const HISTORY_LABELS: Record<string, string> = {
   reconciled_absent: 'Not found at WhatsApp',
   refreshed: 'Status checked at WhatsApp',
   refresh_not_found: 'Not found at WhatsApp when checked',
+  event_linked: 'Event link changed',
 };
 
 export const historyLabel = (type: string) => HISTORY_LABELS[type] ?? type;

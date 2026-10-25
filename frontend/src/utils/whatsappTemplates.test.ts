@@ -30,7 +30,10 @@ import {
   syncVariableRows,
   templateAccessControl,
   templateActions,
-  toApiProblem,
+  eventLinkConfirmation,
+  eventLinkRequest,
+  eventLinkToast,
+toApiProblem,
   validateForm,
   type TemplateForm,
   type TemplateView,
@@ -117,24 +120,28 @@ describe('list page', () => {
 
 describe('controls match what the API accepts', () => {
   test('Draft: edit, submit and delete; not check or refresh status', () => {
-    assert.deepEqual(templateActions(ADMIN, template()), { edit: true, submit: true, checkStatus: false, refresh: false, delete: true });
+    assert.deepEqual(templateActions(ADMIN, template()), { edit: true, submit: true, checkStatus: false, refresh: false, delete: true, linkEvent: true });
   });
 
   test('SubmissionFailed: edit, submit again, check status; never delete (it reached WhatsApp, or might have)', () => {
-    assert.deepEqual(templateActions(ADMIN, template({ localState: 'SubmissionFailed', submissionAttempts: 1 })), { edit: true, submit: true, checkStatus: true, refresh: false, delete: false });
+    assert.deepEqual(templateActions(ADMIN, template({ localState: 'SubmissionFailed', submissionAttempts: 1 })), { edit: true, submit: true, checkStatus: true, refresh: false, delete: false, linkEvent: true });
   });
 
   test('Unknown: only check status', () => {
-    assert.deepEqual(templateActions(ADMIN, template({ localState: 'Unknown', submissionAttempts: 1 })), { edit: false, submit: false, checkStatus: true, refresh: false, delete: false });
+    assert.deepEqual(templateActions(ADMIN, template({ localState: 'Unknown', submissionAttempts: 1 })), { edit: false, submit: false, checkStatus: true, refresh: false, delete: false, linkEvent: true });
   });
 
   test('Pending: only refresh status', () => {
-    assert.deepEqual(templateActions(ADMIN, template({ localState: 'Pending', submissionAttempts: 1, metaTemplateId: '9' })), { edit: false, submit: false, checkStatus: false, refresh: true, delete: false });
+    assert.deepEqual(templateActions(ADMIN, template({ localState: 'Pending', submissionAttempts: 1, metaTemplateId: '9' })), { edit: false, submit: false, checkStatus: false, refresh: true, delete: false, linkEvent: true });
   });
 
-  test('Submitting, Approved, Rejected, Paused, Disabled: nothing to do here', () => {
+  test('Submitting, Approved, Rejected, Paused, Disabled: nothing to edit or submit here - only the event link can still be changed, and not while Submitting', () => {
     for (const localState of ['Submitting', 'Approved', 'Rejected', 'Paused', 'Disabled', 'Archived', 'Deleted'] as const) {
-      assert.deepEqual(templateActions(ADMIN, template({ localState, submissionAttempts: 1, metaTemplateId: '9' })), { edit: false, submit: false, checkStatus: false, refresh: false, delete: false }, localState);
+      assert.deepEqual(
+        templateActions(ADMIN, template({ localState, submissionAttempts: 1, metaTemplateId: '9' })),
+        { edit: false, submit: false, checkStatus: false, refresh: false, delete: false, linkEvent: localState !== 'Submitting' },
+        localState
+      );
     }
   });
 
@@ -144,7 +151,7 @@ describe('controls match what the API accepts', () => {
   });
 
   test("shared and other Admins' templates are read-only; a Super Admin manages all", () => {
-    const none = { edit: false, submit: false, checkStatus: false, refresh: false, delete: false };
+    const none = { edit: false, submit: false, checkStatus: false, refresh: false, delete: false, linkEvent: false };
     assert.deepEqual(templateActions(ADMIN, template({ ownerAdminId: null })), none, 'shared');
     assert.deepEqual(templateActions(OTHER, template()), none, "another Admin's");
     assert.equal(templateActions(SUPER, template({ ownerAdminId: null })).edit, true);
@@ -356,5 +363,74 @@ describe('Just Access: the permission toggle', () => {
     assert.deepEqual(applyTemplateAccess(records, { id: 'a1', canManageWhatsAppTemplates: true }).map((r) => r.canManageWhatsAppTemplates), [true, true]);
     assert.deepEqual(applyTemplateAccess(records, { id: 'a2', canManageWhatsAppTemplates: false }).map((r) => r.canManageWhatsAppTemplates), [undefined, false]);
     assert.equal(applyTemplateAccess(records, {} as any), records, 'a malformed answer changes nothing');
+  });
+});
+
+describe('linking a template to an event', () => {
+  test('is offered to whoever manages the template, in every state except Submitting', () => {
+    for (const localState of WHATSAPP_TEMPLATE_STATES) {
+      const expected = localState !== 'Submitting';
+      assert.equal(templateActions(ADMIN, template({ localState })).linkEvent, expected, `owner, ${localState}`);
+      assert.equal(templateActions(SUPER, template({ localState })).linkEvent, expected, `Super Admin, ${localState}`);
+    }
+  });
+
+  test('is not offered for a shared template to an Admin, for another Admin\'s template, or to nobody signed in', () => {
+    assert.equal(templateActions(ADMIN, template({ ownerAdminId: null })).linkEvent, false, 'shared');
+    assert.equal(templateActions(OTHER, template()).linkEvent, false, "another Admin's");
+    assert.equal(templateActions(null, template()).linkEvent, false);
+    assert.equal(templateActions(SUPER, template({ ownerAdminId: null })).linkEvent, true, 'a Super Admin may link a shared one');
+  });
+
+  test('sends only the typed Event ID, trimmed - never an ObjectId', () => {
+    assert.deepEqual(eventLinkRequest('  EVT-000011 '), { ok: true, body: { eventId: 'EVT-000011' } });
+    const sent = eventLinkRequest('EVT-0000017');
+    assert.ok(sent.ok);
+    if (sent.ok) assert.deepEqual(Object.keys(sent.body), ['eventId']);
+  });
+
+  test('refuses a blank or malformed Event ID before anything is sent, naming the format', () => {
+    for (const bad of ['', '   ', 'evt-000011', 'EVT-11', 'EVT-000011x', '507f1f77bcf86cd799439011', 'EVT-000011 EVT-000012']) {
+      const request = eventLinkRequest(bad);
+      assert.equal(request.ok, false, JSON.stringify(bad));
+      if (!request.ok) assert.match(request.message, /Event ID is required|EVT- followed by at least 6 digits/);
+    }
+  });
+
+  test('the confirmation for a first link says where it will be offered and what does not change', () => {
+    const asked = eventLinkConfirmation({ eventId: null, localState: 'Approved' }, 'EVT-000011');
+    assert.equal(asked.unchanged, false);
+    assert.equal(asked.title, 'Link this template to EVT-000011?');
+    assert.match(asked.message, /offered in the Message tab for EVT-000011 only, starting now/);
+    assert.match(asked.message, /approval, wording and template ID stay as they are, and nothing is sent to WhatsApp/);
+    assert.equal(asked.confirmLabel, 'Link to EVT-000011');
+  });
+
+  test('a template not yet approved is told it will be offered once WhatsApp approves it', () => {
+    const asked = eventLinkConfirmation({ eventId: null, localState: 'Pending' }, 'EVT-000011');
+    assert.match(asked.message, /Once WhatsApp approves it, it will be offered in the Message tab for EVT-000011 only/);
+  });
+
+  test('the confirmation for moving names the event it stops being offered for', () => {
+    const asked = eventLinkConfirmation({ eventId: 'EVT-000003', localState: 'Approved' }, 'EVT-000011');
+    assert.equal(asked.title, 'Move this template to EVT-000011?');
+    assert.match(asked.message, /stop being offered for EVT-000003/);
+    assert.match(asked.message, /offered in the Message tab for EVT-000011 only/);
+    assert.equal(asked.confirmLabel, 'Move to EVT-000011');
+  });
+
+  test('choosing the event it already has is recognised, so nothing is sent', () => {
+    const asked = eventLinkConfirmation({ eventId: 'EVT-000011', localState: 'Approved' }, 'EVT-000011');
+    assert.equal(asked.unchanged, true);
+  });
+
+  test('the toast says linked, moved, or already linked', () => {
+    assert.deepEqual(eventLinkToast({ changed: true, previousEventId: null, template: { eventId: 'EVT-000011' } }), { type: 'success', message: 'Linked to EVT-000011.' });
+    assert.deepEqual(eventLinkToast({ changed: true, previousEventId: 'EVT-000003', template: { eventId: 'EVT-000011' } }), { type: 'success', message: 'Moved to EVT-000011.' });
+    assert.deepEqual(eventLinkToast({ changed: false, template: { eventId: 'EVT-000011' } }), { type: 'info', message: 'Already linked to EVT-000011. Nothing changed.' });
+  });
+
+  test('the history shows an event change in words', () => {
+    assert.equal(historyLabel('event_linked'), 'Event link changed');
   });
 });

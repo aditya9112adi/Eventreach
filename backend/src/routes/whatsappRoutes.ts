@@ -12,6 +12,7 @@ import {
   getTemplateHandler,
   createTemplateHandler,
   updateTemplateHandler,
+  linkTemplateEventHandler,
   deleteTemplateHandler,
   submitTemplateHandler,
   reconcileTemplateHandler,
@@ -62,6 +63,8 @@ router.get('/templates/:id', getTemplateHandler);
 // The exact payload a submission would send. Sends nothing.
 router.get('/templates/:id/payload', reviewTemplateHandler);
 router.patch('/templates/:id', updateTemplateHandler);
+// Ties a template to an event, or moves it, in any state but Submitting. Local only: no call to Meta.
+router.put('/templates/:id/event', linkTemplateEventHandler);
 router.delete('/templates/:id', deleteTemplateHandler);
 router.post('/templates/:id/submit', actionLimiter, submitTemplateHandler);
 router.post('/templates/:id/reconcile', actionLimiter, reconcileTemplateHandler);
