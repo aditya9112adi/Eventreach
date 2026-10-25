@@ -8,6 +8,7 @@ import { useToast } from '../../components/ui/Toast';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { formatDateTime } from '../../utils/datetime';
+import { headerNote } from '../../utils/linkMetaTemplate';
 import {
   TEMPLATES_API,
   WHATSAPP_TEMPLATE_VARIABLE_SOURCE_LABELS,
@@ -327,6 +328,8 @@ const TemplateDetail = () => {
                 <Row label="Category at WhatsApp">{template.metaCategory}</Row>
               )}
               <Row label="Language"><span className="font-mono">{template.language}</span></Row>
+              {headerNote(template.headerFormat) && <Row label="Header">{headerNote(template.headerFormat)}</Row>}
+              {template.origin === 'meta' && <Row label="Source">Linked from the WhatsApp account. It was created at WhatsApp, not in EventReach.</Row>}
               <Row label="Event">
                 <div className="space-y-2">
                   <div>

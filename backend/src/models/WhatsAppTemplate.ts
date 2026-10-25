@@ -63,6 +63,14 @@ export interface IWhatsAppTemplate extends Document {
   /** The same event's business id ("EVT-0000017"). */
   eventId: string | null;
   headerText: string | null;
+  /**
+   * The media a header takes (IMAGE, VIDEO or DOCUMENT), or null for a template with no media header. Only a template
+   * linked from WhatsApp can have one: the file is attached at send time, never stored here.
+   */
+  headerFormat: 'IMAGE' | 'VIDEO' | 'DOCUMENT' | null;
+  /** 'meta' for a template that already existed at WhatsApp and was linked to EventReach; 'eventreach' for one made here. */
+  origin: 'eventreach' | 'meta';
+  linkedFromMetaAt: Date | null;
   body: string;
   footer: string | null;
   variables: TemplateVariableMapping[];
@@ -136,6 +144,9 @@ const whatsAppTemplateSchema = new Schema<IWhatsAppTemplate>(
     eventObjectId: { type: Schema.Types.ObjectId, ref: 'Event', default: null },
     eventId: { type: String, default: null, trim: true, match: /^EVT-\d{6,}$/ },
     headerText: { type: String, default: null, maxlength: 60 },
+    headerFormat: { type: String, enum: ['IMAGE', 'VIDEO', 'DOCUMENT'], default: null },
+    origin: { type: String, enum: ['eventreach', 'meta'], default: 'eventreach' },
+    linkedFromMetaAt: { type: Date, default: null },
     body: { type: String, required: true, maxlength: 1024 },
     footer: { type: String, default: null, maxlength: 60 },
     variables: { type: [variableSchema], default: [] },

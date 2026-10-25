@@ -81,6 +81,10 @@ export interface TemplateView {
   eventId: string | null;
   /** The same event's MongoDB _id. */
   eventObjectId: string | null;
+  /** The media a header takes (IMAGE, VIDEO or DOCUMENT) for a template linked from WhatsApp; null or absent otherwise. */
+  headerFormat?: string | null;
+  /** 'meta' for a template that already existed at WhatsApp and was linked to EventReach. */
+  origin?: 'eventreach' | 'meta';
   headerText: string | null;
   body: string;
   footer: string | null;

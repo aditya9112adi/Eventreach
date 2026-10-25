@@ -113,5 +113,25 @@ describe("reading the server's answer", () => {
     assert.match(text, /Template a1/);
     assert.match(text, /Marketing template, language hi/);
     assert.match(text, /cannot be edited here/);
+    assert.doesNotMatch(text, /Attach/, 'a template with no media header asks for no file');
+  });
+
+  test('says which file a media header needs, so the person knows before choosing guests', () => {
+    assert.match(describeEventTemplate(option('m1', { headerFormat: 'IMAGE' })), /Attach an image to send it\.$/);
+    assert.match(describeEventTemplate(option('m2', { headerFormat: 'VIDEO' })), /Attach a video to send it\.$/);
+    assert.match(describeEventTemplate(option('m3', { headerFormat: 'DOCUMENT' })), /Attach a document \(PDF\) to send it\.$/);
+    // The rest of the description is unchanged by it.
+    assert.match(describeEventTemplate(option('m1', { headerFormat: 'IMAGE' })), /Template m1 - Utility template, language en\. Approved by WhatsApp for this event; its wording cannot be edited here\./);
+  });
+
+  test('a null, absent or unrecognised header format asks for no file', () => {
+    for (const headerFormat of [null, undefined, 'TEXT', 'LOCATION', '']) {
+      assert.doesNotMatch(describeEventTemplate(option('t1', { headerFormat })), /Attach/, String(headerFormat));
+    }
+  });
+
+  test('the server\'s answer keeps the header format of each template, and a template without one reads as before', () => {
+    const read = readEventTemplates({ templates: [option('m1', { headerFormat: 'VIDEO' }), option('p1')] });
+    assert.deepEqual(read.map((t) => [t.id, t.headerFormat ?? null]), [['m1', 'VIDEO'], ['p1', null]]);
   });
 });

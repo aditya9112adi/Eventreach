@@ -32,6 +32,8 @@ export interface ScopedTemplate {
   body: string;
   footer: string | null;
   headerText: string | null;
+  /** The media the header takes, declared when the template was linked; null for a template with no media header. */
+  headerFormat: 'IMAGE' | 'VIDEO' | 'DOCUMENT' | null;
   mapping: MappedVariable[];
 }
 
@@ -77,6 +79,8 @@ export const listApprovedEventTemplates = async (event: { _id: unknown; eventId?
       category: t.category,
       body: t.body,
       headerText: t.headerText ?? null,
+      // A media header means a file is attached at send time.
+      headerFormat: t.headerFormat ?? null,
       footer: t.footer ?? null,
       variableCount: (t.variables || []).length,
     }));
@@ -114,6 +118,7 @@ export const loadEventTemplate = async (event: { _id: unknown; eventId?: unknown
     body: template.body,
     footer: template.footer ?? null,
     headerText: template.headerText ?? null,
+    headerFormat: template.headerFormat ?? null,
     mapping: mappingOf(template),
   };
 };

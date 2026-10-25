@@ -19,6 +19,8 @@ import {
 import {
   createMetaTemplate,
   findMetaTemplatesByName,
+  getMetaTemplateForLink,
+  type MetaTemplateComponents,
   getMetaTemplateById,
   listMetaTemplates,
   META_CURSOR_PATTERN,
@@ -249,6 +251,9 @@ export const toTemplateView = (t: IWhatsAppTemplate | any, viewer?: TemplateActo
     eventObjectId: storedEventLink(o)?.eventObjectId ?? null,
     eventId: storedEventLink(o)?.eventId ?? null,
     headerText: o.headerText ?? null,
+    headerFormat: o.headerFormat ?? null,
+    origin: o.origin ?? 'eventreach',
+    linkedFromMetaAt: o.linkedFromMetaAt ?? null,
     body: o.body,
     footer: o.footer ?? null,
     variables: o.variables ?? [],
@@ -1029,4 +1034,214 @@ const refreshMissing = async (
   const written = await WhatsAppTemplate.updateOne(guard, { $push: pushHistory(historyEntry('refresh_not_found', actor, { message }, nowOf(deps))) });
   if (written.matchedCount === 0) return superseded();
   return { outcome: 'not_found', message, template: await viewOf(claimed._id, actor) };
+};
+
+// ── linking a template that already exists at WhatsApp ───────────────────────
+
+export interface LinkMetaTemplateInput {
+  /** The template's WhatsApp id (a number as text), as the Meta tab lists it. */
+  metaTemplateId?: unknown;
+  /** The event's business id, e.g. EVT-000011. The server looks the event up. */
+  eventId?: unknown;
+  displayName?: unknown;
+  /** What fills each {{n}}: { position, label, source, fixedValue?, fallback? }. WhatsApp does not hold this. */
+  variables?: unknown;
+}
+
+export interface LinkMetaTemplateResult {
+  template: ReturnType<typeof toTemplateView>;
+  /** True when this call created the local record; false when EventReach already held the template. */
+  created: boolean;
+  /** For an existing record: whether its event changed. Always true when created. */
+  changed: boolean;
+  previousEventId: string | null;
+}
+
+const LINKABLE_BUTTONS = new Set(['QUICK_REPLY', 'URL', 'PHONE_NUMBER']);
+const MEDIA_HEADERS = new Set(['IMAGE', 'VIDEO', 'DOCUMENT']);
+
+/**
+ * What EventReach cannot send for a template that already exists at WhatsApp. Each is refused by name: a template
+ * linked and then sent without its named placeholders, its carousel or its location would not be the one that
+ * WhatsApp approved.
+ */
+export const linkRefusals = (components: MetaTemplateComponents, category: string | null): FieldError[] => {
+  const errors: FieldError[] = [];
+  const fail = (field: string, message: string) => errors.push({ field, message });
+  if (category === 'AUTHENTICATION') fail('category', 'Authentication templates (one-time-password format) cannot be sent from here.');
+  if (components.parameterFormat === 'NAMED') fail('body', 'This template uses named placeholders such as {{guest_name}}. Only numbered placeholders such as {{1}} can be filled.');
+  if (components.otherComponents.length > 0) fail('components', `This template has ${components.otherComponents.join(', ').toLowerCase()} content, which cannot be sent from here.`);
+  if (!components.bodyText) fail('body', 'WhatsApp returned no message body for this template.');
+  const format = components.headerFormat;
+  if (format && format !== 'TEXT' && !MEDIA_HEADERS.has(format)) fail('headerFormat', `A ${format.toLowerCase()} header cannot be sent from here. Only text, image, video and document headers can.`);
+  for (const button of components.buttons) {
+    if (!LINKABLE_BUTTONS.has(button.type)) fail('buttons', `A ${button.type.toLowerCase().replace(/_/g, ' ')} button cannot be sent from here.`);
+    else if (button.type === 'URL' && button.url && button.url.includes('{{')) fail('buttons', 'A link button whose address has a placeholder cannot be sent from here.');
+  }
+  return errors;
+};
+
+const humanize = (name: string) => {
+  const spaced = name.replace(/_+/g, ' ').trim();
+  return (spaced.charAt(0).toUpperCase() + spaced.slice(1)).slice(0, 100);
+};
+
+/**
+ * Creates EventReach's own record of a template that ALREADY exists and is approved at WhatsApp, tied to an event, so
+ * it can be chosen in the Message tab. Nothing is created, edited, deleted or resubmitted at WhatsApp: only reads.
+ *
+ * Only a Super Admin may do this, because it states that a template of the shared WhatsApp account belongs to an
+ * event (the Meta tab that lists such templates is Super Admin only too). The record is shared (no owner) and
+ * created by the Super Admin who linked it.
+ *
+ * Nothing is taken from the browser but the template's WhatsApp id, the typed Event ID and the person's choices of
+ * what fills each placeholder. The template itself is read from WhatsApp by that id, and must be approved there,
+ * belong to the configured WhatsApp Business Account and consist only of parts EventReach can send. The event is
+ * looked up like everywhere else (resolveEvent).
+ *
+ * One WhatsApp template is one local record, identified by (WhatsApp account, template id) - a unique index, written
+ * with a single atomic upsert - so linking twice, or two people linking at once, never makes a second record. Linking
+ * a template EventReach already holds to another event moves it (linkTemplateToEvent).
+ */
+export const linkMetaTemplate = async (caller: TemplateActor, input: LinkMetaTemplateInput, deps: TemplateServiceDeps = {}): Promise<LinkMetaTemplateResult> => {
+  const actor = await requireManager(caller);
+  if (!isSuperAdmin(actor)) {
+    throw new TemplateServiceError('ACCESS_DENIED', 'Only a Super Admin can link a template from WhatsApp to an event.', 403);
+  }
+  const metaTemplateId = typeof input?.metaTemplateId === 'string' ? input.metaTemplateId.trim() : '';
+  if (!META_TEMPLATE_ID_PATTERN.test(metaTemplateId)) {
+    throw new TemplateServiceError('VALIDATION_ERROR', 'A valid WhatsApp template id is required.', 400, [{ field: 'metaTemplateId', message: 'Choose a template from the list.' }]);
+  }
+  const connection = connectionOf(deps);
+  if (!connection.accessToken || !connection.wabaId) {
+    throw new TemplateServiceError('CONFIGURATION_ERROR', 'WhatsApp template management is not configured on the server.', 503);
+  }
+  const wabaId = connection.wabaId;
+  const link = await resolveEvent(actor, input.eventId, null);
+
+  const alreadyHeld = async (): Promise<LinkMetaTemplateResult | null> => {
+    const existing = await WhatsAppTemplate.findOne({ wabaId, metaTemplateId }).select('_id').lean();
+    if (!existing) return null;
+    // EventReach already holds it: never a second record. A different event moves the one it has.
+    const moved = await linkTemplateToEvent(caller, String((existing as any)._id), { eventId: link.eventId }, deps);
+    return { template: moved.template, created: false, changed: moved.changed, previousEventId: moved.previousEventId };
+  };
+  const held = await alreadyHeld();
+  if (held) return held;
+
+  // Read the template from WhatsApp by its id: what is stored is what WhatsApp approved, not what the browser says.
+  let node;
+  try {
+    node = await getMetaTemplateForLink(metaTemplateId, metaDeps(deps));
+  } catch (error: any) {
+    if (error instanceof MetaTemplateApiError) throw listError(error);
+    throw error;
+  }
+  if (node.id !== metaTemplateId || !node.name || !node.language) {
+    throw new TemplateServiceError('META_RESPONSE_INVALID', 'WhatsApp answered with something other than this template. Nothing was linked.', 502);
+  }
+
+  // The id alone does not prove the template is in THIS account: it must be listed by the configured account.
+  let listed;
+  try {
+    listed = (await findMetaTemplatesByName(node.name, metaDeps(deps))).find((t) => t.id === node.id && t.language === node.language);
+  } catch (error: any) {
+    if (error instanceof MetaTemplateApiError) throw listError(error);
+    throw error;
+  }
+  if (!listed) {
+    throw new TemplateServiceError('TEMPLATE_NOT_IN_ACCOUNT', 'That template is not part of the configured WhatsApp Business Account. Nothing was linked.', 404);
+  }
+  if (node.status !== 'APPROVED' || listed.status !== 'APPROVED') {
+    throw new TemplateServiceError(
+      'TEMPLATE_NOT_APPROVED',
+      `WhatsApp lists this template as ${node.status ?? 'having no status'}, not APPROVED. Only an approved template can be linked.`,
+      409
+    );
+  }
+
+  const refusals = linkRefusals(node.components, node.category);
+  if (refusals.length > 0) {
+    throw new TemplateServiceError('UNSUPPORTED_TEMPLATE', `This template cannot be linked: ${refusals[0].message}`, 422, refusals);
+  }
+
+  const c = node.components;
+  const examples = c.bodyExamples;
+  // The person says what fills each placeholder; WhatsApp's own example is the sample.
+  const variables = Array.isArray(input.variables)
+    ? input.variables.map((v: any) => ({ ...v, sample: typeof v?.sample === 'string' && v.sample.trim() ? v.sample : examples[Number(v?.position) - 1] ?? 'Sample' }))
+    : input.variables;
+  const value = requireValid({
+    displayName: typeof input.displayName === 'string' && input.displayName.trim() ? input.displayName : humanize(node.name),
+    name: node.name,
+    language: node.language,
+    category: node.category,
+    headerText: c.headerFormat === 'TEXT' ? c.headerText : null,
+    body: c.bodyText,
+    footer: c.footerText,
+    variables,
+    buttons: c.buttons.map((b) => ({ type: b.type, text: b.text, ...(b.url ? { url: b.url } : {}), ...(b.phoneNumber ? { phoneNumber: b.phoneNumber } : {}) })),
+  });
+
+  const at = nowOf(deps);
+  const headerFormat = c.headerFormat && MEDIA_HEADERS.has(c.headerFormat) ? (c.headerFormat as 'IMAGE' | 'VIDEO' | 'DOCUMENT') : null;
+  const fresh = new WhatsAppTemplate({
+    ...value,
+    wabaId,
+    ownerAdminId: null,
+    createdBy: actor.id,
+    updatedBy: actor.id,
+    eventObjectId: link.eventObjectId,
+    eventId: link.eventId,
+    headerFormat,
+    origin: 'meta',
+    linkedFromMetaAt: at,
+    localState: 'Approved',
+    metaTemplateId,
+    metaStatus: 'APPROVED',
+    metaCategory: node.category,
+    lastSyncedAt: at,
+    history: [historyEntry('linked_from_meta', actor, { metaStatus: 'APPROVED', message: `Linked to ${link.eventId} from the WhatsApp account` }, at)],
+  });
+  await fresh.validate();
+  const { wabaId: _w, metaTemplateId: _m, ...fields } = fresh.toObject();
+  // The upsert's own timestamps are switched off and written here instead: with them on, an upsert that finds the
+  // record already there would still bump its updatedAt, and a repeat link must change nothing at all.
+  const insert = { ...fields, createdAt: at, updatedAt: at };
+
+  let result: any;
+  try {
+    // One atomic upsert on the identity (account, WhatsApp template id): a repeat or a race creates nothing twice.
+    result = await WhatsAppTemplate.findOneAndUpdate(
+      { wabaId, metaTemplateId },
+      { $setOnInsert: insert },
+      { upsert: true, new: true, includeResultMetadata: true, timestamps: false }
+    );
+  } catch (error: any) {
+    if (!duplicateName(error)) throw error;
+    // A concurrent link won the race: it is already held. Otherwise a local template of the same name and language exists.
+    const raced = await alreadyHeld();
+    if (raced) return raced;
+    const sameName: any = await WhatsAppTemplate.findOne({ wabaId, name: node.name, language: node.language }).select('_id localState').lean();
+    throw new TemplateServiceError(
+      'TEMPLATE_NAME_TAKEN',
+      `EventReach already has a template named "${node.name}" in ${node.language} (${sameName?.localState ?? 'another state'}) that is not this WhatsApp template. Nothing was linked.`,
+      409,
+      [{ field: 'name', message: 'A local template with this name and language already exists.' }]
+    );
+  }
+  if (result?.lastErrorObject?.updatedExisting) {
+    const raced = await alreadyHeld();
+    if (raced) return raced;
+  }
+
+  await AuditService.log({
+    action: 'WHATSAPP_TEMPLATE_LINKED_FROM_META',
+    collectionName: 'whatsapptemplates',
+    documentId: String(result.value._id),
+    actor: { userId: actor.id, email: actor.email ?? null, name: actor.name ?? actor.email ?? null, role: actor.role },
+    description: `Linked WhatsApp template to ${link.eventId}: ${node.name} (${node.language})`,
+    metadata: { metaTemplateId, eventId: link.eventId, headerFormat, category: node.category },
+  });
+  return { template: toTemplateView(result.value, actor), created: true, changed: true, previousEventId: null };
 };

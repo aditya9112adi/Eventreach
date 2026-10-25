@@ -237,6 +237,8 @@ const templateReasons = (template: any, actor: TemplateActor, sender: any): stri
     );
   }
   if (!LANGUAGE_CODE_PATTERN.test(String(template.language))) reasons.push('This template has no valid language code.');
+  // The test page sends the body only; a media header needs a file it cannot attach.
+  if (template.headerFormat) reasons.push('This template has a media header, which this test page cannot fill.');
   if (!canViewTemplate(actor, template)) reasons.push('You cannot use this template.');
   return reasons;
 };
