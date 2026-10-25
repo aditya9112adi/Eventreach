@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, CheckCircle2, Pencil, RefreshCw, Send, ShieldAlert, Trash2 } from 'lucide-react';
+import { EVENT_BUSINESS_ID_PLACEHOLDER } from '@eventreach/shared';
 import api from '../../services/api';
 import { useAuth } from '../../store/authStore';
 import { useToast } from '../../components/ui/Toast';
@@ -13,6 +14,9 @@ import {
   formFromTemplate,
   BUTTON_TYPE_LABELS,
   canConfirmSubmission,
+  eventLinkConfirmation,
+  eventLinkRequest,
+  eventLinkToast,
   historyLabel,
   outcomeToast,
   parseReview,
@@ -54,6 +58,12 @@ const TemplateDetail = () => {
   const [review, setReview] = useState<SubmissionReview | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
+  // Linking the template to an event (or moving it): the typed Event ID, its error, the ID awaiting confirmation.
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkInput, setLinkInput] = useState('');
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkConfirm, setLinkConfirm] = useState<string | null>(null);
+  const [linkBusy, setLinkBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoadProblem(null);
@@ -145,6 +155,57 @@ const TemplateDetail = () => {
     } catch (error) {
       setActionProblem(toApiProblem(error));
       setBusy(false);
+    }
+  };
+
+  const openLink = () => {
+    setLinkInput(template?.eventId ?? '');
+    setLinkError(null);
+    setLinkOpen(true);
+  };
+
+  const closeLink = () => {
+    setLinkOpen(false);
+    setLinkError(null);
+    setLinkConfirm(null);
+  };
+
+  /** Validates what was typed, then asks for confirmation. Nothing is sent until it is given. */
+  const reviewLink = () => {
+    const request = eventLinkRequest(linkInput);
+    if (!request.ok) {
+      setLinkError(request.message);
+      return;
+    }
+    if (template && template.eventId === request.body.eventId) {
+      setLinkError(`This template is already linked to ${request.body.eventId}.`);
+      return;
+    }
+    setLinkError(null);
+    setLinkConfirm(request.body.eventId);
+  };
+
+  /** PUT the confirmed Event ID. The server resolves the event; this never sends an ObjectId and never calls Meta. */
+  const saveLink = async () => {
+    const eventId = linkConfirm;
+    if (!eventId || linkBusy) return;
+    setLinkConfirm(null);
+    setLinkBusy(true);
+    setLinkError(null);
+    try {
+      const response = await api.put(`${TEMPLATES_API}/${id}/event`, { eventId });
+      if (response.data?.template) setTemplate(response.data.template);
+      const toast = eventLinkToast(response.data);
+      showToast(toast.type, toast.message);
+      closeLink();
+    } catch (error) {
+      const problem = toApiProblem(error);
+      // A refused Event ID is shown under the field, in the server's own words.
+      setLinkError(problem.fieldErrors.eventId ?? problem.message);
+      // The template may have moved on (started submitting): show it as it is.
+      if (problem.kind === 'conflict') load();
+    } finally {
+      setLinkBusy(false);
     }
   };
 
@@ -267,14 +328,53 @@ const TemplateDetail = () => {
               )}
               <Row label="Language"><span className="font-mono">{template.language}</span></Row>
               <Row label="Event">
-                {template.eventId ? (
-                  <>
-                    <span className="font-mono">{template.eventId}</span>
-                    {eventName ? <span className="text-foreground/60"> · {eventName}</span> : null}
-                  </>
-                ) : (
-                  'No event - edit the draft to add an Event ID'
-                )}
+                <div className="space-y-2">
+                  <div>
+                    {template.eventId ? (
+                      <>
+                        <span className="font-mono">{template.eventId}</span>
+                        {eventName ? <span className="text-foreground/60"> - {eventName}</span> : null}
+                      </>
+                    ) : (
+                      'No event - not offered in the Message tab until it is linked to one'
+                    )}
+                  </div>
+                  {actions.linkEvent && !linkOpen && (
+                    <button type="button" className="text-xs text-accent hover:underline" onClick={openLink} disabled={busy}>
+                      {template.eventId ? 'Change event' : 'Link to an event'}
+                    </button>
+                  )}
+                  {actions.linkEvent && linkOpen && (
+                    <form
+                      className="space-y-2"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        reviewLink();
+                      }}
+                    >
+                      <label htmlFor="tpl-link-event-id" className="sr-only">Event ID</label>
+                      <input
+                        id="tpl-link-event-id"
+                        className="block w-full max-w-sm rounded-lg border border-input bg-background px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
+                        value={linkInput}
+                        onChange={(e) => {
+                          setLinkInput(e.target.value);
+                          setLinkError(null);
+                        }}
+                        placeholder={EVENT_BUSINESS_ID_PLACEHOLDER}
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-invalid={linkError ? true : undefined}
+                        disabled={linkBusy}
+                      />
+                      {linkError && <p className="text-xs text-destructive" role="alert">{linkError}</p>}
+                      <div className="flex gap-2">
+                        <Button type="submit" disabled={linkBusy} isLoading={linkBusy}>Continue</Button>
+                        <Button type="button" variant="secondary" onClick={closeLink} disabled={linkBusy}>Cancel</Button>
+                      </div>
+                    </form>
+                  )}
+                </div>
               </Row>
               <Row label="Owner">{template.ownerAdminId ? (template.ownerAdminId === user?.id ? 'You' : 'An Admin') : 'Shared'}</Row>
               <Row label="Status">{status.label}</Row>
@@ -411,6 +511,22 @@ const TemplateDetail = () => {
           </div>
         </div>
       )}
+
+      {linkConfirm && (() => {
+        const ask = eventLinkConfirmation(template, linkConfirm);
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="link-confirm-title">
+            <div className="bg-surface border border-border p-6 rounded-xl shadow-2xl max-w-md w-full mx-4 animate-spring-up">
+              <h3 id="link-confirm-title" className="text-xl font-bold mb-3 text-foreground">{ask.title}</h3>
+              <p className="text-foreground/70 mb-6 leading-relaxed text-sm">{ask.message}</p>
+              <div className="flex justify-end gap-3">
+                <Button variant="secondary" onClick={() => setLinkConfirm(null)}>Cancel</Button>
+                <Button onClick={saveLink}>{ask.confirmLabel}</Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {confirming && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center" role="dialog" aria-modal="true">

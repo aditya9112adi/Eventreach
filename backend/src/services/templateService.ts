@@ -348,6 +348,70 @@ export const updateTemplateDraft = async (caller: TemplateActor, id: unknown, in
   }
 };
 
+export interface EventLinkResult {
+  template: ReturnType<typeof toTemplateView>;
+  /** False when the template was already tied to exactly this event: nothing was written. */
+  changed: boolean;
+  /** The Event ID the template was tied to before, or null if it had none. */
+  previousEventId: string | null;
+}
+
+/**
+ * Ties an existing template to an event, or moves it to another one, in any state except Submitting.
+ *
+ * Which event a template is offered for is EventReach-side bookkeeping - Meta never sees it - so, unlike
+ * the template's wording, it can be corrected after the template was submitted or approved. This changes
+ * ONLY that: the two event ids (set together, from the event the server looked up, never from the client),
+ * who changed it and when. Status, WhatsApp template id, content and version are untouched, no Meta call is
+ * made, and what may be sent where is still decided by the Message tab's checks.
+ *
+ * Authorized exactly like an edit (the owner, or a Super Admin for a shared template) and validated exactly
+ * like Create Template: the typed Event ID must exist, be one the caller may use and, for an owned template,
+ * be the owner's. Every refusal of the ID reads the same, so an event's existence is not revealed.
+ */
+export const linkTemplateToEvent = async (
+  caller: TemplateActor,
+  id: unknown,
+  input: { eventId?: unknown } = {},
+  deps: TemplateServiceDeps = {}
+): Promise<EventLinkResult> => {
+  const { template, actor } = await loadManageable(caller, id);
+  if (template.localState === 'Submitting') {
+    throw new TemplateServiceError('TEMPLATE_BUSY', 'This template is being submitted to WhatsApp. Try again in a moment.', 409);
+  }
+
+  const link = await resolveEvent(actor, input?.eventId, ownerOf(template));
+  const before = storedEventLink(template);
+  if (before && before.eventId === link.eventId && before.eventObjectId === link.eventObjectId) {
+    return { template: toTemplateView(template, actor), changed: false, previousEventId: before.eventId };
+  }
+
+  const at = nowOf(deps);
+  const note = before ? `Moved from ${before.eventId} to ${link.eventId}` : `Linked to ${link.eventId}`;
+  // Conditional on the state, so a link can never land on a template that began submitting since it was read.
+  const updated = await WhatsAppTemplate.findOneAndUpdate(
+    { _id: template._id, localState: { $ne: 'Submitting' } },
+    {
+      $set: { eventObjectId: link.eventObjectId, eventId: link.eventId, updatedBy: actor.id },
+      $push: pushHistory(historyEntry('event_linked', actor, { message: note }, at)),
+    },
+    { new: true, runValidators: true }
+  );
+  if (!updated) {
+    throw new TemplateServiceError('TEMPLATE_BUSY', 'The template started submitting while you were linking it. Nothing was changed.', 409);
+  }
+
+  await AuditService.log({
+    action: 'WHATSAPP_TEMPLATE_EVENT_LINKED',
+    collectionName: 'whatsapptemplates',
+    documentId: String(template._id),
+    actor: { userId: actor.id, email: actor.email ?? null, name: actor.name ?? actor.email ?? null, role: actor.role },
+    description: `${note}: ${template.name} (${template.language})`,
+    metadata: { eventId: link.eventId, previousEventId: before?.eventId ?? null },
+  });
+  return { template: toTemplateView(updated, actor), changed: true, previousEventId: before?.eventId ?? null };
+};
+
 export const getTemplate = async (caller: TemplateActor, id: unknown) => {
   const actor = await requireManager(caller);
   if (typeof id !== 'string' || !mongoose.Types.ObjectId.isValid(id)) {

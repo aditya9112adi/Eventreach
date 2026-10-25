@@ -597,3 +597,250 @@ describe('templates made before templates were tied to events', () => {
     assert.deepEqual(await links.migrateLegacyTemplateLinks().then((x: any) => x.converted), 0);
   });
 });
+
+describe('linking an existing template to an event (PUT /api/whatsapp/templates/:id/event)', () => {
+  const link = (token: string | undefined, id: string, eventId: unknown, extra: Record<string, unknown> = {}) =>
+    call('PUT', `${realUrl}/templates/${id}/event`, token, { eventId, ...extra });
+
+  /** The shape found in production: approved at Meta and in EventReach, eventId null and no eventObjectId at all. */
+  const unlinked = async (owner: any, state: Record<string, any> = {}) => {
+    const t = await approved(owner, fx.eventA1, {}, state);
+    await WhatsAppTemplate.collection.updateOne({ _id: new mongoose.Types.ObjectId(t.id) }, { $set: { eventId: null }, $unset: { eventObjectId: '' } });
+    return t;
+  };
+  const stored = (id: string) => WhatsAppTemplate.findById(id).lean() as Promise<any>;
+  const linkAudits = () => AuditLog.find({ action: 'WHATSAPP_TEMPLATE_EVENT_LINKED' }).lean() as Promise<any[]>;
+
+  // No call to Meta may happen: every outbound path of the template service goes through this axios.
+  const distAxios = createRequire(require.resolve('../backend/dist/services/metaTemplateApi'))('axios');
+  const realHttp = { post: distAxios.post, get: distAxios.get, request: distAxios.request };
+  const metaCalls: string[] = [];
+  before(() => {
+    for (const method of ['post', 'get', 'request'] as const) distAxios[method] = () => { metaCalls.push(method); throw new Error('the link action must never call Meta'); };
+  });
+  after(() => Object.assign(distAxios, realHttp));
+  beforeEach(() => { metaCalls.length = 0; });
+
+  test('the production case: an approved template with no event link is not offered, then is offered for the event it is linked to - and only that one', async () => {
+    const t = await unlinked(fx.adminA);
+    assert.deepEqual((await listFor(fx.tA, fx.eventA1)).body.templates, [], 'excluded before linking');
+    const before = await stored(t.id);
+    assert.equal(before.eventId, null);
+    assert.equal(before.eventObjectId, undefined);
+
+    const res = await link(fx.tA, t.id, `  ${fx.eventA1.eventId}  `);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.changed, true);
+    assert.equal(res.body.previousEventId, null);
+    assert.equal(res.body.template.eventId, fx.eventA1.eventId);
+    assert.equal(res.body.template.eventObjectId, String(fx.eventA1._id));
+
+    const after = await stored(t.id);
+    assert.equal(String(after.eventObjectId), String(fx.eventA1._id), 'both ids set together, from the event the server found');
+    assert.equal(after.eventId, fx.eventA1.eventId);
+    assert.deepEqual((await listFor(fx.tA, fx.eventA1)).body.templates.map((x: any) => x.id), [t.id], 'now offered for its event');
+    assert.deepEqual((await listFor(fx.tA, fx.eventA2)).body.templates, [], 'and for no other event of the same Admin');
+
+    // ...and it sends, through the same checks as any event template.
+    const guest = await mkGuest(fx.eventA1, 'Linked Guest');
+    const sendRes = await send(fx.tA, { eventId: String(fx.eventA1._id), contactIds: [String(guest._id)], templateId: t.id });
+    assert.equal(sendRes.status, 200, JSON.stringify(sendRes.body));
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].templateName, t.name);
+  });
+
+  test('approval status, WhatsApp template id, content, version and identity are exactly as they were', async () => {
+    const t = await unlinked(fx.adminA);
+    const before = await stored(t.id);
+    const res = await link(fx.tA, t.id, fx.eventA1.eventId);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const after = await stored(t.id);
+    for (const field of ['_id', 'name', 'language', 'category', 'displayName', 'body', 'headerText', 'footer', 'localState', 'metaStatus', 'metaCategory', 'metaTemplateId', 'wabaId', 'version', 'ownerAdminId', 'createdBy', 'lastSyncedAt', 'rejectionReason']) {
+      assert.deepEqual(after[field], before[field], field);
+    }
+    assert.deepEqual(after.variables, before.variables);
+    assert.deepEqual(after.buttons, before.buttons);
+    assert.equal(after.localState, 'Approved');
+    assert.equal(after.metaStatus, 'APPROVED');
+    assert.equal(after.submission.attempts, before.submission.attempts);
+    assert.equal(String(after.updatedBy), String(fx.adminA._id), 'who changed it is recorded');
+    assert.ok(new Date(after.updatedAt).getTime() >= new Date(before.updatedAt).getTime(), 'when is recorded');
+    assert.equal(res.body.template.localState, 'Approved');
+    assert.equal(res.body.template.metaTemplateId, before.metaTemplateId);
+  });
+
+  test('moving a template to another event: the old event stops offering it and the new one starts', async () => {
+    const t = await approved(fx.adminA, fx.eventA1);
+    assert.equal((await listFor(fx.tA, fx.eventA1)).body.templates.length, 1);
+    const res = await link(fx.tA, t.id, fx.eventA2.eventId);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.changed, true);
+    assert.equal(res.body.previousEventId, fx.eventA1.eventId);
+    assert.deepEqual((await listFor(fx.tA, fx.eventA1)).body.templates, []);
+    assert.deepEqual((await listFor(fx.tA, fx.eventA2)).body.templates.map((x: any) => x.id), [t.id]);
+    const guest = await mkGuest(fx.eventA1, 'Old Event Guest');
+    const refused = await send(fx.tA, { eventId: String(fx.eventA1._id), contactIds: [String(guest._id)], templateId: t.id });
+    assert.equal(refused.status, 403, 'the old event can no longer send it');
+    assert.equal(refused.body.error.code, 'TEMPLATE_NOT_FOR_EVENT');
+    const history = (await stored(t.id)).history;
+    assert.match(history[history.length - 1].message, new RegExp(`Moved from ${fx.eventA1.eventId} to ${fx.eventA2.eventId}`));
+    assert.equal(history[history.length - 1].type, 'event_linked');
+    assert.equal(String(history[history.length - 1].actorId), String(fx.adminA._id));
+  });
+
+  test('linking to the event it already has changes nothing and records nothing', async () => {
+    const t = await approved(fx.adminA, fx.eventA1);
+    const before = await stored(t.id);
+    const res = await link(fx.tA, t.id, fx.eventA1.eventId);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.changed, false);
+    assert.equal((await linkAudits()).length, 0);
+    const after = await stored(t.id);
+    assert.equal(String(after.updatedAt), String(before.updatedAt));
+    assert.equal(after.history.length, before.history.length);
+  });
+
+  test('is allowed in every state except Submitting, and changes nothing else about the state', async () => {
+    const states: [string, Record<string, any>][] = [
+      ['Draft', { localState: 'Draft', metaStatus: null }],
+      ['SubmissionFailed', { localState: 'SubmissionFailed', metaStatus: null }],
+      ['Pending', { localState: 'Pending', metaStatus: 'PENDING' }],
+      ['Approved', { localState: 'Approved', metaStatus: 'APPROVED' }],
+      ['Rejected', { localState: 'Rejected', metaStatus: 'REJECTED' }],
+      ['Paused', { localState: 'Paused', metaStatus: 'PAUSED' }],
+      ['Unknown', { localState: 'Unknown', metaStatus: null }],
+    ];
+    for (const [label, state] of states) {
+      const t = await unlinked(fx.adminA, state);
+      const res = await link(fx.tA, t.id, fx.eventA1.eventId);
+      assert.equal(res.status, 200, `${label}: ${JSON.stringify(res.body)}`);
+      const after = await stored(t.id);
+      assert.equal(after.localState, state.localState, `${label} stays ${label}`);
+      assert.equal(after.metaStatus, state.metaStatus);
+      assert.equal(after.eventId, fx.eventA1.eventId);
+    }
+  });
+
+  test('a template that is Submitting is refused, and its link is untouched', async () => {
+    const t = await approved(fx.adminA, fx.eventA1, {}, { localState: 'Submitting', metaStatus: null });
+    const res = await link(fx.tA, t.id, fx.eventA2.eventId);
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    assert.equal(res.body.error.code, 'TEMPLATE_BUSY');
+    const after = await stored(t.id);
+    assert.equal(after.eventId, fx.eventA1.eventId, 'still tied to the event it had');
+    assert.equal(after.localState, 'Submitting');
+    assert.equal((await linkAudits()).length, 0);
+  });
+
+  test('a missing, malformed, unknown or out-of-scope Event ID is refused, and nothing is changed or audited', async () => {
+    const t = await unlinked(fx.adminA);
+    const missing = await link(fx.tA, t.id, 'EVT-9999999');
+    const foreign = await link(fx.tA, t.id, fx.eventB.eventId);
+    assert.equal(missing.status, 400);
+    assert.equal(foreign.status, 400);
+    assert.deepEqual(foreign.body.error.errors, missing.body.error.errors, 'the same words, so an event is not revealed');
+    for (const bad of [undefined, null, '', '   ', 'evt-000011', 'EVT-11', 'EVT-0000011x', String(fx.eventA1._id), '{"$ne":null}', 17, { $ne: null }, ['EVT-000011']]) {
+      const res = await link(fx.tA, t.id, bad);
+      assert.equal(res.status, 400, JSON.stringify(bad));
+      assert.ok(res.body.error.errors.some((e: any) => e.field === 'eventId'), JSON.stringify(bad));
+    }
+    const after = await stored(t.id);
+    assert.equal(after.eventId, null);
+    assert.equal(after.eventObjectId, undefined);
+    assert.equal((await linkAudits()).length, 0);
+    assert.equal((await call('PUT', `${realUrl}/templates/${t.id}/event`, fx.tA, {})).status, 400, 'no eventId at all');
+  });
+
+  test('a client-supplied eventObjectId is never trusted: the database-resolved event wins', async () => {
+    const t = await unlinked(fx.adminA);
+    const res = await link(fx.tA, t.id, fx.eventA1.eventId, { eventObjectId: String(fx.eventB._id) });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(String((await stored(t.id)).eventObjectId), String(fx.eventA1._id));
+    // Naming the event only by its ObjectId is not an Event ID.
+    assert.equal((await link(fx.tA, t.id, String(fx.eventB._id))).status, 400);
+  });
+
+  test('authorization: only the owner or a Super Admin; no one else, and not without signing in', async () => {
+    const t = await unlinked(fx.adminA);
+    assert.equal((await link(undefined, t.id, fx.eventA1.eventId)).status, 401);
+    assert.equal((await link(fx.tUserA, t.id, fx.eventA1.eventId)).status, 403, 'a User may not manage templates');
+    assert.equal((await link(fx.tB, t.id, fx.eventA1.eventId)).status, 404, "another Admin cannot even see it");
+    assert.equal((await link(fx.tB, t.id, fx.eventB.eventId)).status, 404);
+    assert.equal((await link(fx.tA, 'not-an-id', fx.eventA1.eventId)).status, 400);
+    assert.equal((await link(fx.tA, String(new mongoose.Types.ObjectId()), fx.eventA1.eventId)).status, 404);
+    assert.equal((await stored(t.id)).eventId, null, 'none of those changed it');
+    assert.equal((await linkAudits()).length, 0);
+    // The owner may; a Super Admin may - but for an owned template only to one of that owner's events.
+    assert.equal((await link(fx.tSuper, t.id, fx.eventB.eventId)).status, 400, "a Super Admin cannot move an owned template to another owner's event");
+    assert.equal((await link(fx.tSuper, t.id, fx.eventA1.eventId)).status, 200);
+    assert.equal((await link(fx.tA, t.id, fx.eventA2.eventId)).status, 200);
+  });
+
+  test('a shared template can be linked by a Super Admin only', async () => {
+    const shared = await svc.createTemplateDraft(fx.S, body({ eventId: fx.eventA1.eventId }), { connection: CONNECTION });
+    await WhatsAppTemplate.updateOne({ _id: shared.id }, { $set: { localState: 'Approved', metaStatus: 'APPROVED', metaTemplateId: '8123456' } }, { overwriteImmutable: true });
+    assert.equal((await link(fx.tA, shared.id, fx.eventA2.eventId)).status, 403);
+    assert.equal((await stored(shared.id)).eventId, fx.eventA1.eventId);
+    assert.equal((await link(fx.tSuper, shared.id, fx.eventB.eventId)).status, 200, 'any event the Super Admin may use');
+  });
+
+  test('an audit entry records who linked what, and from where, without any secret', async () => {
+    const t = await unlinked(fx.adminA);
+    const before = Date.now();
+    assert.equal((await link(fx.tA, t.id, fx.eventA1.eventId)).status, 200);
+    assert.equal((await link(fx.tA, t.id, fx.eventA2.eventId)).status, 200);
+    const entries = (await linkAudits()).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    assert.equal(entries.length, 2);
+    assert.equal(entries[0].documentId, t.id);
+    assert.equal(entries[0].collectionName, 'whatsapptemplates');
+    assert.equal(entries[0].actor.userId, String(fx.adminA._id));
+    assert.equal(entries[0].actor.role, 'Admin');
+    assert.match(entries[0].description, new RegExp(`Linked to ${fx.eventA1.eventId}: ${t.name} \\(en\\)`));
+    assert.deepEqual({ eventId: entries[0].metadata.eventId, previousEventId: entries[0].metadata.previousEventId }, { eventId: fx.eventA1.eventId, previousEventId: null });
+    assert.match(entries[1].description, new RegExp(`Moved from ${fx.eventA1.eventId} to ${fx.eventA2.eventId}`));
+    assert.equal(entries[1].metadata.previousEventId, fx.eventA1.eventId);
+    assert.ok(new Date(entries[0].timestamp).getTime() >= before - 2000, 'timestamped now');
+    assert.equal(JSON.stringify(entries).includes(FAKE_TOKEN), false);
+  });
+
+  test('makes no call to Meta, and sends no message', async () => {
+    const t = await unlinked(fx.adminA);
+    assert.equal((await link(fx.tA, t.id, fx.eventA1.eventId)).status, 200);
+    assert.equal((await link(fx.tA, t.id, fx.eventA2.eventId)).status, 200);
+    assert.equal((await link(fx.tA, t.id, 'EVT-9999999')).status, 400);
+    assert.deepEqual(metaCalls, [], 'no outbound request through the Meta adapter');
+    assert.equal(sent.length, 0, 'no WhatsApp message was sent');
+  });
+
+  test('other templates are untouched', async () => {
+    const t = await unlinked(fx.adminA);
+    const other = await approved(fx.adminA, fx.eventA2, { displayName: 'Bystander' });
+    const otherBefore = JSON.stringify(await stored(other.id));
+    assert.equal((await link(fx.tA, t.id, fx.eventA1.eventId)).status, 200);
+    assert.equal(JSON.stringify(await stored(other.id)), otherBefore);
+  });
+
+  test('the Message tab rules still apply after linking: approval is required, and only an Upcoming event may send', async () => {
+    // Linked but not approved by Meta: still not offered.
+    const pending = await unlinked(fx.adminA, { localState: 'Pending', metaStatus: 'PENDING' });
+    assert.equal((await link(fx.tA, pending.id, fx.eventA1.eventId)).status, 200);
+    assert.deepEqual((await listFor(fx.tA, fx.eventA1)).body.templates, []);
+    assert.equal((await send(fx.tA, { eventId: String(fx.eventA1._id), contactIds: [String(new mongoose.Types.ObjectId())], templateId: pending.id })).status, 409);
+
+    // Linked and approved, but the event is not Upcoming: still refused at send.
+    const done = await mkEvent('A Completed', fx.adminA._id, { eventStatus: 'Completed' });
+    const t = await unlinked(fx.adminA);
+    assert.equal((await link(fx.tA, t.id, done.eventId)).status, 200);
+    const guest = await mkGuest(done, 'Past Guest');
+    const res = await send(fx.tA, { eventId: String(done._id), contactIds: [String(guest._id)], templateId: t.id });
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    assert.equal(res.body.error.code, 'EVENT_NOT_ACTIVE');
+    assert.equal(sent.length, 0);
+
+    // The caller's own access to the event still decides who may send: another Admin's template cannot be sent for this event.
+    const mine = await unlinked(fx.adminA);
+    assert.equal((await link(fx.tA, mine.id, fx.eventA1.eventId)).status, 200);
+    const guestA = await mkGuest(fx.eventA1, 'Guard Guest');
+    assert.equal((await send(fx.tB, { eventId: String(fx.eventA1._id), contactIds: [String(guestA._id)], templateId: mine.id })).status, 403);
+  });
+});
