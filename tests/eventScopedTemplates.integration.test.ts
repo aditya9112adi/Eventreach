@@ -343,7 +343,7 @@ describe('Message tab: the templates offered for an event', () => {
     assert.deepEqual(res.body.templates.map((t: any) => t.displayName), ['Mine']);
     assert.equal(res.body.templates[0].id, mine.id);
     assert.equal(res.body.event.eventId, fx.eventA1.eventId);
-    assert.deepEqual(Object.keys(res.body.templates[0]).sort(), ['body', 'category', 'displayName', 'footer', 'headerText', 'id', 'language', 'name', 'variableCount']);
+    assert.deepEqual(Object.keys(res.body.templates[0]).sort(), ['body', 'category', 'displayName', 'footer', 'headerFormat', 'headerText', 'id', 'language', 'name', 'variableCount']);
   });
 
   test('a template that is pending, rejected, paused, a draft, or approved locally but not by Meta is not listed', async () => {
@@ -842,5 +842,445 @@ describe('linking an existing template to an event (PUT /api/whatsapp/templates/
     assert.equal((await link(fx.tA, mine.id, fx.eventA1.eventId)).status, 200);
     const guestA = await mkGuest(fx.eventA1, 'Guard Guest');
     assert.equal((await send(fx.tB, { eventId: String(fx.eventA1._id), contactIds: [String(guestA._id)], templateId: mine.id })).status, 403);
+  });
+});
+
+describe('linking a template that already exists at WhatsApp (POST /api/whatsapp/templates/link-meta)', () => {
+  const fsNode = require('node:fs');
+  const pathNode = require('node:path');
+  const { UPLOAD_DIR } = require('../backend/dist/middleware/mediaUpload');
+  const metaApi = require('../backend/dist/services/metaTemplateApi');
+  const { actionLimiter, clientKey } = require('../backend/dist/middleware/rateLimitMiddleware');
+
+  // The route shares the 20-per-minute limit of the other actions that reach Meta. It is one counter for the whole
+  // process, so each test starts from an empty one (and one test below checks the limit itself).
+  const resetLimiter = () => {
+    for (const ip of ['127.0.0.1', '::ffff:127.0.0.1', '::1']) actionLimiter.resetKey(clientKey({ headers: {}, ip }));
+  };
+
+  // WhatsApp, simulated at the HTTP layer the real adapter uses. Reads are answered from `world`; any attempt to
+  // create, edit or delete is recorded and refused, so a test fails loudly if the link action ever mutates Meta.
+  const distAxios = createRequire(require.resolve('../backend/dist/services/metaTemplateApi'))('axios');
+  const realHttp = { get: distAxios.get, post: distAxios.post, put: distAxios.put, patch: distAxios.patch, delete: distAxios.delete, request: distAxios.request };
+  const world = new Map<string, any>();
+  const gets: string[] = [];
+  const allMutations: string[] = [];
+  const files: string[] = [];
+  const priorToken = process.env.WHATSAPP_TOKEN;
+  let plainAdminToken = '';
+
+  const wire = ({ inAccount: _hidden, ...t }: any) => t;
+  before(async () => {
+    process.env.WHATSAPP_TOKEN = FAKE_TOKEN;
+    distAxios.get = async (url: string, options: any) => {
+      gets.push(url.replace(/^https:\/\/graph\.facebook\.com\/v[\d.]+\//, ''));
+      const tail = url.split('/').pop() as string;
+      if (tail === 'message_templates') {
+        const only = options?.params?.name;
+        return { data: { data: [...world.values()].filter((t) => t.inAccount !== false && (!only || t.name === only)).map(wire) } };
+      }
+      const t = world.get(tail);
+      if (!t) throw Object.assign(new Error('Unsupported get request'), { response: { status: 404, data: { error: { message: 'Unsupported get request.', code: 100 } } } });
+      return { data: wire(t) };
+    };
+    for (const method of ['post', 'put', 'patch', 'delete', 'request'] as const) {
+      distAxios[method] = () => { allMutations.push(method); throw new Error('the link action must never change anything at WhatsApp'); };
+    }
+    const plain = await mkAdmin('Plain Admin', 'Admin', false);
+    plainAdminToken = tokenFor(plain, 'Admin');
+  });
+  after(() => {
+    Object.assign(distAxios, realHttp);
+    if (priorToken === undefined) delete process.env.WHATSAPP_TOKEN; else process.env.WHATSAPP_TOKEN = priorToken;
+    for (const f of files) { try { fsNode.unlinkSync(pathNode.join(UPLOAD_DIR, f)); } catch { /* gone */ } }
+  });
+
+  const tpl = (id: string, name: string, components: any[], extra: Record<string, any> = {}) => ({ id, name, language: 'en', status: 'APPROVED', category: 'UTILITY', components, ...extra });
+  const BODY = (text: string, example?: string[]) => ({ type: 'BODY', text, ...(example ? { example: { body_text: [example] } } : {}) });
+  beforeEach(() => {
+    resetLimiter();
+    world.clear(); gets.length = 0;
+    const set = (t: any) => world.set(t.id, t);
+    set(tpl('7001', 'invite_text', [BODY('Dear {{1}}, welcome to {{2}}.', ['Riya', 'Sharma Wedding']), { type: 'FOOTER', text: 'EventReach' },
+      { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Yes' }, { type: 'URL', text: 'Map', url: 'https://example.com/map' }, { type: 'PHONE_NUMBER', text: 'Call', phone_number: '+919876543210' }] }]));
+    set(tpl('7002', 'invite_image', [{ type: 'HEADER', format: 'IMAGE', example: { header_handle: ['h'] } }, BODY('Please find the invitation attached.')]));
+    set(tpl('7003', 'invite_video', [{ type: 'HEADER', format: 'VIDEO', example: { header_handle: ['h'] } }, BODY('Watch the invitation.')]));
+    set(tpl('7004', 'invite_document', [{ type: 'HEADER', format: 'DOCUMENT', example: { header_handle: ['h'] } }, BODY('Hello {{1}}, the document is attached.', ['Riya'])]));
+    set(tpl('7005', 'invite_header', [{ type: 'HEADER', format: 'TEXT', text: 'You are invited' }, BODY('See you at {{1}}.', ['the venue'])]));
+    set(tpl('7006', 'pending_one', [BODY('Hello.')], { status: 'PENDING' }));
+    set(tpl('7007', 'paused_one', [BODY('Hello.')], { status: 'PAUSED' }));
+    set(tpl('7008', 'named_one', [BODY('Hi {{guest_name}}.')], { parameter_format: 'NAMED' }));
+    set(tpl('7009', 'auth_one', [BODY('Your code is {{1}}.')], { category: 'AUTHENTICATION' }));
+    set(tpl('7010', 'carousel_one', [BODY('Look.'), { type: 'CAROUSEL', cards: [] }]));
+    set(tpl('7011', 'location_one', [{ type: 'HEADER', format: 'LOCATION' }, BODY('Find us.')]));
+    set(tpl('7012', 'dynamic_url_one', [BODY('Hello.'), { type: 'BUTTONS', buttons: [{ type: 'URL', text: 'Open', url: 'https://example.com/r/{{1}}' }] }]));
+    set(tpl('7013', 'foreign_one', [BODY('Hello.')], { inAccount: false }));
+  });
+
+  const linkMeta = (token: string | undefined, body: Record<string, unknown>) => call('POST', `${realUrl}/templates/link-meta`, token, body);
+  const one = [{ position: 1, label: 'Guest name', source: 'guest.name' }];
+  const two = [...one, { position: 2, label: 'Event', source: 'event.name' }];
+  const holding = (metaId: string) => WhatsAppTemplate.countDocuments({ wabaId: WABA, metaTemplateId: metaId });
+  const record = (metaId: string) => WhatsAppTemplate.findOne({ wabaId: WABA, metaTemplateId: metaId }).lean() as Promise<any>;
+  const audits = (action: string) => AuditLog.find({ action }).lean() as Promise<any[]>;
+  const stored = (kind: 'png' | 'pdf' | 'mp4') => {
+    const bytes = kind === 'png' ? Buffer.from('89504e470d0a1a0a', 'hex')
+      : kind === 'pdf' ? Buffer.from('%PDF-1.4\ntrailer<</Root 1 0 R>>\n%%EOF\n')
+      : Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypmp42'), Buffer.alloc(16)]);
+    const name = kind === 'png' ? 'Invitation.png' : kind === 'pdf' ? 'Invite.pdf' : 'Invitation.mp4';
+    const fileName = `link-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${name}`;
+    fsNode.mkdirSync(UPLOAD_DIR, { recursive: true });
+    fsNode.writeFileSync(pathNode.join(UPLOAD_DIR, fileName), bytes);
+    files.push(fileName);
+    return { url: `/uploads/${fileName}`, filename: name };
+  };
+
+  test('a Meta-only approved template becomes exactly one local record, tied to the chosen event, taken from WhatsApp', async () => {
+    const res = await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: `  ${fx.eventA1.eventId} `, variables: two });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.equal(res.body.created, true);
+    assert.equal(await holding('7001'), 1);
+    const r = await record('7001');
+    assert.equal(r.wabaId, WABA);
+    assert.equal(r.metaTemplateId, '7001');
+    assert.equal(r.name, 'invite_text');
+    assert.equal(r.language, 'en');
+    assert.equal(r.category, 'UTILITY');
+    assert.equal(r.metaCategory, 'UTILITY');
+    assert.equal(r.body, 'Dear {{1}}, welcome to {{2}}.');
+    assert.equal(r.footer, 'EventReach');
+    assert.equal(r.headerText, null);
+    assert.equal(r.headerFormat, null);
+    assert.equal(r.displayName, 'Invite text');
+    assert.deepEqual(r.buttons.map((b: any) => [b.type, b.text, b.url ?? null, b.phoneNumber ?? null]), [['QUICK_REPLY', 'Yes', null, null], ['URL', 'Map', 'https://example.com/map', null], ['PHONE_NUMBER', 'Call', null, '+919876543210']]);
+    assert.deepEqual(r.variables.map((v: any) => [v.position, v.label, v.source, v.sample]), [[1, 'Guest name', 'guest.name', 'Riya'], [2, 'Event', 'event.name', 'Sharma Wedding']]);
+    assert.equal(r.localState, 'Approved');
+    assert.equal(r.metaStatus, 'APPROVED');
+    assert.equal(r.origin, 'meta');
+    assert.ok(r.linkedFromMetaAt && r.lastSyncedAt);
+    assert.equal(r.ownerAdminId, null, 'shared, platform-owned');
+    assert.equal(String(r.createdBy), String(fx.super._id));
+    assert.equal(r.version, 1);
+    assert.equal(res.body.template.id, String(r._id));
+    assert.equal(res.body.template.origin, 'meta');
+  });
+
+  test("the selected event's eventId and eventObjectId are stored together, from the event the server found - never from the client", async () => {
+    const res = await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: fx.eventA1.eventId, variables: two, eventObjectId: String(fx.eventB._id), wabaId: 'client-waba', localState: 'Pending', ownerAdminId: String(fx.adminB._id) });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    const r = await record('7001');
+    assert.equal(r.eventId, fx.eventA1.eventId);
+    assert.equal(String(r.eventObjectId), String(fx.eventA1._id), 'not the ObjectId the client sent');
+    assert.equal(r.wabaId, WABA, 'not the account the client sent');
+    assert.equal(r.localState, 'Approved', 'status comes from WhatsApp, not the client');
+    assert.equal(r.ownerAdminId, null);
+    assert.equal(res.body.template.eventId, fx.eventA1.eventId);
+    assert.equal(res.body.template.eventObjectId, String(fx.eventA1._id));
+  });
+
+  test('is audited and recorded in the history, and shows in the account list as available in EventReach', async () => {
+    const res = await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: fx.eventA1.eventId, variables: two });
+    assert.equal(res.status, 201);
+    const [entry] = await audits('WHATSAPP_TEMPLATE_LINKED_FROM_META');
+    assert.equal(entry.documentId, res.body.template.id);
+    assert.equal(entry.actor.userId, String(fx.super._id));
+    assert.equal(entry.actor.role, 'SuperAdmin');
+    assert.equal(entry.metadata.metaTemplateId, '7001');
+    assert.equal(entry.metadata.eventId, fx.eventA1.eventId);
+    assert.equal(JSON.stringify(entry).includes(FAKE_TOKEN), false);
+    const history = (await record('7001')).history;
+    assert.equal(history[history.length - 1].type, 'linked_from_meta');
+
+    const list = await call('GET', `${realUrl}/templates/meta`, fx.tSuper);
+    assert.equal(list.status, 200, JSON.stringify(list.body));
+    const row = list.body.templates.find((t: any) => t.id === '7001');
+    assert.equal(row.localTemplateId, res.body.template.id, 'now in EventReach');
+    assert.equal(row.sendableFromHere, true);
+    assert.equal(list.body.templates.find((t: any) => t.id === '7002').localTemplateId, null, 'the others still are not');
+  });
+
+  test('linking again, or many times at once, never makes a second record', async () => {
+    const first = await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: fx.eventA1.eventId, variables: two });
+    assert.equal(first.status, 201);
+    const before = await record('7001');
+    const again = await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: fx.eventA1.eventId, variables: two });
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal(again.body.created, false);
+    assert.equal(again.body.changed, false);
+    assert.equal(again.body.template.id, first.body.template.id);
+    assert.equal(await holding('7001'), 1);
+    const after = await record('7001');
+    assert.equal(JSON.stringify(after), JSON.stringify(before), 'a repeat link leaves the record exactly as it was - not even updatedAt moves');
+
+    const burst = await Promise.all(Array.from({ length: 6 }, () => linkMeta(fx.tSuper, { metaTemplateId: '7002', eventId: fx.eventA1.eventId, variables: [] })));
+    assert.equal(burst.filter((r) => r.status === 201).length, 1, 'exactly one of six simultaneous requests created it');
+    assert.ok(burst.every((r) => r.status === 200 || r.status === 201), JSON.stringify(burst.map((r) => r.status)));
+    assert.equal(new Set(burst.map((r) => r.body.template.id)).size, 1, 'all six answered with the same record');
+    assert.equal(await holding('7002'), 1);
+    assert.equal((await audits('WHATSAPP_TEMPLATE_LINKED_FROM_META')).length, 2, 'only the two real creations were audited');
+  });
+
+  test('linking a template EventReach already holds to a different event moves it, through the existing event-link logic', async () => {
+    const first = await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: fx.eventA1.eventId, variables: two });
+    assert.equal(first.status, 201);
+    const moved = await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: fx.eventA2.eventId, variables: two });
+    assert.equal(moved.status, 200, JSON.stringify(moved.body));
+    assert.equal(moved.body.created, false);
+    assert.equal(moved.body.changed, true);
+    assert.equal(moved.body.previousEventId, fx.eventA1.eventId);
+    assert.equal(await holding('7001'), 1);
+    assert.equal((await record('7001')).eventId, fx.eventA2.eventId);
+    assert.equal((await audits('WHATSAPP_TEMPLATE_EVENT_LINKED')).length, 1);
+    // ...and the existing endpoint still moves it for an authorized user.
+    const viaPut = await call('PUT', `${realUrl}/templates/${first.body.template.id}/event`, fx.tSuper, { eventId: fx.eventA1.eventId });
+    assert.equal(viaPut.status, 200, JSON.stringify(viaPut.body));
+    assert.equal((await record('7001')).eventId, fx.eventA1.eventId);
+  });
+
+  test('a template that is not part of the configured WhatsApp account is refused, and nothing is created', async () => {
+    const res = await linkMeta(fx.tSuper, { metaTemplateId: '7013', eventId: fx.eventA1.eventId, variables: [] });
+    assert.equal(res.status, 404, JSON.stringify(res.body));
+    assert.equal(res.body.error.code, 'TEMPLATE_NOT_IN_ACCOUNT');
+    assert.equal(await WhatsAppTemplate.countDocuments(), 0);
+    // And one WhatsApp does not know at all.
+    const unknown = await linkMeta(fx.tSuper, { metaTemplateId: '999999', eventId: fx.eventA1.eventId, variables: [] });
+    assert.ok([404, 502].includes(unknown.status), String(unknown.status));
+    assert.equal(await WhatsAppTemplate.countDocuments(), 0);
+  });
+
+  test('a template WhatsApp has not approved is refused, whatever its status', async () => {
+    for (const id of ['7006', '7007']) {
+      const res = await linkMeta(fx.tSuper, { metaTemplateId: id, eventId: fx.eventA1.eventId, variables: [] });
+      assert.equal(res.status, 409, `${id}: ${JSON.stringify(res.body)}`);
+      assert.equal(res.body.error.code, 'TEMPLATE_NOT_APPROVED');
+    }
+    assert.equal(await WhatsAppTemplate.countDocuments(), 0);
+  });
+
+  test('a missing, malformed or unknown Event ID is refused with one wording, and creates nothing', async () => {
+    const unknown = await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: 'EVT-9999999', variables: two });
+    assert.equal(unknown.status, 400);
+    assert.ok(unknown.body.error.errors.some((e: any) => e.field === 'eventId' && /No event with that Event ID/.test(e.message)));
+    for (const bad of [undefined, null, '', '   ', 'evt-000011', 'EVT-11', String(fx.eventA1._id), '{"$ne":null}', 17, { $ne: null }]) {
+      const res = await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: bad, variables: two });
+      assert.equal(res.status, 400, JSON.stringify(bad));
+      assert.ok(res.body.error.errors.some((e: any) => e.field === 'eventId'), JSON.stringify(bad));
+    }
+    assert.equal(await WhatsAppTemplate.countDocuments(), 0);
+  });
+
+  test('a malformed template id is refused before anything is asked of WhatsApp', async () => {
+    for (const bad of [undefined, '', 'abc', '7001; drop', '../me', '7001/message_templates', 7001, { $ne: 1 }]) {
+      const res = await linkMeta(fx.tSuper, { metaTemplateId: bad, eventId: fx.eventA1.eventId, variables: two });
+      assert.equal(res.status, 400, JSON.stringify(bad));
+    }
+    assert.deepEqual(gets, [], 'WhatsApp was not asked about any of them');
+    assert.equal(await WhatsAppTemplate.countDocuments(), 0);
+  });
+
+  test('only a Super Admin may link: no one else, and nothing is asked of WhatsApp for them', async () => {
+    const body = { metaTemplateId: '7001', eventId: fx.eventA1.eventId, variables: two };
+    assert.equal((await linkMeta(undefined, body)).status, 401);
+    assert.equal((await linkMeta(fx.tA, body)).status, 403, 'an Admin with template access, owner of the event');
+    assert.equal((await linkMeta(fx.tB, body)).status, 403);
+    assert.equal((await linkMeta(plainAdminToken, body)).status, 403, 'an Admin without template access');
+    assert.equal((await linkMeta(fx.tUserA, body)).status, 403, 'a User');
+    assert.deepEqual(gets, [], 'refused before WhatsApp was contacted');
+    assert.equal(await WhatsAppTemplate.countDocuments(), 0);
+    assert.equal((await audits('WHATSAPP_TEMPLATE_LINKED_FROM_META')).length, 0);
+  });
+
+  test('a template with parts EventReach cannot send is refused, naming the reason', async () => {
+    const cases: [string, RegExp][] = [
+      ['7008', /named placeholders/], ['7009', /Authentication/], ['7010', /carousel/i], ['7011', /location header/i], ['7012', /placeholder/],
+    ];
+    for (const [id, reason] of cases) {
+      const res = await linkMeta(fx.tSuper, { metaTemplateId: id, eventId: fx.eventA1.eventId, variables: [] });
+      assert.equal(res.status, 422, `${id}: ${JSON.stringify(res.body)}`);
+      assert.equal(res.body.error.code, 'UNSUPPORTED_TEMPLATE');
+      assert.match(res.body.error.message, reason, id);
+    }
+    assert.equal(await WhatsAppTemplate.countDocuments(), 0);
+  });
+
+  test('every placeholder needs its mapping, validated like any template, or nothing is created', async () => {
+    const ev = fx.eventA1.eventId;
+    const attempts: [string, unknown, RegExp][] = [
+      ['no mapping at all', undefined, /variables\.1/],
+      ['only one of two', one, /variables\.2/],
+      ['an unknown source', [one[0], { position: 2, label: 'Event', source: 'guest.phone' }], /variables\.2\.source/],
+      ['fixed text without text', [one[0], { position: 2, label: 'Event', source: 'fixed' }], /variables\.2\.fixedValue/],
+      ['a mapping for a placeholder that is not there', [...two, { position: 3, label: 'Extra', source: 'event.venue' }], /variables/],
+      ['a label that is blank', [{ position: 1, label: '  ', source: 'guest.name' }, two[1]], /variables\.1\.label/],
+    ];
+    for (const [label, variables, field] of attempts) {
+      const res = await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: ev, variables });
+      assert.equal(res.status, 400, `${label}: ${JSON.stringify(res.body)}`);
+      assert.ok(res.body.error.errors.some((e: any) => field.test(e.field)), `${label}: ${JSON.stringify(res.body.error.errors)}`);
+    }
+    assert.equal(await WhatsAppTemplate.countDocuments(), 0);
+  });
+
+  test('a local template of the same name and language that is not this one blocks the link, and is left alone', async () => {
+    world.set('7014', tpl('7014', 'clash_name', [BODY('Hello.')]));
+    const draft = await svc.createTemplateDraft(fx.A, body({ eventId: fx.eventA1.eventId, name: 'clash_name' }), { connection: CONNECTION });
+    const res = await linkMeta(fx.tSuper, { metaTemplateId: '7014', eventId: fx.eventA1.eventId, variables: [] });
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    assert.equal(res.body.error.code, 'TEMPLATE_NAME_TAKEN');
+    assert.equal(await holding('7014'), 0);
+    assert.equal((await WhatsAppTemplate.findById(draft.id).lean() as any).localState, 'Draft', 'the existing record is untouched');
+  });
+
+  test('text, image-header, video-header and document-header templates are each stored as what they are', async () => {
+    const ev = fx.eventA1.eventId;
+    assert.equal((await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: ev, variables: two })).status, 201);
+    assert.equal((await linkMeta(fx.tSuper, { metaTemplateId: '7002', eventId: ev, variables: [] })).status, 201);
+    assert.equal((await linkMeta(fx.tSuper, { metaTemplateId: '7003', eventId: ev, variables: [] })).status, 201);
+    assert.equal((await linkMeta(fx.tSuper, { metaTemplateId: '7004', eventId: ev, variables: one })).status, 201);
+    assert.equal((await linkMeta(fx.tSuper, { metaTemplateId: '7005', eventId: ev, variables: [{ position: 1, label: 'Place', source: 'event.venue' }] })).status, 201);
+    const by = async (id: string) => record(id);
+    const [text, image, video, document, textHeader] = [await by('7001'), await by('7002'), await by('7003'), await by('7004'), await by('7005')];
+    assert.deepEqual([text.headerFormat, text.headerText], [null, null]);
+    assert.deepEqual([image.headerFormat, image.headerText], ['IMAGE', null]);
+    assert.deepEqual([video.headerFormat, video.headerText], ['VIDEO', null]);
+    assert.deepEqual([document.headerFormat, document.headerText], ['DOCUMENT', null]);
+    assert.deepEqual([textHeader.headerFormat, textHeader.headerText], [null, 'You are invited']);
+    assert.equal(document.variables.length, 1);
+    assert.equal(video.variables.length, 0);
+  });
+
+  test('linked templates appear in the Message tab only for their assigned event', async () => {
+    assert.equal((await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: fx.eventA1.eventId, variables: two })).status, 201);
+    assert.equal((await linkMeta(fx.tSuper, { metaTemplateId: '7002', eventId: fx.eventA2.eventId, variables: [] })).status, 201);
+    const a1 = (await listFor(fx.tA, fx.eventA1)).body.templates;
+    const a2 = (await listFor(fx.tA, fx.eventA2)).body.templates;
+    assert.deepEqual(a1.map((t: any) => t.name), ['invite_text']);
+    assert.deepEqual(a2.map((t: any) => t.name), ['invite_image']);
+    assert.equal(a2[0].headerFormat, 'IMAGE', 'the list says a file is needed');
+    assert.equal(a1[0].headerFormat, null);
+    assert.deepEqual((await listFor(fx.tB, fx.eventB)).body.templates, [], 'another Admin\'s event has none');
+    assert.equal((await listFor(fx.tB, fx.eventA1)).status, 403, 'and cannot ask about this one');
+  });
+
+  test('a linked text template sends, filled from the stored event and guest', async () => {
+    const t = (await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: fx.eventA1.eventId, variables: two })).body.template;
+    const g = await mkGuest(fx.eventA1, 'Link Text Guest');
+    const res = await send(fx.tA, { eventId: String(fx.eventA1._id), contactIds: [String(g._id)], templateId: t.id });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].templateName, 'invite_text');
+    assert.deepEqual(sent[0].variables, ['Link Text Guest', 'A One']);
+    assert.equal(sent[0].headerMedia, undefined);
+    const noFile = await send(fx.tA, { eventId: String(fx.eventA1._id), contactIds: [String(g._id)], templateId: t.id, attachment: stored('png') });
+    assert.equal(noFile.status, 400, 'a template with no media header takes no attachment');
+  });
+
+  test('a linked image template needs an image, sends it as the header, and uploads it once for the whole batch', async () => {
+    const t = (await linkMeta(fx.tSuper, { metaTemplateId: '7002', eventId: fx.eventA1.eventId, variables: [] })).body.template;
+    const g1 = await mkGuest(fx.eventA1, 'Image One');
+    const g2 = await mkGuest(fx.eventA1, 'Image Two');
+    const base = { eventId: String(fx.eventA1._id), contactIds: [String(g1._id), String(g2._id)], templateId: t.id };
+    const missing = await send(fx.tA, base);
+    assert.equal(missing.status, 400);
+    assert.equal(missing.body.error.code, 'ATTACHMENT_REQUIRED');
+    assert.equal(sent.length, 0);
+    const wrong = await send(fx.tA, { ...base, attachment: stored('pdf') });
+    assert.equal(wrong.status, 400, 'a PDF is not an image');
+    assert.equal(sent.length, 0);
+    const ok = await send(fx.tA, { ...base, attachment: stored('png') });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal(sent.length, 2);
+    assert.equal(sent[0].headerMedia.kind, 'image');
+    assert.equal(new Set(sent.map((m: any) => m.headerMedia.mediaId)).size, 1, 'one media id for every recipient');
+    assert.deepEqual(sent[0].variables, []);
+  });
+
+  test('a linked video template sends a video, and a linked document template sends a PDF with its filename and its body value', async () => {
+    const video = (await linkMeta(fx.tSuper, { metaTemplateId: '7003', eventId: fx.eventA1.eventId, variables: [] })).body.template;
+    const document = (await linkMeta(fx.tSuper, { metaTemplateId: '7004', eventId: fx.eventA1.eventId, variables: one })).body.template;
+    const g = await mkGuest(fx.eventA1, 'Media Guest');
+    const ev = String(fx.eventA1._id);
+    assert.equal((await send(fx.tA, { eventId: ev, contactIds: [String(g._id)], templateId: video.id })).body.error.code, 'ATTACHMENT_REQUIRED');
+    assert.equal((await send(fx.tA, { eventId: ev, contactIds: [String(g._id)], templateId: video.id, attachment: stored('png') })).status, 400, 'an image is not a video');
+    assert.equal((await send(fx.tA, { eventId: ev, contactIds: [String(g._id)], templateId: video.id, attachment: stored('mp4') })).status, 200);
+    assert.equal(sent[0].headerMedia.kind, 'video');
+    assert.equal((await send(fx.tA, { eventId: ev, contactIds: [String(g._id)], templateId: document.id })).body.error.code, 'ATTACHMENT_REQUIRED');
+    const docRes = await send(fx.tA, { eventId: ev, contactIds: [String(g._id)], templateId: document.id, attachment: stored('pdf') });
+    assert.equal(docRes.status, 200, JSON.stringify(docRes.body));
+    assert.equal(sent[1].headerMedia.kind, 'document');
+    assert.equal(sent[1].headerMedia.filename, 'Invite.pdf');
+    assert.deepEqual(sent[1].variables, ['Media Guest']);
+  });
+
+  test('the preview of a media template says what file it needs; a text template needs none', async () => {
+    const image = (await linkMeta(fx.tSuper, { metaTemplateId: '7002', eventId: fx.eventA1.eventId, variables: [] })).body.template;
+    const text = (await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: fx.eventA1.eventId, variables: two })).body.template;
+    const g = await mkGuest(fx.eventA1, 'Preview Media');
+    const preview = (templateId: string) => call('GET', `${realUrl}/event-template-preview?eventId=${fx.eventA1._id}&contactId=${g._id}&templateId=${templateId}`, fx.tA);
+    const media = await preview(image.id);
+    assert.equal(media.status, 200, JSON.stringify(media.body));
+    assert.deepEqual(media.body.header, { format: 'IMAGE', required: true, isMedia: true });
+    assert.equal((await preview(text.id)).body.header, null);
+  });
+
+  test('the approval and Upcoming-event rules still apply to a linked template', async () => {
+    const t = (await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: fx.eventA1.eventId, variables: two })).body.template;
+    const g = await mkGuest(fx.eventA1, 'Rules Guest');
+    const payload = { eventId: String(fx.eventA1._id), contactIds: [String(g._id)], templateId: t.id };
+    // Paused at WhatsApp since: no longer offered, and refused at send.
+    await WhatsAppTemplate.updateOne({ _id: t.id }, { $set: { localState: 'Paused', metaStatus: 'PAUSED' } });
+    assert.deepEqual((await listFor(fx.tA, fx.eventA1)).body.templates, []);
+    assert.equal((await send(fx.tA, payload)).status, 409);
+    await WhatsAppTemplate.updateOne({ _id: t.id }, { $set: { localState: 'Approved', metaStatus: 'APPROVED' } });
+    assert.equal((await send(fx.tA, payload)).status, 200);
+    // Linked to an event that is no longer Upcoming: still refused.
+    const done = await mkEvent('A Completed Linked', fx.adminA._id, { eventStatus: 'Completed' });
+    assert.equal((await call('PUT', `${realUrl}/templates/${t.id}/event`, fx.tSuper, { eventId: done.eventId })).status, 200);
+    const pastGuest = await mkGuest(done, 'Past Linked Guest');
+    const past = await send(fx.tA, { eventId: String(done._id), contactIds: [String(pastGuest._id)], templateId: t.id });
+    assert.equal(past.status, 409, JSON.stringify(past.body));
+    assert.equal(past.body.error.code, 'EVENT_NOT_ACTIVE');
+    // The event's own access rules still decide who may send.
+    assert.equal((await send(fx.tB, { eventId: String(fx.eventA1._id), contactIds: [String(g._id)], templateId: t.id })).status, 403);
+  });
+
+  test('a linked template is read-only for editing like every approved template, and keeps its media header', async () => {
+    const image = (await linkMeta(fx.tSuper, { metaTemplateId: '7002', eventId: fx.eventA1.eventId, variables: [] })).body.template;
+    const r = await record('7002');
+    assert.equal(r.headerFormat, 'IMAGE');
+    assert.equal((await call('PATCH', `${realUrl}/templates/${image.id}`, fx.tSuper, { displayName: 'Renamed' })).status, 409);
+  });
+
+  test('the pure parts: components are read faithfully, and what cannot be sent is named', () => {
+    const c = metaApi.parseTemplateComponents(world.get('7001'));
+    assert.equal(c.bodyText, 'Dear {{1}}, welcome to {{2}}.');
+    assert.deepEqual(c.bodyExamples, ['Riya', 'Sharma Wedding']);
+    assert.equal(c.footerText, 'EventReach');
+    assert.equal(c.headerFormat, null);
+    assert.deepEqual(c.otherComponents, []);
+    assert.deepEqual(c.buttons.map((b: any) => b.type), ['QUICK_REPLY', 'URL', 'PHONE_NUMBER']);
+    assert.equal(metaApi.parseTemplateComponents(world.get('7003')).headerFormat, 'VIDEO');
+    assert.deepEqual(metaApi.parseTemplateComponents(world.get('7010')).otherComponents, ['CAROUSEL']);
+    assert.equal(metaApi.parseTemplateComponents(world.get('7008')).parameterFormat, 'NAMED');
+    assert.deepEqual(metaApi.parseTemplateComponents({}), { parameterFormat: null, otherComponents: [], headerFormat: null, headerText: null, bodyText: null, bodyExamples: [], footerText: null, buttons: [] });
+    assert.equal(svc.linkRefusals(metaApi.parseTemplateComponents(world.get('7001')), 'UTILITY').length, 0);
+    assert.equal(svc.linkRefusals(metaApi.parseTemplateComponents(world.get('7002')), 'UTILITY').length, 0, 'a media header is fine');
+    assert.ok(svc.linkRefusals(metaApi.parseTemplateComponents(world.get('7011')), 'UTILITY').some((e: any) => e.field === 'headerFormat'));
+    assert.ok(svc.linkRefusals({ ...metaApi.parseTemplateComponents(world.get('7001')), buttons: [{ type: 'COPY_CODE', text: 'x', url: null, phoneNumber: null }] }, 'UTILITY').some((e: any) => e.field === 'buttons'));
+  });
+
+  test('the route is rate limited like the other actions that reach WhatsApp: 20 a minute, then 429, and nothing is read or created past it', async () => {
+    const body = { metaTemplateId: 'not-a-number', eventId: fx.eventA1.eventId, variables: [] };
+    for (let i = 0; i < 20; i++) assert.equal((await linkMeta(fx.tSuper, body)).status, 400, `request ${i + 1}`);
+    const limited = await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: fx.eventA1.eventId, variables: two });
+    assert.equal(limited.status, 429, JSON.stringify(limited.body));
+    assert.equal(await WhatsAppTemplate.countDocuments(), 0, 'the refused request created nothing');
+    assert.deepEqual(gets, [], 'and asked WhatsApp nothing');
+    resetLimiter();
+    assert.equal((await linkMeta(fx.tSuper, { metaTemplateId: '7001', eventId: fx.eventA1.eventId, variables: two })).status, 201, 'a fresh minute works again');
+  });
+
+  test('nothing in this whole block created, edited, deleted or resubmitted anything at WhatsApp', () => {
+    assert.deepEqual(allMutations, [], 'no POST, PUT, PATCH, DELETE or other request that could change a Meta template');
   });
 });

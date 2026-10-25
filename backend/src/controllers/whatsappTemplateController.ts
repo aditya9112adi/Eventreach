@@ -4,6 +4,7 @@ import {
   createTemplateDraft,
   deleteTemplateDraft,
   getTemplate,
+  linkMetaTemplate,
   linkTemplateToEvent,
   listAccountTemplates,
   listTemplates,
@@ -91,6 +92,29 @@ export const linkTemplateEventHandler = async (req: Request, res: Response) => {
     res.json(await linkTemplateToEvent(actorOf(req), req.params.id, { eventId: (req.body as { eventId?: unknown }).eventId }));
   } catch (error) {
     fail(res, error, 'event link');
+  }
+};
+
+/**
+ * POST /api/whatsapp/templates/link-meta  { metaTemplateId, eventId: "EVT-000011", variables: [...], displayName? }
+ *
+ * Creates EventReach's record of a template that already exists and is approved at WhatsApp, tied to the event, so
+ * the Message tab can offer it. Super Admin only. Reads from WhatsApp; creates, edits and resubmits nothing there.
+ * 201 with the new record, or 200 when EventReach already held it (moved to the event if that differs).
+ */
+export const linkMetaTemplateHandler = async (req: Request, res: Response) => {
+  if (!requireBodyObject(req, res)) return;
+  try {
+    const body = req.body as Record<string, unknown>;
+    const result = await linkMetaTemplate(actorOf(req), {
+      metaTemplateId: body.metaTemplateId,
+      eventId: body.eventId,
+      displayName: body.displayName,
+      variables: body.variables,
+    });
+    res.status(result.created ? 201 : 200).json(result);
+  } catch (error) {
+    fail(res, error, 'link from WhatsApp');
   }
 };
 

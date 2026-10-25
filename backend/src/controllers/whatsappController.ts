@@ -191,6 +191,15 @@ export const resolveHeaderMedia = async (
    * convenience for the preview and needs WHATSAPP_WABA_ID, which is optional —
    * sending must not depend on it.
    */
+  // An event template declares its own header, or none: sending it does not depend on reading it from WhatsApp.
+  if (context.scopedTemplate) {
+    if (context.headerFormat) return uploadHeaderMedia(context, attachment, context.headerFormat);
+    if (attachment) {
+      throw new EventTemplateError('VALIDATION_ERROR', `"${context.templateName}" has no media header, so it cannot carry an attachment.`, 400, 'attachment');
+    }
+    return undefined;
+  }
+
   if (context.headerFormat) {
     return uploadHeaderMedia(context, attachment, context.headerFormat);
   }
@@ -432,7 +441,13 @@ export const resolveEventContext = async (
   if (!builtIn) {
     // Checked against THIS event, from the database, before anything is sent.
     const scopedTemplate = await loadEventTemplate(event, input.templateId);
-    return { event, templateName: scopedTemplate.name, languageCode: scopedTemplate.languageCode, scopedTemplate };
+    return {
+      event,
+      templateName: scopedTemplate.name,
+      languageCode: scopedTemplate.languageCode,
+      ...(scopedTemplate.headerFormat ? { headerFormat: scopedTemplate.headerFormat } : {}),
+      scopedTemplate,
+    };
   }
 
   return {

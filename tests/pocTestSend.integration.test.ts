@@ -288,6 +288,35 @@ describe('templates available to a sender', () => {
     assert.equal(by[elsewhere.id], undefined, 'a template of another account is not in this sender\'s list at all');
     assert.equal(meta.calls.length, 0);
   });
+
+  test('a template with an image, video or document header is listed but not sendable here, and is refused at preview and send: this page cannot attach the file', async () => {
+    const plain = await makeTemplate();
+    const withMedia: { id: string; format: string }[] = [];
+    for (const format of ['IMAGE', 'VIDEO', 'DOCUMENT']) {
+      withMedia.push({ format, ...(await makeTemplate({ headerFormat: format, origin: 'meta' })) });
+    }
+    const res = await call('GET', `${P}/senders/${fx.poc._id}/templates`, fx.g);
+    assert.equal(res.status, 200);
+    const by = Object.fromEntries(res.body.templates.map((t: any) => [t.id, t]));
+    assert.equal(by[plain.id].sendable, true, 'an ordinary template is unaffected');
+    assert.deepEqual(by[plain.id].reasons, []);
+
+    const recipient = await makeRecipient();
+    for (const m of withMedia) {
+      assert.equal(by[m.id].sendable, false, `${m.format} header is not sendable here`);
+      assert.match(by[m.id].reasons.join(' '), /media header/, m.format);
+      const body = { senderId: String(fx.poc._id), templateId: m.id, recipientId: recipient.id, variables: ['Riya'] };
+      const preview = await call('POST', `${P}/preview`, fx.g, body);
+      assert.equal(preview.status, 409, `${m.format}: ${JSON.stringify(preview.body)}`);
+      assert.equal(preview.body.error.code, 'TEMPLATE_NOT_SENDABLE');
+      assert.match(preview.body.error.message, /media header/);
+      const send = await call('POST', `${P}/send`, fx.g, { ...body, confirmed: true, previewHash: '0'.repeat(64), idempotencyKey: `media-${m.format}-${Date.now()}` });
+      assert.ok([400, 409].includes(send.status), `${m.format}: send answered ${send.status}`);
+      assert.notEqual(send.status, 200);
+    }
+    assert.equal(meta.sends.length, 0, 'nothing was sent to WhatsApp');
+    assert.equal(await TemplateTestSend.countDocuments(), 0, 'and no send was even recorded');
+  });
 });
 
 describe('recipients and consent', () => {

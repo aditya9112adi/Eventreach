@@ -2,9 +2,13 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, CloudDownload, RefreshCw } from 'lucide-react';
 import api from '../../services/api';
+import { useAuth } from '../../store/authStore';
+import { useToast } from '../../components/ui/Toast';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { formatDateTime } from '../../utils/datetime';
+import { canOfferLink, linkToast, markLinked } from '../../utils/linkMetaTemplate';
+import { LinkMetaTemplateDialog } from './LinkMetaTemplateDialog';
 import {
   TEMPLATES_API,
   accountListParams,
@@ -14,6 +18,7 @@ import {
   parseAccountPage,
   toApiProblem,
   type AccountPage,
+  type AccountTemplateView,
   type ApiProblem,
 } from '../../utils/whatsappTemplates';
 
@@ -23,11 +28,29 @@ import {
  * Meta's records: nothing here is created, changed or sent, and a template
  * shows as usable from EventReach only when EventReach also holds it as
  * approved.
+ *
+ * An approved template EventReach does not hold can be linked to an event ("Link to EventReach"): EventReach then
+ * records it, as WhatsApp approved it, so the Message tab can offer it for that event. That reads from WhatsApp too;
+ * nothing is created, changed or resubmitted there.
  */
 const AccountTemplates = () => {
+  const { user } = useAuth();
+  const { showToast } = useToast();
   const [page, setPage] = useState<AccountPage | null>(null);
   const [problem, setProblem] = useState<ApiProblem | null>(null);
   const [loading, setLoading] = useState(false);
+  const [linking, setLinking] = useState<AccountTemplateView | null>(null);
+
+  /** The row becomes "Open in EventReach" straight away, from the server's answer, without asking WhatsApp again. */
+  const linked = (result: any) => {
+    const target = linking;
+    setLinking(null);
+    if (target && typeof result?.template?.id === 'string') {
+      setPage((current) => (current ? { ...current, templates: current.templates.map((t) => (t.id === target.id ? markLinked(t, result.template.id) : t)) } : current));
+    }
+    const toast = linkToast(result ?? {});
+    showToast(toast.type, toast.message);
+  };
 
   const load = async (cursor: string | null) => {
     setLoading(true);
@@ -121,6 +144,11 @@ const AccountTemplates = () => {
                           ) : (
                             note && <p className="text-foreground/50 mt-1 max-w-xs">{note}</p>
                           )}
+                          {canOfferLink(t, user) && (
+                            <button type="button" className="mt-2 text-accent hover:underline font-semibold" onClick={() => setLinking(t)}>
+                              Link to EventReach
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -136,6 +164,7 @@ const AccountTemplates = () => {
           )}
         </>
       )}
+      {linking && <LinkMetaTemplateDialog template={linking} onClose={() => setLinking(null)} onLinked={linked} />}
     </div>
   );
 };

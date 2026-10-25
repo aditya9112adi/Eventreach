@@ -13,6 +13,7 @@ import {
   createTemplateHandler,
   updateTemplateHandler,
   linkTemplateEventHandler,
+  linkMetaTemplateHandler,
   deleteTemplateHandler,
   submitTemplateHandler,
   reconcileTemplateHandler,
@@ -58,6 +59,9 @@ router.post('/event-template', actionLimiter, sendEventTemplate);
 router.get('/templates', listTemplatesHandler);
 // Read from Meta on request. Registered before /templates/:id so "meta" is not read as an id.
 router.get('/templates/meta', actionLimiter, listAccountTemplatesHandler);
+// Records a template that already exists at WhatsApp in EventReach, tied to an event. Super Admin only; reads from
+// WhatsApp, never creates or changes anything there.
+router.post('/templates/link-meta', actionLimiter, linkMetaTemplateHandler);
 router.post('/templates', createTemplateHandler);
 router.get('/templates/:id', getTemplateHandler);
 // The exact payload a submission would send. Sends nothing.

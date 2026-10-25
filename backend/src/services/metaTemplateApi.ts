@@ -311,3 +311,100 @@ export const getMetaTemplateById = async (templateId: string, deps: MetaTemplate
     rejectedReason: typeof data?.rejected_reason === 'string' ? data.rejected_reason : null,
   };
 };
+
+// ── one template with its components, for linking ───────────────────────────
+
+export interface MetaTemplateButton {
+  type: string;
+  text: string;
+  url: string | null;
+  phoneNumber: string | null;
+}
+
+/** A template's components as Meta holds them, reduced to what EventReach can store and send. */
+export interface MetaTemplateComponents {
+  /** "POSITIONAL" ({{1}}) or "NAMED" ({{guest_name}}); null when Meta did not say. */
+  parameterFormat: string | null;
+  /** Component types other than HEADER, BODY, FOOTER and BUTTONS (carousels, limited-time offers, ...). */
+  otherComponents: string[];
+  headerFormat: string | null;
+  headerText: string | null;
+  bodyText: string | null;
+  /** The first example row Meta holds for a numbered body, in placeholder order. */
+  bodyExamples: string[];
+  footerText: string | null;
+  buttons: MetaTemplateButton[];
+}
+
+export interface MetaTemplateForLink extends MetaTemplateStatusNode {
+  components: MetaTemplateComponents;
+}
+
+const KNOWN_COMPONENTS = new Set(['HEADER', 'BODY', 'FOOTER', 'BUTTONS']);
+
+const upper = (value: unknown): string | null => (typeof value === 'string' && value ? value.toUpperCase() : null);
+const plain = (value: unknown, max: number): string | null => (typeof value === 'string' ? value.slice(0, max) : null);
+
+/** Pure: reads Meta's `components` (and `parameter_format`) without guessing or dropping what it cannot place. */
+export const parseTemplateComponents = (data: any): MetaTemplateComponents => {
+  const components: any[] = Array.isArray(data?.components) ? data.components : [];
+  const typeOf = (c: any) => upper(c?.type) ?? 'UNKNOWN';
+  const part = (type: string) => components.find((c) => typeOf(c) === type);
+  const header = part('HEADER');
+  const body = part('BODY');
+  const footer = part('FOOTER');
+  const buttons: any[] = Array.isArray(part('BUTTONS')?.buttons) ? part('BUTTONS').buttons : [];
+  const row = body?.example?.body_text;
+
+  return {
+    parameterFormat: upper(data?.parameter_format),
+    otherComponents: [...new Set(components.map(typeOf).filter((t) => !KNOWN_COMPONENTS.has(t)))],
+    headerFormat: header ? upper(header.format) ?? 'UNKNOWN' : null,
+    headerText: header ? plain(header.text, 5000) : null,
+    bodyText: plain(body?.text, 5000),
+    bodyExamples: Array.isArray(row) && Array.isArray(row[0]) ? row[0].filter((x: unknown): x is string => typeof x === 'string') : [],
+    footerText: plain(footer?.text, 5000),
+    buttons: buttons.map((b) => ({
+      type: upper(b?.type) ?? 'UNKNOWN',
+      text: plain(b?.text, 200) ?? '',
+      url: plain(b?.url, 2000),
+      phoneNumber: plain(b?.phone_number, 40),
+    })),
+  };
+};
+
+/**
+ * One template by its id, with its components [Meta: GET /{WHATSAPP-MESSAGE-TEMPLATE-ID}, fields id, name, language,
+ * status, category, rejected_reason, parameter_format, components]. A READ: nothing is created, edited or deleted.
+ * The answer is returned as Meta gave it; the caller checks that it is the template it asked for and that it belongs
+ * to the configured account.
+ */
+export const getMetaTemplateForLink = async (templateId: string, deps: MetaTemplateApiDeps = {}): Promise<MetaTemplateForLink> => {
+  if (!META_TEMPLATE_ID_PATTERN.test(templateId)) {
+    throw new MetaTemplateApiError('CONFIGURATION', 'The WhatsApp template id is not valid.');
+  }
+  const connection = requireConnection(deps);
+  const get = deps.get ?? (axios.get as unknown as MetaHttpGet);
+
+  let data: any;
+  try {
+    const response = await get(graphUrl(connection, templateId), {
+      headers: { Authorization: `Bearer ${connection.accessToken}` },
+      params: { fields: 'id,name,language,status,category,rejected_reason,parameter_format,components' },
+      timeout: REQUEST_TIMEOUT_MS,
+    });
+    data = response?.data;
+  } catch (error: any) {
+    throw classify(error, connection.accessToken, 'template lookup');
+  }
+
+  return {
+    id: typeof data?.id === 'string' || typeof data?.id === 'number' ? String(data.id) : '',
+    name: typeof data?.name === 'string' ? data.name : '',
+    language: typeof data?.language === 'string' ? data.language : '',
+    status: typeof data?.status === 'string' ? data.status : null,
+    category: typeof data?.category === 'string' ? data.category : null,
+    rejectedReason: typeof data?.rejected_reason === 'string' ? data.rejected_reason : null,
+    components: parseTemplateComponents(data),
+  };
+};

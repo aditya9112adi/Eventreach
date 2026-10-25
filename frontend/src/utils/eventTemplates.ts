@@ -18,6 +18,8 @@ export interface EventTemplateOption {
   category: string;
   body: string;
   headerText: string | null;
+  /** IMAGE, VIDEO or DOCUMENT when the template's header takes a file, which is attached at send time; null otherwise. */
+  headerFormat?: string | null;
   footer: string | null;
   variableCount: number;
 }
@@ -62,9 +64,14 @@ export const readEventTemplates = (data: unknown): EventTemplateOption[] => {
 };
 
 /** One line under the picker for the chosen event template. */
-export const describeEventTemplate = (t: EventTemplateOption): string =>
-  `${t.displayName} - ${t.category.charAt(0) + t.category.slice(1).toLowerCase()} template, language ${t.language}. ` +
-  'Approved by WhatsApp for this event; its wording cannot be edited here.';
+export const describeEventTemplate = (t: EventTemplateOption): string => {
+  const file = t.headerFormat === 'IMAGE' ? 'an image' : t.headerFormat === 'VIDEO' ? 'a video' : t.headerFormat === 'DOCUMENT' ? 'a document (PDF)' : null;
+  return (
+    `${t.displayName} - ${t.category.charAt(0) + t.category.slice(1).toLowerCase()} template, language ${t.language}. ` +
+    'Approved by WhatsApp for this event; its wording cannot be edited here.' +
+    (file ? ` Attach ${file} to send it.` : '')
+  );
+};
 
 /** What to say when no event is selected: nothing is offered without one. */
 export const SELECT_EVENT_FOR_TEMPLATES_TEXT = 'Select an event to see its approved templates.';
